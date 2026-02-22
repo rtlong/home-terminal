@@ -90,9 +90,9 @@ fn calendar_css() -> String {
   .cal-today .cal-date { color: #4a8; }
   .cal-events { list-style: none; padding: 0.25rem 0; }
   .cal-empty { padding: 0.25rem 0.75rem; color: #444; font-style: italic; font-size: 0.8rem; }
-  .cal-event { display: flex; gap: 0.5rem; padding: 0.2rem 0.75rem; }
+  .cal-event { display: flex; gap: 0.5rem; padding: 0.2rem 0.5rem 0.2rem 0.75rem; border-left: 3px solid transparent; }
   .cal-event:hover { background: #1e1e1e; }
-  .cal-event-time { color: #888; min-width: 4.5rem; font-size: 0.8rem; padding-top: 0.05rem; }
+  .cal-event-time { color: #888; min-width: 4.5rem; font-size: 0.8rem; padding-top: 0.05rem; flex-shrink: 0; }
   .cal-event-summary { color: #ddd; }
   "
 }

@@ -1,12 +1,13 @@
 // IMPORTS ---------------------------------------------------------------------
 
-import cal.{type Event}
+import cal
 import cal_server.{type Server}
 import gleam/erlang/process
 import lustre.{type App}
 import lustre/effect.{type Effect}
 import lustre/element.{type Element}
 import lustre/element/html
+import state
 
 // COMPONENT -------------------------------------------------------------------
 
@@ -29,37 +30,29 @@ pub type Tab {
 pub type Model {
   Model(
     active_tab: Tab,
-    events: Result(List(Event), String),
+    calendar_data: cal_server.CalendarData,
     registration: cal_server.Registration,
   )
 }
 
 fn init(server: Server) -> #(Model, Effect(Msg)) {
-  // Register a callback with cal_server. The callback runs in the cal_server
-  // actor process, so it must be a quick non-blocking operation: we just send
-  // a message to this component's runtime via a Subject.
-  //
-  // We use server_component.select (via effect.select) to obtain a
-  // Subject(Msg) from the Lustre runtime, then register a closure that sends
-  // CalendarUpdated to that subject whenever cal_server has new data.
   let effect =
     effect.select(fn(dispatch, _subject: process.Subject(Msg)) {
-      // dispatch is fn(Msg) -> Nil — calling it routes a message into update/2
       let registration =
-        cal_server.register(server, fn(data) {
-          dispatch(CalendarUpdated(data))
-        })
+        cal_server.register(server, fn(data) { dispatch(CalendarUpdated(data)) })
       dispatch(GotRegistration(registration))
       process.new_selector()
     })
 
-  // Placeholder registration — replaced immediately when the effect fires.
   let placeholder = cal_server.placeholder_registration()
 
   let model =
     Model(
       active_tab: CalendarTab,
-      events: Error("Loading…"),
+      calendar_data: cal_server.CalendarData(
+        events: Error("Loading…"),
+        cal_config: state.empty_config(),
+      ),
       registration: placeholder,
     )
 
@@ -70,7 +63,7 @@ fn init(server: Server) -> #(Model, Effect(Msg)) {
 
 pub opaque type Msg {
   UserSelectedTab(Tab)
-  CalendarUpdated(Result(List(Event), String))
+  CalendarUpdated(cal_server.CalendarData)
   GotRegistration(cal_server.Registration)
 }
 
@@ -81,13 +74,10 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       effect.none(),
     )
 
-    UserSelectedTab(tab) -> #(
-      Model(..model, active_tab: tab),
-      effect.none(),
-    )
+    UserSelectedTab(tab) -> #(Model(..model, active_tab: tab), effect.none())
 
-    CalendarUpdated(result) -> #(
-      Model(..model, events: result),
+    CalendarUpdated(data) -> #(
+      Model(..model, calendar_data: data),
       effect.none(),
     )
   }
@@ -117,10 +107,15 @@ fn view_tab_button(label: String, tab: Tab, active: Tab) -> Element(Msg) {
 fn view_active_tab(model: Model) -> Element(Msg) {
   case model.active_tab {
     CalendarTab ->
-      case model.events {
+      case model.calendar_data.events {
         Error(reason) if reason == "Loading…" -> cal.view_loading()
         Error(reason) -> cal.view_error(reason)
-        Ok(events) -> cal.view_seven_days(events)
+        Ok(events) -> {
+          let color_for = fn(cal_name: String) -> String {
+            state.get_calendar_config(model.calendar_data.cal_config, cal_name).color
+          }
+          cal.view_seven_days(events, color_for)
+        }
       }
   }
 }

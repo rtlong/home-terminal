@@ -1,9 +1,9 @@
 // Calendar server OTP actor.
 //
 // A singleton actor that:
-//   - On start, immediately fetches events from CalDAV.
-//   - Schedules a periodic re-fetch every POLL_INTERVAL_MS milliseconds.
-//   - Keeps the latest Result(List(Event), String) in its state.
+//   - On start, immediately loads the event cache and calendar config from disk.
+//   - Schedules a periodic CalDAV re-fetch every POLL_INTERVAL_MS milliseconds.
+//   - Keeps the latest events + config in its state.
 //   - Allows per-connection clients to register a callback for updates.
 //
 // Clients register a fn(CalendarData) -> Nil callback. This keeps cal_server
@@ -27,9 +27,12 @@ const poll_interval_ms = 300_000
 
 // TYPES -----------------------------------------------------------------------
 
-/// The calendar payload pushed to registered clients.
-pub type CalendarData =
-  Result(List(Event), String)
+/// The calendar payload pushed to registered clients on every update.
+/// Carries both the event list result and the display config so the view
+/// has everything it needs in one message.
+pub type CalendarData {
+  CalendarData(events: Result(List(Event), String), cal_config: state.Config)
+}
 
 /// A client callback that receives CalendarData updates.
 pub type ClientCallback =
@@ -39,7 +42,7 @@ pub type ClientCallback =
 pub opaque type Msg {
   ClientConnected(id: Int, callback: ClientCallback)
   ClientDisconnected(id: Int)
-  CalDavFetched(CalendarData)
+  CalDavFetched(Result(List(Event), String))
   PollTimerFired
 }
 
@@ -51,10 +54,11 @@ type Client {
 type State {
   State(
     self: Subject(Msg),
-    config: cal_dav.Config,
+    dav_config: cal_dav.Config,
     data_dir: String,
     clients: List(Client),
-    events: CalendarData,
+    events: Result(List(Event), String),
+    cal_config: state.Config,
   )
 }
 
@@ -70,7 +74,7 @@ pub opaque type Registration {
 
 /// Start the calendar server.
 pub fn start(
-  config: cal_dav.Config,
+  dav_config: cal_dav.Config,
   data_dir: String,
 ) -> Result(Server, actor.StartError) {
   let result =
@@ -87,13 +91,15 @@ pub fn start(
         <> string.inspect(list.length(cached))
         <> " events from cache",
       )
+      let cal_config = state.read_config(data_dir)
       let actor_state =
         State(
           self: self_subject,
-          config: config,
+          dav_config: dav_config,
           data_dir: data_dir,
           clients: [],
           events: initial_events,
+          cal_config: cal_config,
         )
       actor.initialised(actor_state) |> actor.returning(self_subject) |> Ok
     })
@@ -133,12 +139,16 @@ pub fn placeholder_registration() -> Registration {
 @external(erlang, "erlang", "unique_integer")
 fn unique_integer() -> Int
 
+fn broadcast(state: State) -> Nil {
+  let data = CalendarData(events: state.events, cal_config: state.cal_config)
+  list.each(state.clients, fn(c) { c.callback(data) })
+}
+
 fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
   case msg {
     ClientConnected(id:, callback:) -> {
-      // Call the callback immediately with the current data so the new client
-      // doesn't have to wait for the next poll cycle.
-      callback(state.events)
+      // Send current data immediately so new client doesn't wait for next poll.
+      callback(CalendarData(events: state.events, cal_config: state.cal_config))
       actor.continue(
         State(..state, clients: [Client(id:, callback:), ..state.clients]),
       )
@@ -154,7 +164,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
 
     PollTimerFired -> {
       io.println("[cal_server] fetching events...")
-      let result = cal_dav.fetch_events(state.config)
+      let result = cal_dav.fetch_events(state.dav_config)
       process.send(state.self, CalDavFetched(result))
       process.send_after(state.self, poll_interval_ms, PollTimerFired)
       |> ignore_timer
@@ -174,7 +184,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
         Error(err) -> io.println("[cal_server] fetch error: " <> err)
       }
       let new_state = State(..state, events: result)
-      list.each(new_state.clients, fn(c) { c.callback(result) })
+      broadcast(new_state)
       actor.continue(new_state)
     }
   }

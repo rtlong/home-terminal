@@ -35,6 +35,11 @@ pub type CalendarConfig {
 pub type Config =
   Dict(String, CalendarConfig)
 
+/// An empty config dict — used as initial state before config.json is read.
+pub fn empty_config() -> Config {
+  dict.new()
+}
+
 /// Default config for a calendar not yet seen in config.json.
 pub fn default_calendar_config() -> CalendarConfig {
   CalendarConfig(visible: True, color: "#4a88cc")

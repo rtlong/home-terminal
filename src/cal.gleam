@@ -45,7 +45,11 @@ pub fn view_error(reason: String) -> Element(msg) {
 
 /// The main 7-day view. Shows events for today and the next 6 days,
 /// grouped by day, with timed events before all-day events.
-pub fn view_seven_days(events: List(Event)) -> Element(msg) {
+/// `color_for` is a fn(calendar_name) -> css_color_string for per-cal coloring.
+pub fn view_seven_days(
+  events: List(Event),
+  color_for: fn(String) -> String,
+) -> Element(msg) {
   let now = timestamp.system_time()
   let local_offset = calendar.local_offset()
   let today_date = timestamp.to_calendar(now, local_offset).0
@@ -54,7 +58,7 @@ pub fn view_seven_days(events: List(Event)) -> Element(msg) {
   html.div(
     [attribute.class("cal-seven-days")],
     list.map(days, fn(day) {
-      view_day(day, day == today_date, events, local_offset)
+      view_day(day, day == today_date, events, local_offset, color_for)
     }),
   )
 }
@@ -66,6 +70,7 @@ fn view_day(
   is_today: Bool,
   all_events: List(Event),
   local_offset: duration.Duration,
+  color_for: fn(String) -> String,
 ) -> Element(msg) {
   let day_events = events_on_date(all_events, date, local_offset)
   let timed =
@@ -103,22 +108,33 @@ fn view_day(
       [] -> [
         html.li([attribute.class("cal-empty")], [html.text("—")]),
       ]
-      _ -> list.map(ordered, fn(e) { view_event(e, local_offset) })
+      _ -> list.map(ordered, fn(e) { view_event(e, local_offset, color_for) })
     }),
   ])
 }
 
-fn view_event(event: Event, local_offset: duration.Duration) -> Element(msg) {
+fn view_event(
+  event: Event,
+  local_offset: duration.Duration,
+  color_for: fn(String) -> String,
+) -> Element(msg) {
+  let color = color_for(event.calendar_name)
   let time_str = case event.start {
     AllDay(_) -> ""
     AtTime(ts) -> format_time(ts, local_offset) <> " "
   }
-  html.li([attribute.class("cal-event")], [
-    html.span([attribute.class("cal-event-time")], [html.text(time_str)]),
-    html.span([attribute.class("cal-event-summary")], [
-      html.text(event.summary),
-    ]),
-  ])
+  html.li(
+    [
+      attribute.class("cal-event"),
+      attribute.style("border-left-color", color),
+    ],
+    [
+      html.span([attribute.class("cal-event-time")], [html.text(time_str)]),
+      html.span([attribute.class("cal-event-summary")], [
+        html.text(event.summary),
+      ]),
+    ],
+  )
 }
 
 // EVENT FILTERING -------------------------------------------------------------
