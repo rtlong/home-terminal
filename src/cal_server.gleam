@@ -164,8 +164,15 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
 
     PollTimerFired -> {
       io.println("[cal_server] fetching events...")
-      let result = cal_dav.fetch_events(state.dav_config)
-      process.send(state.self, CalDavFetched(result))
+      // Spawn the fetch so the actor mailbox stays unblocked.
+      // ClientConnected messages (and the cached-data immediate reply) are
+      // processed while the fetch is in flight.
+      let self = state.self
+      let dav_config = state.dav_config
+      process.spawn(fn() {
+        let result = cal_dav.fetch_events(dav_config)
+        process.send(self, CalDavFetched(result))
+      })
       process.send_after(state.self, poll_interval_ms, PollTimerFired)
       |> ignore_timer
       actor.continue(state)
