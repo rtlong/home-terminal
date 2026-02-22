@@ -38,15 +38,20 @@
 
                 packages = [ pkgs.watchexec ];
 
+                # A small script that gleam-builds then starts the server.
+                # Used as the watchexec command so we avoid shell quoting issues
+                # with && inside the processes.dev.exec string.
+                scripts.gleam-run-dev.exec = ''
+                  gleam build && gleam run -m app
+                '';
+
                 # Watch src/ for changes, rebuild and restart the server.
-                # On change: gleam build first; if it succeeds, kill the old
-                # server and start the new one (watchexec -r handles the restart).
                 processes.dev.exec = ''
                   watchexec \
                     --watch src \
                     --exts gleam \
                     --restart \
-                    -- sh -c 'gleam build && gleam run'
+                    -- gleam-run-dev
                 '';
 
                 enterShell = ''
