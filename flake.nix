@@ -46,7 +46,6 @@
                     --watch src \
                     --exts gleam \
                     --restart \
-                    --on-busy-update restart \
                     -- sh -c 'gleam build && gleam run'
                 '';
 
