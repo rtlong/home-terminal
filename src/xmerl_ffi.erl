@@ -9,7 +9,7 @@
 %% This is safe for CalDAV since element local names are unambiguous in practice.
 -module(xmerl_ffi).
 -export([parse_xml/1, find_text_content/3, find_all_elements/3,
-         find_child_text/4]).
+         find_child_text/4, find_response_calendars/1]).
 
 -include_lib("xmerl/include/xmerl.hrl").
 
@@ -76,6 +76,33 @@ find_all_elements(#xmlElement{name = Name, content = Children} = Elem, NsUri, Lo
     SelfMatch ++ ChildMatches;
 find_all_elements(_Other, _NsUri, _LocalName) ->
     [].
+
+%% Find all <D:response> subtrees that contain a <C:calendar> resourcetype,
+%% and return [{Href, DisplayName}] for each one.
+-spec find_response_calendars(#xmlElement{}) -> [{binary(), binary()}].
+find_response_calendars(Root) ->
+    Responses = find_all_elements(Root, <<"DAV:">>, <<"response">>),
+    lists:filtermap(fun(Resp) ->
+        Calendars = find_all_elements(Resp, <<"urn:ietf:params:xml:ns:caldav">>, <<"calendar">>),
+        case Calendars of
+            [] -> false;
+            _  ->
+                Hrefs = find_all_elements(Resp, <<"DAV:">>, <<"href">>),
+                Names = find_all_elements(Resp, <<"DAV:">>, <<"displayname">>),
+                Href = case Hrefs of
+                    [H|_] -> collect_text(H);
+                    []    -> <<>>
+                end,
+                Name = case Names of
+                    [N|_] -> collect_text(N);
+                    []    -> <<>>
+                end,
+                case Href of
+                    <<>> -> false;
+                    _    -> {true, {Href, Name}}
+                end
+        end
+    end, Responses).
 
 %% Collect all character data inside an element (recursively) as a binary.
 -spec collect_text(#xmlElement{} | #xmlText{} | term()) -> binary().

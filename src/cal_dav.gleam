@@ -129,6 +129,7 @@ fn discover_calendar_home(
 
 /// Step 3: PROPFIND calendar home with Depth:1 to list all calendars.
 /// Returns a list of (href, display_name) for each calendar collection.
+/// Only includes responses whose resourcetype contains a <C:calendar> element.
 fn list_calendars(
   config: Config,
   home_href: String,
@@ -145,18 +146,10 @@ fn list_calendars(
   use resp <- result.try(propfind(config, home_href, body, "1"))
   use root <- result.try(parse_xml_response(resp))
 
-  // Extract all <D:response> blocks and filter for calendar collections
-  let response_hrefs = xmerl_find_text(root, "DAV:", "href")
-  let display_names = xmerl_find_text(root, "DAV:", "displayname")
-  let calendar_markers =
-    xmerl_find_text(root, "urn:ietf:params:xml:ns:caldav", "calendar")
-
-  // Pair hrefs with display names — both lists should align response by response
-  // We use presence of a calendar marker as a proxy for "is a calendar collection"
-  let n_calendars = list.length(calendar_markers)
+  // Use FFI to extract only <D:response> subtrees that contain a <C:calendar>
+  // resourcetype marker — filtering out inbox, outbox, home root, etc.
   let pairs =
-    list.zip(response_hrefs, display_names)
-    |> list.take(n_calendars)
+    xmerl_find_response_calendars(root)
     |> list.map(fn(pair) {
       let #(href, name) = pair
       #(ensure_absolute(href, config.url), name)
@@ -338,6 +331,9 @@ fn parse_xml_response(xml_str: String) -> Result(XmlRoot, String) {
 fn xmerl_find_text(root: XmlRoot, ns: String, local: String) -> List(String) {
   xmerl_find_text_ffi(root, ns, local)
 }
+
+@external(erlang, "xmerl_ffi", "find_response_calendars")
+fn xmerl_find_response_calendars(root: XmlRoot) -> List(#(String, String))
 
 // DATETIME FORMATTING ---------------------------------------------------------
 
