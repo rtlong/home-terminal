@@ -15,6 +15,7 @@ import lustre/element
 import lustre/element/html.{html}
 import lustre/server_component
 import mist.{type Connection, type ResponseData}
+import state
 import tabs
 
 // MAIN ------------------------------------------------------------------------
@@ -23,7 +24,8 @@ pub fn main() {
   // Load CalDAV credentials and start the shared calendar server.
   // Crash hard on misconfiguration rather than silently serving stale data.
   let assert Ok(config) = cal_dav.config_from_env()
-  let assert Ok(cal_server) = cal_server.start(config)
+  let data_dir = state.data_dir()
+  let assert Ok(cal_server) = cal_server.start(config, data_dir)
 
   let assert Ok(_) =
     fn(request: Request(Connection)) -> Response(ResponseData) {

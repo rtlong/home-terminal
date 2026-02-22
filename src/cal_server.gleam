@@ -18,6 +18,7 @@ import gleam/io
 import gleam/list
 import gleam/otp/actor
 import gleam/string
+import state
 
 // CONSTANTS -------------------------------------------------------------------
 
@@ -51,6 +52,7 @@ type State {
   State(
     self: Subject(Msg),
     config: cal_dav.Config,
+    data_dir: String,
     clients: List(Client),
     events: CalendarData,
   )
@@ -67,18 +69,33 @@ pub opaque type Registration {
 }
 
 /// Start the calendar server.
-pub fn start(config: cal_dav.Config) -> Result(Server, actor.StartError) {
+pub fn start(
+  config: cal_dav.Config,
+  data_dir: String,
+) -> Result(Server, actor.StartError) {
   let result =
     actor.new_with_initialiser(5000, fn(self_subject) {
       process.send(self_subject, PollTimerFired)
-      let state =
+      // Load cached events so clients get data immediately, before the first fetch.
+      let cached = state.read_cache(data_dir)
+      let initial_events = case cached {
+        [] -> Error("Loading…")
+        events -> Ok(events)
+      }
+      io.println(
+        "[cal_server] loaded "
+        <> string.inspect(list.length(cached))
+        <> " events from cache",
+      )
+      let actor_state =
         State(
           self: self_subject,
           config: config,
+          data_dir: data_dir,
           clients: [],
-          events: Error("Loading…"),
+          events: initial_events,
         )
-      actor.initialised(state) |> actor.returning(self_subject) |> Ok
+      actor.initialised(actor_state) |> actor.returning(self_subject) |> Ok
     })
     |> actor.on_message(handle_message)
     |> actor.start
@@ -146,12 +163,14 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
 
     CalDavFetched(result) -> {
       case result {
-        Ok(events) ->
+        Ok(events) -> {
           io.println(
             "[cal_server] fetched "
             <> string.inspect(list.length(events))
             <> " events",
           )
+          state.write_cache(state.data_dir, events)
+        }
         Error(err) -> io.println("[cal_server] fetch error: " <> err)
       }
       let new_state = State(..state, events: result)
