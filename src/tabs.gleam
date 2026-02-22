@@ -34,9 +34,9 @@ pub opaque type Msg {
   UserSelectedTab(Tab)
 }
 
-fn update(model: Model, msg: Msg) -> Model {
+fn update(_model: Model, msg: Msg) -> Model {
   case msg {
-    UserSelectedTab(tab) -> Model(..model, active_tab: tab)
+    UserSelectedTab(tab) -> Model(active_tab: tab)
   }
 }
 

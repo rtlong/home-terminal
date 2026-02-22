@@ -1,10 +1,27 @@
+// Calendar server OTP actor.
+//
+// A singleton actor that:
+//   - On start, immediately fetches events from CalDAV.
+//   - Schedules a periodic re-fetch every POLL_INTERVAL_MS milliseconds.
+//   - Keeps the latest Result(List(Event), String) in its state.
+//   - Allows per-connection tabs processes to register/deregister for updates.
+//
+// When new calendar data arrives, cal_server broadcasts updated DOM patches to
+// every registered client subject by calling lustre's runtime patch mechanism.
+
 // IMPORTS ---------------------------------------------------------------------
 
 import cal.{type Event}
+import cal_dav
 import gleam/erlang/process.{type Subject}
 import gleam/list
 import gleam/otp/actor
 import lustre/server_component
+
+// CONSTANTS -------------------------------------------------------------------
+
+/// How often to re-fetch from CalDAV, in milliseconds (5 minutes).
+const poll_interval_ms = 300_000
 
 // TYPES -----------------------------------------------------------------------
 
@@ -27,8 +44,11 @@ type TabsMsg =
 /// State held by the actor.
 type State {
   State(
+    // The actor's own subject, used to schedule self-messages for the poll timer.
+    self: Subject(Msg),
+    // CalDAV configuration.
+    config: cal_dav.Config,
     // All currently connected client subjects.
-    // TODO: replace TabsMsg with tabs.Msg once wired up.
     clients: List(Subject(server_component.ClientMessage(TabsMsg))),
     // Latest successfully fetched events, or an error string.
     events: Result(List(Event), String),
@@ -42,9 +62,31 @@ pub type Server =
 
 /// Start the calendar server as a supervised singleton.
 /// Returns the Subject used to send it messages.
-pub fn start() -> Result(Server, actor.StartError) {
-  // TODO: implement actor.start with poll timer setup
-  todo as "calendar_server.start not yet implemented"
+pub fn start(config: cal_dav.Config) -> Result(Server, actor.StartError) {
+  let result =
+    actor.new_with_initialiser(5000, fn(self_subject) {
+      // Kick off the first poll immediately by sending ourselves a timer message.
+      process.send(self_subject, PollTimerFired)
+
+      let state =
+        State(
+          self: self_subject,
+          config: config,
+          clients: [],
+          events: Error("Loading…"),
+        )
+
+      actor.initialised(state)
+      |> actor.returning(self_subject)
+      |> Ok
+    })
+    |> actor.on_message(handle_message)
+    |> actor.start
+
+  case result {
+    Ok(started) -> Ok(started.data)
+    Error(err) -> Error(err)
+  }
 }
 
 /// Register a client subject to receive DOM patch messages when events update.
@@ -79,15 +121,26 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
       )
 
     PollTimerFired -> {
-      // TODO: call caldav.fetch_events() and send CalDavFetched back to self
+      // Perform the fetch synchronously in this actor process.
+      // For a long-running fetch this could stall message handling; a future
+      // improvement would be to spawn a task and send CalDavFetched when done.
+      let result = cal_dav.fetch_events(state.config)
+      process.send(state.self, CalDavFetched(result))
+      // Schedule next poll
+      process.send_after(state.self, poll_interval_ms, PollTimerFired)
+      |> ignore_timer
       actor.continue(state)
     }
 
     CalDavFetched(result) -> {
       let new_state = State(..state, events: result)
-      // TODO: broadcast updated view patches to all registered clients via
-      // lustre.send(client, server_component.register_subject(...))
+      // TODO: broadcast updated view patches to all registered clients
+      // This requires wiring tabs.Msg properly so we can send lustre patches.
       actor.continue(new_state)
     }
   }
+}
+
+fn ignore_timer(_timer: process.Timer) -> Nil {
+  Nil
 }

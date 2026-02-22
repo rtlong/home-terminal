@@ -1,19 +1,26 @@
 // IMPORTS ---------------------------------------------------------------------
 
+import gleam/time/calendar.{type Date}
+import gleam/time/timestamp.{type Timestamp}
 import lustre/element.{type Element}
 import lustre/element/html
 
 // TYPES -----------------------------------------------------------------------
+
+/// When an event starts or ends.
+/// All-day events only carry a Date; timed events carry a UTC Timestamp.
+pub type EventTime {
+  AllDay(date: Date)
+  AtTime(timestamp: Timestamp)
+}
 
 /// A single calendar event, as fetched and parsed from CalDAV.
 pub type Event {
   Event(
     uid: String,
     summary: String,
-    start: String,
-    // TODO: replace with a proper datetime type once we add a date library
-    end: String,
-    all_day: Bool,
+    start: EventTime,
+    end: EventTime,
     calendar_name: String,
   )
 }
