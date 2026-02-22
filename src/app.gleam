@@ -1,6 +1,5 @@
 // IMPORTS ---------------------------------------------------------------------
 
-import counter
 import gleam/bytes_tree
 import gleam/erlang/application
 import gleam/erlang/process.{type Selector, type Subject}
@@ -14,16 +13,20 @@ import lustre/element
 import lustre/element/html.{html}
 import lustre/server_component
 import mist.{type Connection, type ResponseData}
+import tabs
 
 // MAIN ------------------------------------------------------------------------
 
 pub fn main() {
+  // TODO: start calendar_server supervised singleton here before accepting
+  // connections, and pass its Subject into the WebSocket handler.
+
   let assert Ok(_) =
     fn(request: Request(Connection)) -> Response(ResponseData) {
       case request.path_segments(request) {
         [] -> serve_html()
         ["lustre", "runtime.mjs"] -> serve_runtime()
-        ["ws"] -> serve_counter(request)
+        ["ws"] -> serve_tabs(request)
         _ -> response.set_body(response.new(404), mist.Bytes(bytes_tree.new()))
       }
     }
@@ -85,31 +88,31 @@ fn serve_runtime() -> Response(ResponseData) {
 
 // WEBSOCKET -------------------------------------------------------------------
 
-fn serve_counter(request: Request(Connection)) -> Response(ResponseData) {
+fn serve_tabs(request: Request(Connection)) -> Response(ResponseData) {
   mist.websocket(
     request:,
-    on_init: init_counter_socket,
-    handler: loop_counter_socket,
-    on_close: close_counter_socket,
+    on_init: init_tabs_socket,
+    handler: loop_tabs_socket,
+    on_close: close_tabs_socket,
   )
 }
 
-type CounterSocket {
-  CounterSocket(
-    component: lustre.Runtime(counter.Msg),
-    self: Subject(server_component.ClientMessage(counter.Msg)),
+type TabsSocket {
+  TabsSocket(
+    component: lustre.Runtime(tabs.Msg),
+    self: Subject(server_component.ClientMessage(tabs.Msg)),
   )
 }
 
-type CounterSocketMessage =
-  server_component.ClientMessage(counter.Msg)
+type TabsSocketMessage =
+  server_component.ClientMessage(tabs.Msg)
 
-type CounterSocketInit =
-  #(CounterSocket, Option(Selector(CounterSocketMessage)))
+type TabsSocketInit =
+  #(TabsSocket, Option(Selector(TabsSocketMessage)))
 
-fn init_counter_socket(_) -> CounterSocketInit {
+fn init_tabs_socket(_) -> TabsSocketInit {
   let assert Ok(component) =
-    counter.component()
+    tabs.component()
     |> lustre.start_server_component(Nil)
 
   let self = process.new_subject()
@@ -120,14 +123,14 @@ fn init_counter_socket(_) -> CounterSocketInit {
   server_component.register_subject(self)
   |> lustre.send(to: component)
 
-  #(CounterSocket(component:, self:), Some(selector))
+  #(TabsSocket(component:, self:), Some(selector))
 }
 
-fn loop_counter_socket(
-  state: CounterSocket,
-  message: mist.WebsocketMessage(CounterSocketMessage),
+fn loop_tabs_socket(
+  state: TabsSocket,
+  message: mist.WebsocketMessage(TabsSocketMessage),
   connection: mist.WebsocketConnection,
-) -> mist.Next(CounterSocket, CounterSocketMessage) {
+) -> mist.Next(TabsSocket, TabsSocketMessage) {
   case message {
     mist.Text(json) -> {
       case json.parse(json, server_component.runtime_message_decoder()) {
@@ -149,7 +152,7 @@ fn loop_counter_socket(
   }
 }
 
-fn close_counter_socket(state: CounterSocket) -> Nil {
+fn close_tabs_socket(state: TabsSocket) -> Nil {
   lustre.shutdown()
   |> lustre.send(to: state.component)
 }
