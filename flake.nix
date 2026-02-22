@@ -58,7 +58,7 @@
                   echo "Gleam $(gleam --version)"
                   echo ""
                   echo "Run 'devenv up' to start the dev server with auto-reload."
-                  echo "App will be available at http://localhost:1234"
+                  echo "App will be available at http://localhost:46548"
                 '';
               }
             ];

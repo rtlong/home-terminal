@@ -29,7 +29,7 @@ pub fn main() {
     }
     |> mist.new
     |> mist.bind("localhost")
-    |> mist.port(1234)
+    |> mist.port(46548)
     |> mist.start
 
   process.sleep_forever()
