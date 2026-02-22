@@ -1,9 +1,15 @@
 %% FFI helpers for parsing CalDAV XML responses using Erlang's built-in xmerl.
 %%
-%% We expose simple functions to Gleam for extracting text content from XML
-%% elements identified by namespace URI and local name.
+%% xmerl's namespace handling is quirky:
+%%   - Prefixed elements (D:href) get name='D:href' and nsinfo={"D","href"} (charlists)
+%%   - Default-namespace elements (xmlns="DAV:") get name='href' and nsinfo=[]
+%%   - nsinfo never contains the full namespace URI, only the prefix
+%%
+%% We match by local name only (the part after the last colon in the atom name).
+%% This is safe for CalDAV since element local names are unambiguous in practice.
 -module(xmerl_ffi).
--export([parse_xml/1, find_text_content/3, find_all_elements/3]).
+-export([parse_xml/1, find_text_content/3, find_all_elements/3,
+         find_child_text/4]).
 
 -include_lib("xmerl/include/xmerl.hrl").
 
@@ -19,53 +25,62 @@ parse_xml(XmlBin) ->
             {error, list_to_binary(io_lib:format("~p", [Reason]))}
     end.
 
-%% Find the text content of all elements with the given namespace URI and
-%% local name anywhere in the XML tree rooted at Root.
-%%
-%% Returns a list of binary strings, one per matching element.
+%% Find the text content of all elements whose local name matches LocalName.
 -spec find_text_content(#xmlElement{}, binary(), binary()) -> [binary()].
 find_text_content(Root, NsUri, LocalName) ->
     Elems = find_all_elements(Root, NsUri, LocalName),
     [collect_text(E) || E <- Elems].
 
-%% Find all elements with the given namespace URI and local name in the tree.
--spec find_all_elements(#xmlElement{} | #xmlText{}, binary(), binary()) -> [#xmlElement{}].
-find_all_elements(#xmlElement{nsinfo = {Ns, Local}, content = Children} = Elem, NsUri, LocalName) ->
-    NsUriStr = binary_to_list(NsUri),
+%% Find text of the first Child element that is a direct or indirect child of
+%% a Parent element. This lets us find e.g. the <href> inside <calendar-home-set>
+%% without also matching the response-level <href>.
+%%
+%% Returns {ok, Text} or {error, not_found}.
+-spec find_child_text(#xmlElement{}, binary(), binary(), binary()) ->
+    {ok, binary()} | {error, not_found}.
+find_child_text(Root, _ParentNs, ParentLocal, _ChildLocal) ->
+    ParentLocalStr = binary_to_list(ParentLocal),
+    ChildLocalStr  = binary_to_list(_ChildLocal),
+    Parents = find_all_elements(Root, _ParentNs, list_to_binary(ParentLocalStr)),
+    find_child_in_parents(Parents, ChildLocalStr).
+
+find_child_in_parents([], _ChildLocal) ->
+    {error, not_found};
+find_child_in_parents([Parent | Rest], ChildLocal) ->
+    Children = find_all_elements(Parent, <<>>, list_to_binary(ChildLocal)),
+    case Children of
+        [Child | _] ->
+            Text = collect_text(Child),
+            case Text of
+                <<>> -> find_child_in_parents(Rest, ChildLocal);
+                T    -> {ok, T}
+            end;
+        [] ->
+            find_child_in_parents(Rest, ChildLocal)
+    end.
+
+%% Find all elements whose local name matches LocalName, anywhere in the tree.
+-spec find_all_elements(#xmlElement{} | #xmlText{} | term(), binary(), binary()) -> [#xmlElement{}].
+find_all_elements(#xmlElement{name = Name, content = Children} = Elem, NsUri, LocalName) ->
     LocalStr = binary_to_list(LocalName),
-    SelfMatch = case {Ns, Local} of
-        {NsUriStr, LocalStr} -> [Elem];
-        _ -> []
+    AtomStr  = atom_to_list(Name),
+    LocalPart = lists:last(string:split(AtomStr, ":", all)),
+    SelfMatch = case LocalPart =:= LocalStr of
+        true  -> [Elem];
+        false -> []
     end,
     ChildMatches = lists:flatmap(
         fun(C) -> find_all_elements(C, NsUri, LocalName) end,
         Children
     ),
     SelfMatch ++ ChildMatches;
-find_all_elements(#xmlElement{nsinfo = undefined, name = Name, content = Children} = Elem, NsUri, LocalName) ->
-    %% Fallback: no namespace info, try matching by atom name only
-    LocalStr = binary_to_list(LocalName),
-    SelfMatch = case atom_to_list(Name) of
-        LocalStr -> [Elem];
-        _ -> []
-    end,
-    ChildMatches = lists:flatmap(
-        fun(C) -> find_all_elements(C, NsUri, LocalName) end,
-        Children
-    ),
-    SelfMatch ++ ChildMatches;
-find_all_elements(#xmlElement{content = Children} = _Elem, NsUri, LocalName) ->
-    lists:flatmap(
-        fun(C) -> find_all_elements(C, NsUri, LocalName) end,
-        Children
-    );
 find_all_elements(_Other, _NsUri, _LocalName) ->
     [].
 
 %% Collect all character data inside an element (recursively) as a binary.
 -spec collect_text(#xmlElement{} | #xmlText{} | term()) -> binary().
 collect_text(#xmlText{value = V}) ->
-    list_to_binary(V);
+    unicode:characters_to_binary(V);
 collect_text(#xmlElement{content = Children}) ->
     iolist_to_binary([collect_text(C) || C <- Children]);
 collect_text(_) ->

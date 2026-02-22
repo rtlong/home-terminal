@@ -14,6 +14,7 @@ import cal.{type Event}
 import envoy
 import gleam/bit_array
 import gleam/http
+import gleam/io
 import gleam/list
 import gleam/result
 import gleam/string
@@ -93,11 +94,11 @@ fn discover_principal(config: Config) -> Result(String, String) {
   use resp <- result.try(propfind(config, config.url, body, "0"))
   use root <- result.try(parse_xml_response(resp))
 
-  let hrefs = xmerl_find_text(root, "DAV:", "href")
-  case hrefs {
-    [href, ..] -> Ok(ensure_absolute(href, config.url))
-    [] -> Error("current-user-principal not found in PROPFIND response")
-  }
+  xmerl_find_child_text(root, "DAV:", "current-user-principal", "href")
+  |> result.map(fn(href) { ensure_absolute(href, config.url) })
+  |> result.map_error(fn(_) {
+    "current-user-principal not found in PROPFIND response"
+  })
 }
 
 /// Step 2: PROPFIND principal URL to get calendar-home-set href.
@@ -114,11 +115,16 @@ fn discover_calendar_home(
   use resp <- result.try(propfind(config, principal_href, body, "0"))
   use root <- result.try(parse_xml_response(resp))
 
-  let hrefs = xmerl_find_text(root, "DAV:", "href")
-  case hrefs {
-    [href, ..] -> Ok(ensure_absolute(href, config.url))
-    [] -> Error("calendar-home-set not found in PROPFIND response")
-  }
+  xmerl_find_child_text(
+    root,
+    "urn:ietf:params:xml:ns:caldav",
+    "calendar-home-set",
+    "href",
+  )
+  |> result.map(fn(href) { ensure_absolute(href, config.url) })
+  |> result.map_error(fn(_) {
+    "calendar-home-set not found in PROPFIND response"
+  })
 }
 
 /// Step 3: PROPFIND calendar home with Depth:1 to list all calendars.
@@ -239,13 +245,35 @@ fn send_request(
 ) -> Result(String, String) {
   let method_str = http.method_to_string(method) |> string.uppercase
   let body_bits = bit_array.from_string(body)
-  caldav_http_request(method_str, url, extra_headers, body_bits)
-  |> result.map(fn(pair) {
-    pair.1
-    |> bit_array.to_string
-    |> result.unwrap("")
-  })
-  |> result.map_error(fn(err) { "HTTP request failed: " <> err })
+  use pair <- result.try(
+    caldav_http_request(method_str, url, extra_headers, body_bits)
+    |> result.map_error(fn(err) { "HTTP request failed: " <> err }),
+  )
+  let #(status, resp_bits) = pair
+  let resp_str = bit_array.to_string(resp_bits) |> result.unwrap("")
+  io.println(
+    "[cal_dav] "
+    <> method_str
+    <> " "
+    <> url
+    <> " -> "
+    <> string.inspect(status)
+    <> " ("
+    <> string.inspect(string.length(resp_str))
+    <> " chars)",
+  )
+  case status >= 200 && status < 300 || status == 207 {
+    True -> Ok(resp_str)
+    False ->
+      Error(
+        "HTTP "
+        <> string.inspect(status)
+        <> " from "
+        <> url
+        <> ": "
+        <> string.slice(resp_str, 0, 200),
+      )
+  }
 }
 
 @external(erlang, "caldav_http_ffi", "request")
@@ -278,6 +306,14 @@ fn xmerl_find_text_ffi(
   ns_uri: String,
   local_name: String,
 ) -> List(String)
+
+@external(erlang, "xmerl_ffi", "find_child_text")
+fn xmerl_find_child_text(
+  root: XmlRoot,
+  parent_ns: String,
+  parent_local: String,
+  child_local: String,
+) -> Result(String, Nil)
 
 fn parse_xml_response(xml_str: String) -> Result(XmlRoot, String) {
   let xml_bin = bit_array.from_string(xml_str)

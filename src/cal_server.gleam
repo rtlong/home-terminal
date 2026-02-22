@@ -14,8 +14,10 @@
 import cal.{type Event}
 import cal_dav
 import gleam/erlang/process.{type Subject}
+import gleam/io
 import gleam/list
 import gleam/otp/actor
+import gleam/string
 
 // CONSTANTS -------------------------------------------------------------------
 
@@ -90,10 +92,7 @@ pub fn start(config: cal_dav.Config) -> Result(Server, actor.StartError) {
 /// Register a callback to be called with CalendarData whenever it updates.
 /// Returns a Registration token that can be passed to deregister/2.
 /// The callback is also called immediately with the current data.
-pub fn register(
-  server: Server,
-  callback: ClientCallback,
-) -> Registration {
+pub fn register(server: Server, callback: ClientCallback) -> Registration {
   let id = unique_integer()
   process.send(server, ClientConnected(id:, callback:))
   Registration(server:, id:)
@@ -137,6 +136,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
       )
 
     PollTimerFired -> {
+      io.println("[cal_server] fetching events...")
       let result = cal_dav.fetch_events(state.config)
       process.send(state.self, CalDavFetched(result))
       process.send_after(state.self, poll_interval_ms, PollTimerFired)
@@ -145,6 +145,15 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
     }
 
     CalDavFetched(result) -> {
+      case result {
+        Ok(events) ->
+          io.println(
+            "[cal_server] fetched "
+            <> string.inspect(list.length(events))
+            <> " events",
+          )
+        Error(err) -> io.println("[cal_server] fetch error: " <> err)
+      }
       let new_state = State(..state, events: result)
       list.each(new_state.clients, fn(c) { c.callback(result) })
       actor.continue(new_state)
