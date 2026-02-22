@@ -14,7 +14,6 @@ import cal.{type Event}
 import envoy
 import gleam/bit_array
 import gleam/http
-import gleam/io
 import gleam/list
 import gleam/result
 import gleam/string
@@ -193,22 +192,10 @@ fn fetch_calendar_events(
 
   let cal_data_texts =
     xmerl_find_text(root, "urn:ietf:params:xml:ns:caldav", "calendar-data")
-  io.println(
-    "[cal_dav] calendar-data blocks: "
-    <> string.inspect(list.length(cal_data_texts))
-    <> " from "
-    <> calendar_href,
-  )
-  case cal_data_texts {
-    [first, ..] ->
-      io.println("[cal_dav] first 300 chars: " <> string.slice(first, 0, 300))
-    [] -> Nil
-  }
   let events =
     list.flat_map(cal_data_texts, fn(ical_text) {
       ical.parse_events(ical_text, calendar_name)
     })
-  io.println("[cal_dav] parsed events: " <> string.inspect(list.length(events)))
   Ok(events)
 }
 
@@ -256,17 +243,6 @@ fn send_request(
   )
   let #(status, resp_bits) = pair
   let resp_str = bit_array.to_string(resp_bits) |> result.unwrap("")
-  io.println(
-    "[cal_dav] "
-    <> method_str
-    <> " "
-    <> url
-    <> " -> "
-    <> string.inspect(status)
-    <> " ("
-    <> string.inspect(string.length(resp_str))
-    <> " chars)",
-  )
   case status >= 200 && status < 300 || status == 207 {
     True -> Ok(resp_str)
     False ->
