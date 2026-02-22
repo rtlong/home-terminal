@@ -36,8 +36,25 @@
                 # https://devenv.sh/reference/options/
                 languages.gleam.enable = true;
 
+                packages = [ pkgs.watchexec ];
+
+                # Watch src/ for changes, rebuild and restart the server.
+                # On change: gleam build first; if it succeeds, kill the old
+                # server and start the new one (watchexec -r handles the restart).
+                processes.dev.exec = ''
+                  watchexec \
+                    --watch src \
+                    --exts gleam \
+                    --restart \
+                    --on-busy-update restart \
+                    -- sh -c 'gleam build && gleam run'
+                '';
+
                 enterShell = ''
                   echo "Gleam $(gleam --version)"
+                  echo ""
+                  echo "Run 'devenv up' to start the dev server with auto-reload."
+                  echo "App will be available at http://localhost:1234"
                 '';
               }
             ];
