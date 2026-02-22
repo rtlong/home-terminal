@@ -12,11 +12,13 @@
 // IMPORTS ---------------------------------------------------------------------
 
 import cal.{type Event, type EventTime, AllDay, AtTime, Event}
+import gleam/float
 import gleam/int
 import gleam/list
 import gleam/result
 import gleam/string
 import gleam/time/calendar.{type Month, Date}
+import gleam/time/duration
 import gleam/time/timestamp
 
 // PUBLIC API ------------------------------------------------------------------
@@ -84,16 +86,37 @@ fn parse_vevent(
   calendar_name: String,
 ) -> Result(Event, Nil) {
   let props = list.filter_map(lines, parse_property)
+  let local_offset = calendar.local_offset()
 
   use uid <- result.try(get_prop(props, "UID"))
   use summary <- result.try(get_prop(props, "SUMMARY"))
   use dtstart_raw <- result.try(get_prop_prefix(props, "DTSTART"))
   use dtend_raw <- result.try(get_prop_prefix(props, "DTEND"))
 
-  use start <- result.try(parse_event_time(dtstart_raw))
-  use end <- result.try(parse_event_time(dtend_raw))
+  // Detect whether DTSTART/DTEND carry a TZID parameter (local wall-clock time)
+  let dtstart_is_local = has_tzid_param(lines, "DTSTART")
+  let dtend_is_local = has_tzid_param(lines, "DTEND")
+
+  use start <- result.try(parse_event_time(
+    dtstart_raw,
+    dtstart_is_local,
+    local_offset,
+  ))
+  use end <- result.try(parse_event_time(
+    dtend_raw,
+    dtend_is_local,
+    local_offset,
+  ))
 
   Ok(Event(uid:, summary:, start:, end:, calendar_name:))
+}
+
+/// Check whether a property line for `name` carries a ;TZID= parameter.
+fn has_tzid_param(lines: List(String), prop_name: String) -> Bool {
+  list.any(lines, fn(line) {
+    let upper = string.uppercase(line)
+    string.starts_with(upper, prop_name <> ";TZID=")
+  })
 }
 
 // PROPERTY PARSING ------------------------------------------------------------
@@ -143,13 +166,33 @@ fn get_prop_prefix(
 // DATETIME PARSING ------------------------------------------------------------
 
 /// Parse an iCalendar date or datetime value into an EventTime.
-fn parse_event_time(value: String) -> Result(EventTime, Nil) {
+/// If `is_local` is True, the datetime string is in wall-clock (TZID) time:
+/// we store it shifted by -local_offset so that to_calendar(ts, local_offset)
+/// recovers the original wall-clock time during display.
+fn parse_event_time(
+  value: String,
+  is_local: Bool,
+  local_offset: duration.Duration,
+) -> Result(EventTime, Nil) {
   let trimmed = string.trim(value)
   case string.length(trimmed) {
     // DATE format: YYYYMMDD
     8 -> parse_date(trimmed) |> result.map(AllDay)
-    // DATE-TIME: YYYYMMDDTHHMMSSZ or YYYYMMDDTHHMMSS
-    15 | 16 -> parse_datetime(trimmed) |> result.map(AtTime)
+    // DATE-TIME: YYYYMMDDTHHMMSSZ (UTC) or YYYYMMDDTHHMMSS (floating/TZID)
+    15 | 16 -> {
+      use ts <- result.try(parse_datetime(trimmed))
+      let adjusted = case is_local {
+        // Subtract local offset so that to_calendar(ts, local_offset) = wall clock.
+        // Duration has no negate(), so negate manually via seconds.
+        True -> {
+          let offset_secs = duration.to_seconds(local_offset)
+          let neg_offset = duration.seconds(0 - float.truncate(offset_secs))
+          timestamp.add(ts, neg_offset)
+        }
+        False -> ts
+      }
+      Ok(AtTime(adjusted))
+    }
     _ -> Error(Nil)
   }
 }
