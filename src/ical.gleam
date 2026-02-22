@@ -34,12 +34,14 @@ pub fn parse_events(ical_text: String, calendar_name: String) -> List(Event) {
 
 /// RFC 5545 §3.1: long lines may be folded by inserting CRLF + whitespace.
 /// Unfold by removing CRLF (or bare LF) followed by a space or tab.
+/// Also strip bare \r so that splitting on \n yields clean lines.
 fn unfold_lines(text: String) -> String {
   text
   |> string.replace("\r\n ", "")
   |> string.replace("\r\n\t", "")
   |> string.replace("\n ", "")
   |> string.replace("\n\t", "")
+  |> string.replace("\r", "")
 }
 
 // VEVENT SPLITTING ------------------------------------------------------------
@@ -48,11 +50,12 @@ fn unfold_lines(text: String) -> String {
 /// each VEVENT in the calendar text.
 fn split_vevents(text: String) -> List(List(String)) {
   let lines = string.split(text, "\n")
-  do_split_vevents(lines, [], [])
+  do_split_vevents(lines, False, [], [])
 }
 
 fn do_split_vevents(
   lines: List(String),
+  in_vevent: Bool,
   current: List(String),
   acc: List(List(String)),
 ) -> List(List(String)) {
@@ -61,14 +64,13 @@ fn do_split_vevents(
     [line, ..rest] -> {
       let trimmed = string.trim(line)
       case trimmed {
-        "BEGIN:VEVENT" -> do_split_vevents(rest, [], acc)
+        "BEGIN:VEVENT" -> do_split_vevents(rest, True, [], acc)
         "END:VEVENT" ->
-          do_split_vevents(rest, [], [list.reverse(current), ..acc])
+          do_split_vevents(rest, False, [], [list.reverse(current), ..acc])
         _ ->
-          case current {
-            // We haven't entered a VEVENT block yet – skip
-            [] -> do_split_vevents(rest, [], acc)
-            _ -> do_split_vevents(rest, [trimmed, ..current], acc)
+          case in_vevent {
+            False -> do_split_vevents(rest, False, [], acc)
+            True -> do_split_vevents(rest, True, [trimmed, ..current], acc)
           }
       }
     }

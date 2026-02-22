@@ -200,10 +200,22 @@ fn fetch_calendar_events(
 
   let cal_data_texts =
     xmerl_find_text(root, "urn:ietf:params:xml:ns:caldav", "calendar-data")
+  io.println(
+    "[cal_dav] calendar-data blocks: "
+    <> string.inspect(list.length(cal_data_texts))
+    <> " from "
+    <> calendar_href,
+  )
+  case cal_data_texts {
+    [first, ..] ->
+      io.println("[cal_dav] first 300 chars: " <> string.slice(first, 0, 300))
+    [] -> Nil
+  }
   let events =
     list.flat_map(cal_data_texts, fn(ical_text) {
       ical.parse_events(ical_text, calendar_name)
     })
+  io.println("[cal_dav] parsed events: " <> string.inspect(list.length(events)))
   Ok(events)
 }
 
