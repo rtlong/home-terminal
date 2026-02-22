@@ -14,8 +14,6 @@ import cal.{type Event}
 import envoy
 import gleam/bit_array
 import gleam/http
-import gleam/http/request
-import gleam/httpc
 import gleam/list
 import gleam/result
 import gleam/string
@@ -41,13 +39,14 @@ pub type Config {
 pub fn fetch_events(config: Config) -> Result(List(Event), String) {
   use calendar_infos <- result.try(discover_calendars(config))
   let now = timestamp.system_time()
-  let seven_days_later =
-    timestamp.add(now, gleam_time_duration_days(7))
+  let seven_days_later = timestamp.add(now, gleam_time_duration_days(7))
 
   let events =
     list.flat_map(calendar_infos, fn(info) {
       let #(href, display_name) = info
-      case fetch_calendar_events(config, href, display_name, now, seven_days_later) {
+      case
+        fetch_calendar_events(config, href, display_name, now, seven_days_later)
+      {
         Ok(evts) -> evts
         Error(_) -> []
       }
@@ -94,8 +93,7 @@ fn discover_principal(config: Config) -> Result(String, String) {
   use resp <- result.try(propfind(config, config.url, body, "0"))
   use root <- result.try(parse_xml_response(resp))
 
-  let hrefs =
-    xmerl_find_text(root, "DAV:", "href")
+  let hrefs = xmerl_find_text(root, "DAV:", "href")
   case hrefs {
     [href, ..] -> Ok(ensure_absolute(href, config.url))
     [] -> Error("current-user-principal not found in PROPFIND response")
@@ -116,8 +114,7 @@ fn discover_calendar_home(
   use resp <- result.try(propfind(config, principal_href, body, "0"))
   use root <- result.try(parse_xml_response(resp))
 
-  let hrefs =
-    xmerl_find_text(root, "DAV:", "href")
+  let hrefs = xmerl_find_text(root, "DAV:", "href")
   case hrefs {
     [href, ..] -> Ok(ensure_absolute(href, config.url))
     [] -> Error("calendar-home-set not found in PROPFIND response")
@@ -145,7 +142,8 @@ fn list_calendars(
   // Extract all <D:response> blocks and filter for calendar collections
   let response_hrefs = xmerl_find_text(root, "DAV:", "href")
   let display_names = xmerl_find_text(root, "DAV:", "displayname")
-  let calendar_markers = xmerl_find_text(root, "urn:ietf:params:xml:ns:caldav", "calendar")
+  let calendar_markers =
+    xmerl_find_text(root, "urn:ietf:params:xml:ns:caldav", "calendar")
 
   // Pair hrefs with display names — both lists should align response by response
   // We use presence of a calendar marker as a proxy for "is a calendar collection"
@@ -239,23 +237,24 @@ fn send_request(
   body: String,
   extra_headers: List(#(String, String)),
 ) -> Result(String, String) {
-  use req <- result.try(
-    request.to(url)
-    |> result.map_error(fn(_) { "Invalid URL: " <> url }),
-  )
-
-  let req =
-    request.Request(
-      ..req,
-      method: method,
-      body: body,
-      headers: list.append(req.headers, extra_headers),
-    )
-
-  httpc.send(req)
-  |> result.map(fn(resp) { resp.body })
-  |> result.map_error(fn(err) { "HTTP request failed: " <> string.inspect(err) })
+  let method_str = http.method_to_string(method) |> string.uppercase
+  let body_bits = bit_array.from_string(body)
+  caldav_http_request(method_str, url, extra_headers, body_bits)
+  |> result.map(fn(pair) {
+    pair.1
+    |> bit_array.to_string
+    |> result.unwrap("")
+  })
+  |> result.map_error(fn(err) { "HTTP request failed: " <> err })
 }
+
+@external(erlang, "caldav_http_ffi", "request")
+fn caldav_http_request(
+  method: String,
+  url: String,
+  headers: List(#(String, String)),
+  body: BitArray,
+) -> Result(#(Int, BitArray), String)
 
 fn basic_auth(config: Config) -> String {
   let credentials = config.username <> ":" <> config.password
