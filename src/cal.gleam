@@ -1,7 +1,13 @@
 // IMPORTS ---------------------------------------------------------------------
 
-import gleam/time/calendar.{type Date}
+import gleam/int
+import gleam/list
+import gleam/order
+import gleam/string
+import gleam/time/calendar.{type Date, Date}
+import gleam/time/duration
 import gleam/time/timestamp.{type Timestamp}
+import lustre/attribute
 import lustre/element.{type Element}
 import lustre/element/html
 
@@ -37,9 +43,230 @@ pub fn view_error(reason: String) -> Element(msg) {
   html.p([], [html.text("Calendar error: " <> reason)])
 }
 
-/// The main 7-day view. Receives the list of events from tabs.gleam, which
-/// gets them from calendar_server.
-pub fn view_seven_days(_events: List(Event)) -> Element(msg) {
-  // TODO: implement 7-day grid
-  html.p([], [html.text("7-day view coming soon")])
+/// The main 7-day view. Shows events for today and the next 6 days,
+/// grouped by day, with timed events before all-day events.
+pub fn view_seven_days(events: List(Event)) -> Element(msg) {
+  let now = timestamp.system_time()
+  let local_offset = calendar.local_offset()
+  let today_date = timestamp.to_calendar(now, local_offset).0
+  let days = next_n_dates(today_date, 7)
+
+  html.div(
+    [attribute.class("cal-seven-days")],
+    list.map(days, fn(day) {
+      view_day(day, day == today_date, events, local_offset)
+    }),
+  )
+}
+
+// DAY VIEW --------------------------------------------------------------------
+
+fn view_day(
+  date: Date,
+  is_today: Bool,
+  all_events: List(Event),
+  local_offset: duration.Duration,
+) -> Element(msg) {
+  let day_events = events_on_date(all_events, date, local_offset)
+  let timed =
+    list.filter(day_events, fn(e) {
+      case e.start {
+        AtTime(_) -> True
+        AllDay(_) -> False
+      }
+    })
+  let all_day =
+    list.filter(day_events, fn(e) {
+      case e.start {
+        AllDay(_) -> True
+        AtTime(_) -> False
+      }
+    })
+  let sorted_timed = list.sort(timed, fn(a, b) { compare_event_start(a, b) })
+  let ordered = list.append(sorted_timed, all_day)
+
+  let header_class = case is_today {
+    True -> "cal-day-header cal-today"
+    False -> "cal-day-header"
+  }
+
+  html.div([attribute.class("cal-day")], [
+    html.div([attribute.class(header_class)], [
+      html.span([attribute.class("cal-weekday")], [
+        html.text(weekday_name(date)),
+      ]),
+      html.span([attribute.class("cal-date")], [
+        html.text(format_date(date)),
+      ]),
+    ]),
+    html.ul([attribute.class("cal-events")], case ordered {
+      [] -> [
+        html.li([attribute.class("cal-empty")], [html.text("—")]),
+      ]
+      _ -> list.map(ordered, fn(e) { view_event(e, local_offset) })
+    }),
+  ])
+}
+
+fn view_event(event: Event, local_offset: duration.Duration) -> Element(msg) {
+  let time_str = case event.start {
+    AllDay(_) -> ""
+    AtTime(ts) -> format_time(ts, local_offset) <> " "
+  }
+  html.li([attribute.class("cal-event")], [
+    html.span([attribute.class("cal-event-time")], [html.text(time_str)]),
+    html.span([attribute.class("cal-event-summary")], [
+      html.text(event.summary),
+    ]),
+  ])
+}
+
+// EVENT FILTERING -------------------------------------------------------------
+
+/// Return all events whose start date (in local time) matches `date`.
+fn events_on_date(
+  events: List(Event),
+  date: Date,
+  local_offset: duration.Duration,
+) -> List(Event) {
+  list.filter(events, fn(e) {
+    case e.start {
+      AllDay(d) -> calendar.naive_date_compare(d, date) == order.Eq
+      AtTime(ts) -> {
+        let event_date = timestamp.to_calendar(ts, local_offset).0
+        calendar.naive_date_compare(event_date, date) == order.Eq
+      }
+    }
+  })
+}
+
+fn compare_event_start(a: Event, b: Event) -> order.Order {
+  case a.start, b.start {
+    AtTime(ta), AtTime(tb) -> timestamp.compare(ta, tb)
+    AllDay(da), AllDay(db) -> calendar.naive_date_compare(da, db)
+    AtTime(_), AllDay(_) -> order.Lt
+    AllDay(_), AtTime(_) -> order.Gt
+  }
+}
+
+// DATE HELPERS ----------------------------------------------------------------
+
+/// Generate a list of `n` consecutive dates starting from `start`.
+fn next_n_dates(start: Date, n: Int) -> List(Date) {
+  do_next_n_dates(start, n, [])
+  |> list.reverse
+}
+
+fn do_next_n_dates(date: Date, n: Int, acc: List(Date)) -> List(Date) {
+  case n <= 0 {
+    True -> acc
+    False -> do_next_n_dates(advance_date(date), n - 1, [date, ..acc])
+  }
+}
+
+/// Advance a date by one day, handling month and year rollovers.
+fn advance_date(date: Date) -> Date {
+  let days_in = days_in_month(date.month, date.year)
+  case date.day < days_in {
+    True -> Date(..date, day: date.day + 1)
+    False -> {
+      case date.month {
+        calendar.December ->
+          Date(year: date.year + 1, month: calendar.January, day: 1)
+        _ -> Date(..date, month: next_month(date.month), day: 1)
+      }
+    }
+  }
+}
+
+fn days_in_month(month: calendar.Month, year: Int) -> Int {
+  case month {
+    calendar.January -> 31
+    calendar.February ->
+      case calendar.is_leap_year(year) {
+        True -> 29
+        False -> 28
+      }
+    calendar.March -> 31
+    calendar.April -> 30
+    calendar.May -> 31
+    calendar.June -> 30
+    calendar.July -> 31
+    calendar.August -> 31
+    calendar.September -> 30
+    calendar.October -> 31
+    calendar.November -> 30
+    calendar.December -> 31
+  }
+}
+
+fn next_month(m: calendar.Month) -> calendar.Month {
+  case m {
+    calendar.January -> calendar.February
+    calendar.February -> calendar.March
+    calendar.March -> calendar.April
+    calendar.April -> calendar.May
+    calendar.May -> calendar.June
+    calendar.June -> calendar.July
+    calendar.July -> calendar.August
+    calendar.August -> calendar.September
+    calendar.September -> calendar.October
+    calendar.October -> calendar.November
+    calendar.November -> calendar.December
+    calendar.December -> calendar.January
+  }
+}
+
+// FORMATTING ------------------------------------------------------------------
+
+fn format_date(date: Date) -> String {
+  let m =
+    string.pad_start(string.inspect(calendar.month_to_int(date.month)), 2, "0")
+  let d = string.pad_start(string.inspect(date.day), 2, "0")
+  m <> "/" <> d
+}
+
+fn format_time(ts: Timestamp, local_offset: duration.Duration) -> String {
+  let #(_, time) = timestamp.to_calendar(ts, local_offset)
+  let h = time.hours
+  let m = time.minutes
+  let period = case h >= 12 {
+    True -> "pm"
+    False -> "am"
+  }
+  let h12 = case h % 12 {
+    0 -> 12
+    n -> n
+  }
+  string.inspect(h12)
+  <> ":"
+  <> string.pad_start(string.inspect(m), 2, "0")
+  <> period
+}
+
+/// Compute weekday name using Tomohiko Sakamoto's algorithm.
+/// Returns "Sun", "Mon", …, "Sat".
+fn weekday_name(date: Date) -> String {
+  let t = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]
+  let y = case calendar.month_to_int(date.month) < 3 {
+    True -> date.year - 1
+    False -> date.year
+  }
+  let m_idx = calendar.month_to_int(date.month) - 1
+  let tm = case list.take(list.drop(t, m_idx), 1) {
+    [v] -> v
+    _ -> 0
+  }
+  let dow =
+    { y + y / 4 - y / 100 + y / 400 + tm + date.day } |> int.remainder(7)
+  case dow {
+    Ok(0) -> "Sun"
+    Ok(1) -> "Mon"
+    Ok(2) -> "Tue"
+    Ok(3) -> "Wed"
+    Ok(4) -> "Thu"
+    Ok(5) -> "Fri"
+    Ok(6) -> "Sat"
+    _ -> "???"
+  }
 }
