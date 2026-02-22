@@ -1,5 +1,7 @@
 // IMPORTS ---------------------------------------------------------------------
 
+import cal_dav
+import cal_server
 import gleam/bytes_tree
 import gleam/erlang/application
 import gleam/erlang/process.{type Selector, type Subject}
@@ -18,15 +20,17 @@ import tabs
 // MAIN ------------------------------------------------------------------------
 
 pub fn main() {
-  // TODO: start calendar_server supervised singleton here before accepting
-  // connections, and pass its Subject into the WebSocket handler.
+  // Load CalDAV credentials and start the shared calendar server.
+  // Crash hard on misconfiguration rather than silently serving stale data.
+  let assert Ok(config) = cal_dav.config_from_env()
+  let assert Ok(cal_server) = cal_server.start(config)
 
   let assert Ok(_) =
     fn(request: Request(Connection)) -> Response(ResponseData) {
       case request.path_segments(request) {
         [] -> serve_html()
         ["lustre", "runtime.mjs"] -> serve_runtime()
-        ["ws"] -> serve_tabs(request)
+        ["ws"] -> serve_tabs(request, cal_server)
         _ -> response.set_body(response.new(404), mist.Bytes(bytes_tree.new()))
       }
     }
@@ -88,10 +92,13 @@ fn serve_runtime() -> Response(ResponseData) {
 
 // WEBSOCKET -------------------------------------------------------------------
 
-fn serve_tabs(request: Request(Connection)) -> Response(ResponseData) {
+fn serve_tabs(
+  request: Request(Connection),
+  cal_server: cal_server.Server,
+) -> Response(ResponseData) {
   mist.websocket(
     request:,
-    on_init: init_tabs_socket,
+    on_init: fn(conn) { init_tabs_socket(conn, cal_server) },
     handler: loop_tabs_socket,
     on_close: close_tabs_socket,
   )
@@ -110,10 +117,13 @@ type TabsSocketMessage =
 type TabsSocketInit =
   #(TabsSocket, Option(Selector(TabsSocketMessage)))
 
-fn init_tabs_socket(_) -> TabsSocketInit {
+fn init_tabs_socket(
+  _conn: mist.WebsocketConnection,
+  cal_server: cal_server.Server,
+) -> TabsSocketInit {
   let assert Ok(component) =
     tabs.component()
-    |> lustre.start_server_component(Nil)
+    |> lustre.start_server_component(cal_server)
 
   let self = process.new_subject()
   let selector =

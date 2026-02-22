@@ -11,12 +11,12 @@
 
 // IMPORTS ---------------------------------------------------------------------
 
-import cal.{type Event, AllDay, AtTime, Event, type EventTime}
+import cal.{type Event, type EventTime, AllDay, AtTime, Event}
 import gleam/int
 import gleam/list
 import gleam/result
 import gleam/string
-import gleam/time/calendar.{Date, type Month}
+import gleam/time/calendar.{type Month, Date}
 import gleam/time/timestamp
 
 // PUBLIC API ------------------------------------------------------------------
@@ -171,7 +171,13 @@ fn parse_datetime(s: String) -> Result(timestamp.Timestamp, Nil) {
   use month <- result.try(int_to_month(month_int))
 
   let date = Date(year:, month:, day:)
-  let time = calendar.TimeOfDay(hours: hour, minutes: minute, seconds: second, nanoseconds: 0)
+  let time =
+    calendar.TimeOfDay(
+      hours: hour,
+      minutes: minute,
+      seconds: second,
+      nanoseconds: 0,
+    )
   Ok(timestamp.from_calendar(date:, time:, offset: calendar.utc_offset))
 }
 

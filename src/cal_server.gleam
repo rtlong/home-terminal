@@ -4,10 +4,10 @@
 //   - On start, immediately fetches events from CalDAV.
 //   - Schedules a periodic re-fetch every POLL_INTERVAL_MS milliseconds.
 //   - Keeps the latest Result(List(Event), String) in its state.
-//   - Allows per-connection tabs processes to register/deregister for updates.
+//   - Allows per-connection clients to register a callback for updates.
 //
-// When new calendar data arrives, cal_server broadcasts updated DOM patches to
-// every registered client subject by calling lustre's runtime patch mechanism.
+// Clients register a fn(CalendarData) -> Nil callback. This keeps cal_server
+// free of any dependency on tabs.gleam (no import cycle).
 
 // IMPORTS ---------------------------------------------------------------------
 
@@ -16,7 +16,6 @@ import cal_dav
 import gleam/erlang/process.{type Subject}
 import gleam/list
 import gleam/otp/actor
-import lustre/server_component
 
 // CONSTANTS -------------------------------------------------------------------
 
@@ -25,33 +24,33 @@ const poll_interval_ms = 300_000
 
 // TYPES -----------------------------------------------------------------------
 
+/// The calendar payload pushed to registered clients.
+pub type CalendarData =
+  Result(List(Event), String)
+
+/// A client callback that receives CalendarData updates.
+pub type ClientCallback =
+  fn(CalendarData) -> Nil
+
 /// Messages this actor handles.
 pub opaque type Msg {
-  /// A connected client (tabs server component) registers to receive updates.
-  ClientConnected(subject: Subject(server_component.ClientMessage(TabsMsg)))
-  /// A connected client deregisters (its WebSocket closed).
-  ClientDisconnected(subject: Subject(server_component.ClientMessage(TabsMsg)))
-  /// The periodic CalDAV poll has completed.
-  CalDavFetched(Result(List(Event), String))
-  /// Internal: the poll timer fired.
+  ClientConnected(id: Int, callback: ClientCallback)
+  ClientDisconnected(id: Int)
+  CalDavFetched(CalendarData)
   PollTimerFired
 }
 
-// Placeholder for tabs.Msg — will be replaced once tabs.gleam is wired up.
-type TabsMsg =
-  Nil
+type Client {
+  Client(id: Int, callback: ClientCallback)
+}
 
 /// State held by the actor.
 type State {
   State(
-    // The actor's own subject, used to schedule self-messages for the poll timer.
     self: Subject(Msg),
-    // CalDAV configuration.
     config: cal_dav.Config,
-    // All currently connected client subjects.
-    clients: List(Subject(server_component.ClientMessage(TabsMsg))),
-    // Latest successfully fetched events, or an error string.
-    events: Result(List(Event), String),
+    clients: List(Client),
+    events: CalendarData,
   )
 }
 
@@ -60,14 +59,16 @@ type State {
 pub type Server =
   Subject(Msg)
 
-/// Start the calendar server as a supervised singleton.
-/// Returns the Subject used to send it messages.
+/// A token returned when registering a client, used to deregister later.
+pub opaque type Registration {
+  Registration(server: Server, id: Int)
+}
+
+/// Start the calendar server.
 pub fn start(config: cal_dav.Config) -> Result(Server, actor.StartError) {
   let result =
     actor.new_with_initialiser(5000, fn(self_subject) {
-      // Kick off the first poll immediately by sending ourselves a timer message.
       process.send(self_subject, PollTimerFired)
-
       let state =
         State(
           self: self_subject,
@@ -75,10 +76,7 @@ pub fn start(config: cal_dav.Config) -> Result(Server, actor.StartError) {
           clients: [],
           events: Error("Loading…"),
         )
-
-      actor.initialised(state)
-      |> actor.returning(self_subject)
-      |> Ok
+      actor.initialised(state) |> actor.returning(self_subject) |> Ok
     })
     |> actor.on_message(handle_message)
     |> actor.start
@@ -89,44 +87,58 @@ pub fn start(config: cal_dav.Config) -> Result(Server, actor.StartError) {
   }
 }
 
-/// Register a client subject to receive DOM patch messages when events update.
-pub fn register_client(
+/// Register a callback to be called with CalendarData whenever it updates.
+/// Returns a Registration token that can be passed to deregister/2.
+/// The callback is also called immediately with the current data.
+pub fn register(
   server: Server,
-  client: Subject(server_component.ClientMessage(TabsMsg)),
-) -> Nil {
-  process.send(server, ClientConnected(client))
+  callback: ClientCallback,
+) -> Registration {
+  let id = unique_integer()
+  process.send(server, ClientConnected(id:, callback:))
+  Registration(server:, id:)
 }
 
-/// Deregister a client subject when its connection closes.
-pub fn deregister_client(
-  server: Server,
-  client: Subject(server_component.ClientMessage(TabsMsg)),
-) -> Nil {
-  process.send(server, ClientDisconnected(client))
+/// Deregister a previously registered callback.
+pub fn deregister(registration: Registration) -> Nil {
+  process.send(registration.server, ClientDisconnected(registration.id))
+}
+
+/// A placeholder Registration for use before the real one arrives.
+/// The server field points nowhere useful; this must be replaced before
+/// any deregister call. Tabs replaces it immediately via GotRegistration.
+pub fn placeholder_registration() -> Registration {
+  let subject = process.new_subject()
+  Registration(server: subject, id: -1)
 }
 
 // INTERNAL --------------------------------------------------------------------
 
+@external(erlang, "erlang", "unique_integer")
+fn unique_integer() -> Int
+
 fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
   case msg {
-    ClientConnected(subject) ->
-      actor.continue(State(..state, clients: [subject, ..state.clients]))
+    ClientConnected(id:, callback:) -> {
+      // Call the callback immediately with the current data so the new client
+      // doesn't have to wait for the next poll cycle.
+      callback(state.events)
+      actor.continue(
+        State(..state, clients: [Client(id:, callback:), ..state.clients]),
+      )
+    }
 
-    ClientDisconnected(subject) ->
+    ClientDisconnected(id:) ->
       actor.continue(
         State(
           ..state,
-          clients: list.filter(state.clients, fn(s) { s != subject }),
+          clients: list.filter(state.clients, fn(c) { c.id != id }),
         ),
       )
 
     PollTimerFired -> {
-      // Perform the fetch synchronously in this actor process.
-      // For a long-running fetch this could stall message handling; a future
-      // improvement would be to spawn a task and send CalDavFetched when done.
       let result = cal_dav.fetch_events(state.config)
       process.send(state.self, CalDavFetched(result))
-      // Schedule next poll
       process.send_after(state.self, poll_interval_ms, PollTimerFired)
       |> ignore_timer
       actor.continue(state)
@@ -134,8 +146,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
 
     CalDavFetched(result) -> {
       let new_state = State(..state, events: result)
-      // TODO: broadcast updated view patches to all registered clients
-      // This requires wiring tabs.Msg properly so we can send lustre patches.
+      list.each(new_state.clients, fn(c) { c.callback(result) })
       actor.continue(new_state)
     }
   }
