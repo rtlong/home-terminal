@@ -59,10 +59,11 @@
                   };
                 };
 
-                # On a file change: build, then tell process-compose to restart
-                # the beam process. No children of its own — just pokes the API.
+                # On a file change: build, then SIGTERM beam.smp directly by
+                # argv. erlang:halt(0) exits synchronously, port released
+                # immediately. process-compose sees the exit and restarts beam.
                 scripts.rebuild-and-restart.exec = ''
-                  gleam build && process-compose process restart beam -U
+                  gleam build && pkill -TERM -f 'home_terminal@@main'
                 '';
 
                 processes.watcher.exec = ''
