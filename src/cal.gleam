@@ -48,14 +48,14 @@ const min_event_frac = 0.0173
 
 /// Rendered while calendar_server has not yet delivered its first fetch.
 pub fn view_loading() -> Element(msg) {
-  html.p([attribute.class("p-4 text-gray-500 italic text-sm")], [
+  html.p([attribute.class("p-4 text-text-muted italic text-sm")], [
     html.text("Loading calendar…"),
   ])
 }
 
 /// Rendered when the CalDAV fetch failed.
 pub fn view_error(reason: String) -> Element(msg) {
-  html.p([attribute.class("p-4 text-red-400 text-sm")], [
+  html.p([attribute.class("p-4 text-red-500 text-sm")], [
     html.text("Calendar error: " <> reason),
   ])
 }
@@ -104,7 +104,7 @@ pub fn view_seven_days(
   html.div(
     [
       attribute.class(
-        "flex-1 min-h-0 grid grid-cols-7 gap-px p-2 overflow-hidden bg-gray-900",
+        "flex-1 min-h-0 grid grid-cols-7 gap-px p-2 overflow-hidden bg-surface",
       ),
     ],
     list.map(days, fn(day) {
@@ -307,8 +307,8 @@ fn view_day(
     [
       attribute.class("flex flex-col rounded-lg overflow-hidden border"),
       attribute.class(case is_today {
-        True -> "border-gray-700 bg-gray-900"
-        False -> "border-gray-800"
+        True -> "border-border-dim bg-surface"
+        False -> "border-border"
       }),
     ],
     [
@@ -329,8 +329,8 @@ fn view_day_header(date: Date, is_today: Bool) -> Element(msg) {
     [
       attribute.class("flex items-baseline gap-2 px-2 py-1.5 shrink-0 border-b"),
       attribute.class(case is_today {
-        True -> "bg-gray-800 border-emerald-800"
-        False -> "bg-gray-900 border-gray-800"
+        True -> "bg-surface-2 border-accent-border-dim"
+        False -> "bg-surface border-border"
       }),
     ],
     [
@@ -338,8 +338,8 @@ fn view_day_header(date: Date, is_today: Bool) -> Element(msg) {
         [
           attribute.class("text-xs font-semibold uppercase tracking-wide"),
           attribute.class(case is_today {
-            True -> "text-emerald-400"
-            False -> "text-gray-500"
+            True -> "text-accent"
+            False -> "text-text-muted"
           }),
         ],
         [html.text(weekday_name(date))],
@@ -348,8 +348,8 @@ fn view_day_header(date: Date, is_today: Bool) -> Element(msg) {
         [
           attribute.class("text-xs"),
           attribute.class(case is_today {
-            True -> "text-emerald-600"
-            False -> "text-gray-600"
+            True -> "text-accent-dim"
+            False -> "text-text-faint"
           }),
         ],
         [html.text(format_date(date))],
@@ -408,7 +408,7 @@ fn view_all_day_strip(
 
   html.div(
     [
-      attribute.class("relative shrink-0 border-b border-gray-800"),
+      attribute.class("relative shrink-0 border-b border-border"),
       attribute.style("height", strip_h),
     ],
     event_els,
@@ -550,7 +550,7 @@ fn view_timeline(
         html.div(
           [
             attribute.class(
-              "absolute left-0 right-0 border-t border-gray-800 overflow-visible",
+              "absolute left-0 right-0 border-t border-border overflow-visible",
             ),
             attribute.style("top", pct(top_min)),
           ],
@@ -558,7 +558,7 @@ fn view_timeline(
             html.span(
               [
                 attribute.class(
-                  "absolute text-gray-600 leading-none select-none",
+                  "absolute text-text-faint leading-none select-none",
                 ),
                 attribute.styles([
                   #("top", "1px"),
@@ -577,7 +577,7 @@ fn view_timeline(
           html.div(
             [
               attribute.class(
-                "absolute left-0 right-0 border-t border-dashed border-gray-800/50",
+                "absolute left-0 right-0 border-t border-dashed border-border/50",
               ),
               attribute.style("top", pct(top_min + 30)),
             ],
@@ -601,7 +601,7 @@ fn view_timeline(
           html.div(
             [
               attribute.class(
-                "absolute left-0 right-0 border-t border-emerald-500/60 z-10",
+                "absolute left-0 right-0 border-t border-accent-border/60 z-10",
               ),
               attribute.style("top", pct(now_min - window.start_min)),
             ],
@@ -677,14 +677,14 @@ fn view_timeline(
                 html.p(
                   [
                     attribute.class(
-                      "text-xs leading-tight truncate text-gray-200 font-medium",
+                      "text-xs leading-tight truncate text-text font-medium",
                     ),
                   ],
                   [html.text(e.summary)],
                 ),
                 html.p(
                   [
-                    attribute.class("leading-none text-gray-500"),
+                    attribute.class("leading-none text-text-muted"),
                     attribute.style("font-size", "9px"),
                   ],
                   [html.text(time_str)],

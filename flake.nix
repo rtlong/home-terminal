@@ -38,7 +38,7 @@
 
                 packages = [
                   pkgs.watchexec
-                  pkgs.tailwindcss
+                  pkgs.tailwindcss_4
                   pkgs.overmind
                 ];
 
@@ -57,7 +57,7 @@
                   echo "App will be available at http://localhost:46548"
                   echo ""
                   echo "One-shot CSS build (from outside the shell):"
-                  echo "  nix develop --impure --command tailwindcss --config tailwind.config.js --input tailwind.css --output priv/static/app.css"
+                  echo "  nix develop --impure --command tailwindcss --input tailwind.css --output priv/static/app.css"
                 '';
               }
             ];

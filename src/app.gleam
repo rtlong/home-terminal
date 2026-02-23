@@ -150,12 +150,9 @@ fn serve_html() -> Response(ResponseData) {
           "",
         ),
       ]),
-      html.body(
-        [attribute.class("dark bg-gray-950 text-gray-100 min-h-screen")],
-        [
-          server_component.element([server_component.route("/ws")], []),
-        ],
-      ),
+      html.body([attribute.class("bg-bg text-text min-h-screen")], [
+        server_component.element([server_component.route("/ws")], []),
+      ]),
     ])
     |> element.to_document_string_tree
     |> bytes_tree.from_string_tree

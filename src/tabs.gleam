@@ -145,7 +145,7 @@ fn view_tab_bar(active: Tab) -> Element(Msg) {
   html.nav(
     [
       attribute.class(
-        "flex items-center gap-1 px-3 py-2 border-b border-gray-800 shrink-0",
+        "flex items-center gap-1 px-3 py-2 border-b border-border shrink-0",
       ),
     ],
     [
@@ -213,12 +213,12 @@ fn view_clock() -> Element(Msg) {
     html.span(
       [
         attribute.class(
-          "text-5xl font-bold tabular-nums text-white leading-none",
+          "text-5xl font-bold tabular-nums text-text leading-none",
         ),
       ],
       [html.text(time_str)],
     ),
-    html.span([attribute.class("text-lg font-medium text-gray-400")], [
+    html.span([attribute.class("text-lg font-medium text-text-muted")], [
       html.text(date_str),
     ]),
   ])
@@ -227,9 +227,9 @@ fn view_clock() -> Element(Msg) {
 fn view_tab_button(label: String, tab: Tab, active: Tab) -> Element(Msg) {
   let is_active = tab == active
   let classes = case is_active {
-    True -> "px-3 py-1 text-sm rounded bg-gray-800 text-white font-medium"
+    True -> "px-3 py-1 text-sm rounded bg-surface-2 text-text font-medium"
     False ->
-      "px-3 py-1 text-sm rounded text-gray-500 hover:text-gray-300 hover:bg-gray-800/50"
+      "px-3 py-1 text-sm rounded text-text-muted hover:text-text hover:bg-surface-2/50"
   }
   html.button([attribute.class(classes), event.on_click(UserSelectedTab(tab))], [
     html.text(label),
@@ -282,7 +282,7 @@ fn view_fetch_stamp(fetched_at: Int) -> Element(Msg) {
   html.div(
     [
       attribute.class(
-        "shrink-0 px-3 py-0.5 text-right text-gray-600 select-none",
+        "shrink-0 px-3 py-0.5 text-right text-text-faint select-none",
       ),
       attribute.style("font-size", "9px"),
     ],
@@ -313,7 +313,7 @@ fn view_settings(model: Model) -> Element(Msg) {
     html.h2(
       [
         attribute.class(
-          "text-sm font-semibold uppercase tracking-wide text-gray-400 mb-4",
+          "text-sm font-semibold uppercase tracking-wide text-text-muted mb-4",
         ),
       ],
       [html.text("Calendars")],
@@ -355,12 +355,12 @@ fn view_calendar_row(name: String, cfg: state.Config) -> Element(Msg) {
   html.li(
     [
       attribute.class(
-        "flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-900 border border-gray-800",
+        "flex items-center gap-3 px-3 py-2 rounded-lg bg-surface border border-border",
       ),
     ],
     [
       color_input,
-      html.span([attribute.class("flex-1 text-sm text-gray-200")], [
+      html.span([attribute.class("flex-1 text-sm text-text")], [
         html.text(name),
       ]),
       toggle,
