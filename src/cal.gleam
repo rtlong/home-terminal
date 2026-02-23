@@ -29,7 +29,16 @@ pub type Event {
     start: EventTime,
     end: EventTime,
     calendar_name: String,
+    location: String,
   )
+}
+
+/// Travel info resolved for an event's location.
+/// city: short display name (e.g. "Boston")
+/// distance_text: human-readable distance from home (e.g. "2.3 mi")
+/// duration_text: travel time from home with traffic (e.g. "12 min")
+pub type TravelInfo {
+  TravelInfo(city: String, distance_text: String, duration_text: String)
 }
 
 // LAYOUT CONSTANTS ------------------------------------------------------------

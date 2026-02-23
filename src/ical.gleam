@@ -2,7 +2,7 @@
 //
 // Parses VEVENT components out of a VCALENDAR text block and maps them to
 // cal.Event values. Only the fields used by the 7-day view are extracted:
-//   UID, SUMMARY, DTSTART, DTEND.
+//   UID, SUMMARY, DTSTART, DTEND, LOCATION.
 //
 // Recurring events (RRULE:FREQ=WEEKLY) are expanded into individual instances
 // within the supplied time window. EXDATE exclusions are respected.
@@ -124,6 +124,7 @@ fn expand_vevent(
 
   case get_prop(props, "UID"), get_prop(props, "SUMMARY") {
     Ok(uid), Ok(summary) -> {
+      let location = get_prop(props, "LOCATION") |> result.unwrap("")
       let dtstart_is_local = has_tzid_param(lines, "DTSTART")
       let dtend_is_local =
         has_tzid_param(lines, "DTEND")
@@ -157,7 +158,14 @@ fn expand_vevent(
                   // Non-recurring: include if it overlaps the window
                   case event_in_window(start, end, window_start, window_end) {
                     True -> [
-                      Event(uid:, summary:, start:, end:, calendar_name:),
+                      Event(
+                        uid:,
+                        summary:,
+                        start:,
+                        end:,
+                        calendar_name:,
+                        location:,
+                      ),
                     ]
                     False -> []
                   }
@@ -181,6 +189,7 @@ fn expand_vevent(
                     uid,
                     summary,
                     calendar_name,
+                    location,
                     start,
                     end,
                     duration_secs,
@@ -211,6 +220,7 @@ fn expand_weekly(
   uid: String,
   summary: String,
   calendar_name: String,
+  location: String,
   master_start: EventTime,
   master_end: EventTime,
   duration_secs: Int,
@@ -236,6 +246,7 @@ fn expand_weekly(
         uid,
         summary,
         calendar_name,
+        location,
         local_offset,
         window_start,
         window_end,
@@ -259,6 +270,7 @@ fn expand_weekly(
         uid,
         summary,
         calendar_name,
+        location,
         local_offset,
         window_start_date,
         window_end_date,
@@ -377,6 +389,7 @@ fn generate_weekly_allday(
   uid: String,
   summary: String,
   calendar_name: String,
+  location: String,
   local_offset: duration.Duration,
   window_start_date: calendar.Date,
   window_end_date: calendar.Date,
@@ -411,6 +424,7 @@ fn generate_weekly_allday(
             uid,
             summary,
             calendar_name,
+            location,
             local_offset,
             window_start_date,
             window_end_date,
@@ -434,6 +448,7 @@ fn generate_weekly_allday(
                 uid,
                 summary,
                 calendar_name,
+                location,
                 local_offset,
                 window_start_date,
                 window_end_date,
@@ -488,6 +503,7 @@ fn generate_weekly_allday(
                     start: AllDay(current_date),
                     end: AllDay(instance_end_date),
                     calendar_name:,
+                    location:,
                   )
               }
 
@@ -499,6 +515,7 @@ fn generate_weekly_allday(
                 uid,
                 summary,
                 calendar_name,
+                location,
                 local_offset,
                 window_start_date,
                 window_end_date,
@@ -521,6 +538,7 @@ fn generate_weekly_timed(
   uid: String,
   summary: String,
   calendar_name: String,
+  location: String,
   local_offset: duration.Duration,
   window_start: timestamp.Timestamp,
   window_end: timestamp.Timestamp,
@@ -558,6 +576,7 @@ fn generate_weekly_timed(
             uid,
             summary,
             calendar_name,
+            location,
             local_offset,
             window_start,
             window_end,
@@ -580,6 +599,7 @@ fn generate_weekly_timed(
                 uid,
                 summary,
                 calendar_name,
+                location,
                 local_offset,
                 window_start,
                 window_end,
@@ -630,6 +650,7 @@ fn generate_weekly_timed(
                     start: AtTime(current_ts),
                     end: AtTime(instance_end_ts),
                     calendar_name:,
+                    location:,
                   )
               }
 
@@ -641,6 +662,7 @@ fn generate_weekly_timed(
                 uid,
                 summary,
                 calendar_name,
+                location,
                 local_offset,
                 window_start,
                 window_end,
@@ -673,6 +695,7 @@ fn parse_override_event(
       && !has_tzid_param(lines, "DTEND")
       && is_floating_datetime(dtend_raw)
     }
+  let location = get_prop(props, "LOCATION") |> result.unwrap("")
   use start <- result.try(parse_event_time(
     dtstart_raw,
     dtstart_is_local,
@@ -683,7 +706,7 @@ fn parse_override_event(
     dtend_is_local,
     local_offset,
   ))
-  Ok(Event(uid:, summary:, start:, end:, calendar_name:))
+  Ok(Event(uid:, summary:, start:, end:, calendar_name:, location:))
 }
 
 /// Collect all EXDATE values as Timestamps.
