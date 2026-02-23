@@ -888,7 +888,7 @@ fn float_css(f: Float, unit: String) -> String {
 }
 
 fn bgcolor(color: String) -> String {
-  "hsl(from " <> color <> " h s 15%)"
+  "hsl(from " <> color <> " h s var(--event-bg-l))"
 }
 
 @external(erlang, "erlang", "round")

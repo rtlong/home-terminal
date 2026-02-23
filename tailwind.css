@@ -5,6 +5,21 @@
    Light mode overrides via @media (prefers-color-scheme: light).
    ─────────────────────────────────────────────────────────────────────────── */
 
+/* ─── Event background lightness ─────────────────────────────────────────────
+   Used by bgcolor() in cal.gleam via hsl(from <color> h s var(--event-bg-l)).
+   Dark: very dark tint; Light: pale tint.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --event-bg-l: 15%;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --event-bg-l: 88%;
+  }
+}
+
 @theme {
   /* Backgrounds */
   --color-bg:        var(--color-gray-950);  /* page background */
