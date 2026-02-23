@@ -41,42 +41,53 @@
                   pkgs.tailwindcss
                 ];
 
-                # Runs the app by exec'ing erl directly — bypasses gleam run's
-                # fork so the process we launch IS beam.smp, no intermediary.
-                # gleam run normally does: gleam run -> erl -> erl_child_setup -> beam.smp
-                # We skip straight to: erl -> erl_child_setup -> beam.smp
-                # watchexec then kills erl (which kills beam.smp via its pipe).
-                scripts.gleam-run-dev.exec = ''
-                  set -e
-                  gleam build
-                  # Collect all build output directories as -pa flags.
-                  PA=$(find build/dev/erlang -maxdepth 2 -name ebin -type d \
-                         | sort | sed 's/^/-pa /' | tr '\n' ' ')
-                  exec erl $PA \
-                    -eval "home_terminal@@main:run(app)" \
-                    -noshell
-                '';
-
-                # Watch src/ for changes, rebuild and restart.
-                # --wrap-process=session ensures erl and beam.smp are in the
-                # same session and both receive SIGTERM on restart.
+                # Watch loop: build, start the BEAM, wait for file changes,
+                # kill the exact BEAM pid, repeat. No intermediaries — we own
+                # the pid and kill it directly, so no orphans are possible.
                 processes.dev.exec = ''
-                  watchexec \
-                    --watch src \
-                    --exts gleam \
-                    --restart \
-                    --wrap-process=session \
-                    --stop-signal SIGTERM \
-                    -- gleam-run-dev
+                  BEAM_PID=""
+
+                  kill_beam() {
+                    if [ -n "$BEAM_PID" ]; then
+                      echo "[dev] stopping BEAM (pid $BEAM_PID)"
+                      kill "$BEAM_PID" 2>/dev/null
+                      wait "$BEAM_PID" 2>/dev/null
+                      BEAM_PID=""
+                    fi
+                  }
+
+                  # On SIGTERM (process-compose shutting down), kill BEAM and exit.
+                  trap 'kill_beam; exit 0' TERM INT
+
+                  while true; do
+                    echo "[dev] building..."
+                    if gleam build; then
+                      PA=$(find build/dev/erlang -maxdepth 2 -name ebin -type d \
+                             | sort | sed 's/^/-pa /' | tr '\n' ' ')
+                      erl $PA -eval "home_terminal@@main:run(app)" -noshell &
+                      BEAM_PID=$!
+                      echo "[dev] started BEAM pid $BEAM_PID"
+                    else
+                      echo "[dev] build failed, waiting for changes..."
+                    fi
+
+                    # Block until a .gleam file in src/ changes.
+                    watchexec \
+                      --watch src \
+                      --exts gleam \
+                      --postpone \
+                      true
+
+                    kill_beam
+                  done
                 '';
 
-                # Restart on crash (network errors, etc.) with exponential backoff.
-                # process-compose won't restart on exit code 0 (clean shutdown).
+                # Restart on crash (process-compose level).
                 processes.dev.process-compose = {
                   availability = {
                     restart = "on_failure";
                     backoff_seconds = 2;
-                    max_restarts = 0; # 0 = unlimited
+                    max_restarts = 0;
                   };
                 };
 
