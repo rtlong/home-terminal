@@ -52,6 +52,7 @@ pub opaque type Msg {
   CalDavFetched(Result(#(List(String), List(Event)), String))
   PollTimerFired
   UpdateCalendarConfig(name: String, config: state.CalendarConfig)
+  UpdateCalendarPeople(cal_name: String, people: List(String))
 }
 
 type Client {
@@ -146,6 +147,15 @@ pub fn update_calendar_config(
   config: state.CalendarConfig,
 ) -> Nil {
   process.send(server, UpdateCalendarConfig(name:, config:))
+}
+
+/// Update which people are assigned to a calendar, persist, and broadcast.
+pub fn update_calendar_people(
+  server: Server,
+  cal_name: String,
+  people: List(String),
+) -> Nil {
+  process.send(server, UpdateCalendarPeople(cal_name:, people:))
 }
 
 /// A placeholder Registration for use before the real one arrives.
@@ -243,6 +253,17 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
       let new_calendars = dict.insert(state.cal_config.calendars, name, config)
       let new_cal_config =
         state.Config(..state.cal_config, calendars: new_calendars)
+      state.write_config(state.data_dir, new_cal_config)
+      let new_state = State(..state, cal_config: new_cal_config)
+      broadcast(new_state)
+      actor.continue(new_state)
+    }
+
+    UpdateCalendarPeople(cal_name:, people:) -> {
+      let new_cal_people =
+        dict.insert(state.cal_config.calendar_people, cal_name, people)
+      let new_cal_config =
+        state.Config(..state.cal_config, calendar_people: new_cal_people)
       state.write_config(state.data_dir, new_cal_config)
       let new_state = State(..state, cal_config: new_cal_config)
       broadcast(new_state)

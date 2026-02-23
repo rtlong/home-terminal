@@ -2,10 +2,12 @@
 
 import cal
 import cal_server.{type Server}
+import gleam/dict
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
 import gleam/list
+import gleam/result
 import gleam/string
 import gleam/time/calendar
 import gleam/time/timestamp
@@ -91,6 +93,7 @@ pub opaque type Msg {
   GotRegistration(cal_server.Registration)
   UserToggledCalendar(name: String, visible: Bool)
   UserChangedColor(name: String, color: String)
+  UserToggledCalendarPerson(cal_name: String, person: String, assigned: Bool)
   Tick
 }
 
@@ -123,6 +126,23 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         state.get_calendar_config(model.calendar_data.cal_config, name)
       let new_cfg = state.CalendarConfig(..current, color: color)
       cal_server.update_calendar_config(model.server, name, new_cfg)
+      #(model, effect.none())
+    }
+
+    UserToggledCalendarPerson(cal_name:, person:, assigned:) -> {
+      let current_people =
+        model.calendar_data.cal_config.calendar_people
+        |> dict.get(cal_name)
+        |> result.unwrap([])
+      let new_people = case assigned {
+        True ->
+          case list.contains(current_people, person) {
+            True -> current_people
+            False -> [person, ..current_people]
+          }
+        False -> list.filter(current_people, fn(p) { p != person })
+      }
+      cal_server.update_calendar_people(model.server, cal_name, new_people)
       #(model, effect.none())
     }
 
@@ -309,6 +329,9 @@ fn view_settings(model: Model) -> Element(Msg) {
     names -> list.sort(names, string.compare)
   }
 
+  let cfg = model.calendar_data.cal_config
+  let people = cfg.people
+
   html.div([attribute.class("p-6 overflow-y-auto h-full")], [
     html.h2(
       [
@@ -320,15 +343,18 @@ fn view_settings(model: Model) -> Element(Msg) {
     ),
     html.ul(
       [attribute.class("flex flex-col gap-2")],
-      list.map(cal_names, fn(name) {
-        view_calendar_row(name, model.calendar_data.cal_config)
-      }),
+      list.map(cal_names, fn(name) { view_calendar_row(name, cfg, people) }),
     ),
   ])
 }
 
-fn view_calendar_row(name: String, cfg: state.Config) -> Element(Msg) {
+fn view_calendar_row(
+  name: String,
+  cfg: state.Config,
+  people: List(String),
+) -> Element(Msg) {
   let cal_cfg = state.get_calendar_config(cfg, name)
+  let assigned_people = dict.get(cfg.calendar_people, name) |> result.unwrap([])
 
   // Color picker: native <input type="color"> styled as a small swatch.
   // The `change` event fires with { target: { value: "#rrggbb" } }.
@@ -352,18 +378,53 @@ fn view_calendar_row(name: String, cfg: state.Config) -> Element(Msg) {
       on_toggle_change(name),
     ])
 
+  // Per-person assignment checkboxes — only shown when people list is non-empty.
+  let person_chips = case people {
+    [] -> element.none()
+    _ ->
+      html.div(
+        [attribute.class("flex flex-wrap gap-2 mt-1")],
+        list.map(people, fn(person) {
+          let is_assigned = list.contains(assigned_people, person)
+          html.label(
+            [
+              attribute.class(
+                "flex items-center gap-1 cursor-pointer select-none",
+              ),
+            ],
+            [
+              html.input([
+                attribute.type_("checkbox"),
+                attribute.class(
+                  "w-3.5 h-3.5 rounded accent-accent cursor-pointer",
+                ),
+                attribute.checked(is_assigned),
+                on_person_toggle_change(name, person),
+              ]),
+              html.span([attribute.class("text-xs text-text-muted")], [
+                html.text(person),
+              ]),
+            ],
+          )
+        }),
+      )
+  }
+
   html.li(
     [
       attribute.class(
-        "flex items-center gap-3 px-3 py-2 rounded-lg bg-surface border border-border",
+        "flex flex-col gap-1 px-3 py-2 rounded-lg bg-surface border border-border",
       ),
     ],
     [
-      color_input,
-      html.span([attribute.class("flex-1 text-sm text-text")], [
-        html.text(name),
+      html.div([attribute.class("flex items-center gap-3")], [
+        color_input,
+        html.span([attribute.class("flex-1 text-sm text-text")], [
+          html.text(name),
+        ]),
+        toggle,
       ]),
-      toggle,
+      person_chips,
     ],
   )
 }
@@ -383,5 +444,16 @@ fn on_toggle_change(name: String) -> attribute.Attribute(Msg) {
   event.on("change", {
     use checked <- decode.subfield(["target", "checked"], decode.bool)
     decode.success(UserToggledCalendar(name:, visible: checked))
+  })
+}
+
+/// Decode a checkbox change event → UserToggledCalendarPerson.
+fn on_person_toggle_change(
+  cal_name: String,
+  person: String,
+) -> attribute.Attribute(Msg) {
+  event.on("change", {
+    use assigned <- decode.subfield(["target", "checked"], decode.bool)
+    decode.success(UserToggledCalendarPerson(cal_name:, person:, assigned:))
   })
 }
