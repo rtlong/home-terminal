@@ -54,6 +54,16 @@
                     -- gleam-run-dev
                 '';
 
+                # Restart on crash (network errors, etc.) with exponential backoff.
+                # process-compose won't restart on exit code 0 (clean shutdown).
+                processes.dev.process-compose = {
+                  availability = {
+                    restart = "on_failure";
+                    backoff_seconds = 2;
+                    max_restarts = 0; # 0 = unlimited
+                  };
+                };
+
                 enterShell = ''
                   echo "Gleam $(gleam --version)"
                   echo ""

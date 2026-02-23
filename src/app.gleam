@@ -7,8 +7,11 @@ import gleam/erlang/application
 import gleam/erlang/process.{type Selector, type Subject}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
+import gleam/int
+import gleam/io
 import gleam/json
 import gleam/option.{type Option, None, Some}
+import gleam/otp/actor
 import lustre
 import lustre/attribute
 import lustre/element
@@ -17,6 +20,16 @@ import lustre/server_component
 import mist.{type Connection, type ResponseData}
 import state
 import tabs
+
+// CONSTANTS -------------------------------------------------------------------
+
+const port = 46_548
+
+/// How many times to retry binding before giving up.
+const bind_max_attempts = 10
+
+/// Milliseconds to wait between bind retries (doubles each attempt, capped).
+const bind_retry_delay_ms = 500
 
 // MAIN ------------------------------------------------------------------------
 
@@ -27,21 +40,54 @@ pub fn main() {
   let data_dir = state.data_dir()
   let assert Ok(cal_server) = cal_server.start(config, data_dir)
 
-  let assert Ok(_) =
-    fn(request: Request(Connection)) -> Response(ResponseData) {
-      case request.path_segments(request) {
-        [] -> serve_html()
-        ["lustre", "runtime.mjs"] -> serve_runtime()
-        ["ws"] -> serve_tabs(request, cal_server)
-        _ -> response.set_body(response.new(404), mist.Bytes(bytes_tree.new()))
-      }
+  let handler = fn(request: Request(Connection)) -> Response(ResponseData) {
+    case request.path_segments(request) {
+      [] -> serve_html()
+      ["lustre", "runtime.mjs"] -> serve_runtime()
+      ["ws"] -> serve_tabs(request, cal_server)
+      _ -> response.set_body(response.new(404), mist.Bytes(bytes_tree.new()))
     }
-    |> mist.new
-    |> mist.bind("0.0.0.0")
-    |> mist.port(46_548)
-    |> mist.start
+  }
+
+  let assert Ok(_) =
+    start_with_retry(handler, bind_max_attempts, bind_retry_delay_ms)
 
   process.sleep_forever()
+}
+
+/// Try to start the mist server, retrying on EADDRINUSE up to `attempts` times.
+/// Delay between retries starts at `delay_ms` and doubles each attempt.
+fn start_with_retry(
+  handler: fn(Request(Connection)) -> Response(ResponseData),
+  attempts: Int,
+  delay_ms: Int,
+) {
+  let result =
+    mist.new(handler)
+    |> mist.bind("0.0.0.0")
+    |> mist.port(port)
+    |> mist.start
+
+  case result {
+    Ok(_) -> result
+    Error(actor.InitFailed(msg)) if attempts > 1 -> {
+      io.println(
+        "[app] port "
+        <> int.to_string(port)
+        <> " in use ("
+        <> msg
+        <> "), retrying in "
+        <> int.to_string(delay_ms)
+        <> "ms ("
+        <> int.to_string(attempts - 1)
+        <> " attempts left)…",
+      )
+      process.sleep(delay_ms)
+      let next_delay = int.min(delay_ms * 2, 5000)
+      start_with_retry(handler, attempts - 1, next_delay)
+    }
+    Error(_) -> result
+  }
 }
 
 // HTML ------------------------------------------------------------------------
@@ -80,7 +126,7 @@ fn calendar_css() -> String {
   "
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: system-ui, sans-serif; font-size: 14px; background: #111; color: #eee; }
-  .cal-seven-days { display: flex; flex-direction: column; gap: 0.5rem; padding: 1rem; }
+  .cal-seven-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2rem; padding: 1rem; }
   .cal-day { border: 1px solid #333; border-radius: 6px; overflow: hidden; }
   .cal-day-header { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.4rem 0.75rem; background: #1e1e1e; border-bottom: 1px solid #333; }
   .cal-day-header.cal-today { background: #1a2a1a; border-bottom-color: #4a8; }

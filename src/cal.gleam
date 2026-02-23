@@ -88,7 +88,7 @@ fn view_day(
       }
     })
   let sorted_timed = list.sort(timed, fn(a, b) { compare_event_start(a, b) })
-  let ordered = list.append(sorted_timed, all_day)
+  let ordered = list.append(all_day, sorted_timed)
 
   let header_class = case is_today {
     True -> "cal-day-header cal-today"
