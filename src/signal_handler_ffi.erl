@@ -36,7 +36,11 @@ try_start(StartFun) ->
 init([]) -> {ok, []}.
 
 handle_event(sigterm, State) ->
-    init:stop(),
+    %% erlang:halt() exits the OS process immediately and synchronously,
+    %% so the port is released the moment the signal is handled.
+    %% init:stop() is async and leaves the socket open during shutdown,
+    %% which causes EADDRINUSE when the next instance starts too quickly.
+    erlang:halt(0),
     {ok, State};
 handle_event(_Event, State) ->
     {ok, State}.
