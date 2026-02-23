@@ -41,17 +41,25 @@
                   pkgs.tailwindcss
                 ];
 
-                # Build then run the app. The BEAM handles SIGTERM via
-                # signal_handler_ffi (calls init:stop() for orderly shutdown).
+                # Runs the app by exec'ing erl directly — bypasses gleam run's
+                # fork so the process we launch IS beam.smp, no intermediary.
+                # gleam run normally does: gleam run -> erl -> erl_child_setup -> beam.smp
+                # We skip straight to: erl -> erl_child_setup -> beam.smp
+                # watchexec then kills erl (which kills beam.smp via its pipe).
                 scripts.gleam-run-dev.exec = ''
-                  gleam build && gleam run -m app
+                  set -e
+                  gleam build
+                  # Collect all build output directories as -pa flags.
+                  PA=$(find build/dev/erlang -maxdepth 2 -name ebin -type d \
+                         | sort | sed 's/^/-pa /' | tr '\n' ' ')
+                  exec erl $PA \
+                    -eval "home_terminal@@main:run(app)" \
+                    -noshell
                 '';
 
-                # Watch src/ for changes, rebuild and restart the server.
-                # --wrap-process=session: puts the child in a new session so
-                # SIGTERM is delivered to beam.smp (and all its children) even
-                # though gleam run forks it via erl_child_setup. Without this,
-                # beam.smp survives after gleam run is killed and holds the port.
+                # Watch src/ for changes, rebuild and restart.
+                # --wrap-process=session ensures erl and beam.smp are in the
+                # same session and both receive SIGTERM on restart.
                 processes.dev.exec = ''
                   watchexec \
                     --watch src \
