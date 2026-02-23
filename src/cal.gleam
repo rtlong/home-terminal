@@ -662,7 +662,7 @@ fn view_timeline(
             html.div(
               [
                 attribute.class(
-                  "absolute overflow-hidden rounded-lg border-l-2 px-1 hover:brightness-125 cursor-default",
+                  "absolute overflow-hidden rounded-lg border-l-4 px-1 hover:brightness-125 cursor-default",
                 ),
                 attribute.styles([
                   #("top", top_pct),
