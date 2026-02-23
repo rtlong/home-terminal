@@ -39,24 +39,21 @@
                 packages = [
                   pkgs.watchexec
                   pkgs.tailwindcss
+                  pkgs.overmind
                 ];
 
-                # On a file change: build then SIGTERM beam directly by argv.
-                # erlang:halt(0) exits synchronously so the port is released
-                # immediately. process-compose restart=always brings it back.
+                # On a file change: build then tell overmind to restart beam.
+                # overmind sends SIGTERM, waits for exit, then starts fresh.
+                # erlang:halt(0) makes beam exit immediately on SIGTERM so the
+                # port is released before the new instance starts.
                 scripts.rebuild-and-restart.exec = ''
-                  gleam build && pkill -TERM -f 'home_terminal@@main'
+                  gleam build && overmind restart beam
                 '';
-
-                # NOTE: processes are defined in process-compose.yaml directly,
-                # not via devenv, because devenv wraps every process in
-                # devenv-tasks which doesn't exit when the child exits —
-                # breaking process-compose's restart lifecycle entirely.
 
                 enterShell = ''
                   echo "Gleam $(gleam --version)"
                   echo ""
-                  echo "Run 'process-compose up' to start the dev server with auto-reload."
+                  echo "Run 'overmind start' to start the dev server with auto-reload."
                   echo "App will be available at http://localhost:46548"
                   echo ""
                   echo "One-shot CSS build (from outside the shell):"
