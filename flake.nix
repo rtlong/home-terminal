@@ -41,52 +41,44 @@
                   pkgs.tailwindcss
                 ];
 
-                # Watch loop: build, start the BEAM, wait for file changes,
-                # kill the exact BEAM pid, repeat. No intermediaries — we own
-                # the pid and kill it directly, so no orphans are possible.
-                processes.dev.exec = ''
-                  BEAM_PID=""
-
-                  kill_beam() {
-                    if [ -n "$BEAM_PID" ]; then
-                      echo "[dev] stopping BEAM (pid $BEAM_PID)"
-                      kill "$BEAM_PID" 2>/dev/null
-                      wait "$BEAM_PID" 2>/dev/null
-                      BEAM_PID=""
-                    fi
-                  }
-
-                  # On SIGTERM (process-compose shutting down), kill BEAM and exit.
-                  trap 'kill_beam; exit 0' TERM INT
-
-                  while true; do
-                    echo "[dev] building..."
-                    if gleam build; then
-                      PA=$(find build/dev/erlang -maxdepth 2 -name ebin -type d \
-                             | sort | sed 's/^/-pa /' | tr '\n' ' ')
-                      erl $PA -eval "home_terminal@@main:run(app)" -noshell &
-                      BEAM_PID=$!
-                      echo "[dev] started BEAM pid $BEAM_PID"
-                    else
-                      echo "[dev] build failed, waiting for changes..."
-                    fi
-
-                    # Block until a .gleam file in src/ changes.
-                    watchexec \
-                      --watch src \
-                      --exts gleam \
-                      --postpone \
-                      true
-
-                    kill_beam
-                  done
+                # The BEAM process — process-compose owns this pid directly.
+                # It runs erl (not gleam run) to avoid the gleam run fork gap.
+                # shutdown.parent_only: yes sends SIGTERM only to erl itself;
+                # erl's pipe to beam.smp closes, which shuts beam.smp down too.
+                processes.beam.exec = ''
+                  PA=$(find build/dev/erlang -maxdepth 2 -name ebin -type d \
+                         | sort | sed 's/^/-pa /' | tr '\n' ' ')
+                  exec erl $PA -eval "home_terminal@@main:run(app)" -noshell
                 '';
 
-                # Restart on crash (process-compose level).
-                processes.dev.process-compose = {
+                processes.beam.process-compose = {
                   availability = {
                     restart = "on_failure";
-                    backoff_seconds = 2;
+                    backoff_seconds = 1;
+                    max_restarts = 0;
+                  };
+                  shutdown = {
+                    signal = 15;
+                    timeout_seconds = 10;
+                    parent_only = true;
+                  };
+                };
+
+                # Watcher — detects file changes, builds, then tells
+                # process-compose to restart the beam process.
+                # It has no child processes of its own; it just pokes the API.
+                processes.watcher.exec = ''
+                  watchexec \
+                    --watch src \
+                    --exts gleam \
+                    --on-busy-update queue \
+                    -- bash -c 'gleam build && process-compose process restart beam -U'
+                '';
+
+                processes.watcher.process-compose = {
+                  availability = {
+                    restart = "on_failure";
+                    backoff_seconds = 1;
                     max_restarts = 0;
                   };
                 };
