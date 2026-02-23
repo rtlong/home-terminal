@@ -38,7 +38,7 @@
    cascade layer level as the @theme defaults above. */
 @layer theme {
   @media (prefers-color-scheme: light) {
-    :root {
+    :root, :host {
       --color-bg:        var(--color-gray-50);
       --color-surface:   var(--color-white);
       --color-surface-2: var(--color-gray-100);
@@ -63,12 +63,12 @@
    Not a Tailwind token — just a plain CSS variable.
    ─────────────────────────────────────────────────────────────────────────── */
 
-:root {
+:root, :host {
   --event-bg-l: 15%;
 }
 
 @media (prefers-color-scheme: light) {
-  :root {
+  :root, :host {
     --event-bg-l: 88%;
   }
 }
