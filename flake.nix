@@ -41,15 +41,18 @@
                   pkgs.tailwindcss
                 ];
 
-                # The BEAM process — process-compose owns this pid directly.
-                # It runs erl (not gleam run) to avoid the gleam run fork gap.
-                # shutdown.parent_only: yes sends SIGTERM only to erl itself;
-                # erl's pipe to beam.smp closes, which shuts beam.smp down too.
-                processes.beam.exec = ''
+                # Kill any leftover beam.smp from a previous run, then start fresh.
+                # pkill -TERM waits for the signal to be delivered; the sleep gives
+                # the VM time to release the port before erl starts.
+                scripts.start-beam.exec = ''
+                  pkill -TERM -f 'home_terminal@@main' 2>/dev/null || true
+                  sleep 0.5
                   PA=$(find build/dev/erlang -maxdepth 2 -name ebin -type d \
                          | sort | sed 's/^/-pa /' | tr '\n' ' ')
                   exec erl $PA -eval "home_terminal@@main:run(app)" -noshell
                 '';
+
+                processes.beam.exec = "start-beam";
 
                 processes.beam.process-compose = {
                   availability = {
@@ -58,9 +61,10 @@
                     max_restarts = 0;
                   };
                   shutdown = {
-                    signal = 15;
+                    # Kill beam.smp directly by name — erl forks it and killing
+                    # erl alone does not kill beam.smp on macOS.
+                    command = "pkill -TERM -f 'home_terminal@@main'";
                     timeout_seconds = 10;
-                    parent_only = true;
                   };
                 };
 
