@@ -7,12 +7,8 @@ import gleam/erlang/application
 import gleam/erlang/process.{type Selector, type Subject}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
-import gleam/int
-import gleam/io
 import gleam/json
 import gleam/option.{type Option, None, Some}
-import gleam/otp/actor
-import gleam/string
 import lustre
 import lustre/attribute
 import lustre/element
@@ -25,15 +21,6 @@ import tabs
 // CONSTANTS -------------------------------------------------------------------
 
 const port = 46_548
-
-/// How many times to retry binding before giving up.
-const bind_max_attempts = 20
-
-/// Initial milliseconds to wait between bind retries (doubles each attempt, capped at bind_retry_max_delay_ms).
-const bind_retry_delay_ms = 250
-
-/// Maximum delay between retries in milliseconds.
-const bind_retry_max_delay_ms = 10_000
 
 // MAIN ------------------------------------------------------------------------
 
@@ -54,64 +41,13 @@ pub fn main() {
     }
   }
 
-  // Brief pause before first bind attempt — gives the OS time to release the
-  // port after the previous VM exits (avoids EADDRINUSE on rapid restarts).
-  process.sleep(bind_retry_delay_ms)
   let assert Ok(_) =
-    start_with_retry(handler, bind_max_attempts, bind_retry_delay_ms)
+    mist.new(handler)
+    |> mist.bind("0.0.0.0")
+    |> mist.port(port)
+    |> mist.start
 
   process.sleep_forever()
-}
-
-/// Wrap mist.start with exit-signal trapping so that when supervisor:start_link
-/// sends an EXIT to the caller on child failure, we catch it as an Error instead
-/// of crashing the VM. See app_ffi.erl for details.
-@external(erlang, "app_ffi", "try_start_mist")
-fn try_start_mist(
-  start_fun: fn() -> Result(a, actor.StartError),
-) -> Result(a, actor.StartError)
-
-/// Try to start the mist server, retrying on EADDRINUSE up to `attempts` times.
-/// Delay between retries starts at `delay_ms` and doubles each attempt.
-fn start_with_retry(
-  handler: fn(Request(Connection)) -> Response(ResponseData),
-  attempts: Int,
-  delay_ms: Int,
-) {
-  let result =
-    try_start_mist(fn() {
-      mist.new(handler)
-      |> mist.bind("0.0.0.0")
-      |> mist.port(port)
-      |> mist.start
-    })
-
-  case result {
-    Ok(_) -> result
-    Error(err) if attempts > 1 -> {
-      let reason = case err {
-        actor.InitFailed(msg) -> msg
-        actor.InitTimeout -> "init timeout"
-        actor.InitExited(exit_reason) ->
-          "exited: " <> string.inspect(exit_reason)
-      }
-      io.println(
-        "[app] port "
-        <> int.to_string(port)
-        <> " unavailable ("
-        <> reason
-        <> "), retrying in "
-        <> int.to_string(delay_ms)
-        <> "ms ("
-        <> int.to_string(attempts - 1)
-        <> " attempts left)…",
-      )
-      process.sleep(delay_ms)
-      let next_delay = int.min(delay_ms * 2, bind_retry_max_delay_ms)
-      start_with_retry(handler, attempts - 1, next_delay)
-    }
-    Error(_) -> result
-  }
 }
 
 // HTML ------------------------------------------------------------------------
