@@ -13,6 +13,7 @@
 
 import cal.{type Event}
 import cal_dav
+import envoy
 import gleam/dict
 import gleam/erlang/process.{type Subject}
 import gleam/list
@@ -20,6 +21,7 @@ import gleam/otp/actor
 import gleam/string
 import log
 import state
+import travel
 
 // CONSTANTS -------------------------------------------------------------------
 
@@ -30,14 +32,16 @@ const poll_interval_ms = 300_000
 
 /// The calendar payload pushed to registered clients on every update.
 /// Carries the event list result, the full list of discovered calendar names
-/// (even those with zero events in the window), the display config, and the
-/// Unix timestamp of the last successful CalDAV fetch (0 = not yet fetched).
+/// (even those with zero events in the window), the display config, the
+/// Unix timestamp of the last successful CalDAV fetch (0 = not yet fetched),
+/// and a travel-info cache keyed by location string.
 pub type CalendarData {
   CalendarData(
     events: Result(List(Event), String),
     calendar_names: List(String),
     cal_config: state.Config,
     fetched_at: Int,
+    travel_cache: dict.Dict(String, cal.TravelInfo),
   )
 }
 
@@ -70,6 +74,8 @@ type State {
     calendar_names: List(String),
     cal_config: state.Config,
     fetched_at: Int,
+    /// Travel-time cache keyed by location string, persists across fetches.
+    travel_cache: dict.Dict(String, cal.TravelInfo),
   )
 }
 
@@ -113,6 +119,7 @@ pub fn start(
           calendar_names: [],
           cal_config: cal_config,
           fetched_at: 0,
+          travel_cache: dict.new(),
         )
       actor.initialised(actor_state) |> actor.returning(self_subject) |> Ok
     })
@@ -178,6 +185,7 @@ fn broadcast(state: State) -> Nil {
       calendar_names: state.calendar_names,
       cal_config: state.cal_config,
       fetched_at: state.fetched_at,
+      travel_cache: state.travel_cache,
     )
   list.each(state.clients, fn(c) { c.callback(data) })
 }
@@ -191,6 +199,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
         calendar_names: state.calendar_names,
         cal_config: state.cal_config,
         fetched_at: state.fetched_at,
+        travel_cache: state.travel_cache,
       ))
       actor.continue(
         State(..state, clients: [Client(id:, callback:), ..state.clients]),
@@ -233,11 +242,61 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
             <> " calendars",
           )
           state.write_cache(state.data_dir, events)
+
+          // Resolve travel info for new locations (skip empty + already cached).
+          let new_travel_cache = case
+            envoy.get("GOOGLE_MAPS_API_KEY"),
+            state.cal_config.home_address
+          {
+            Ok(api_key), home_address if home_address != "" -> {
+              // Collect unique non-empty locations not yet in the cache.
+              let new_locations =
+                events
+                |> list.filter_map(fn(e) {
+                  case e.location {
+                    "" -> Error(Nil)
+                    loc ->
+                      case dict.has_key(state.travel_cache, loc) {
+                        True -> Error(Nil)
+                        False -> Ok(loc)
+                      }
+                  }
+                })
+                |> list.unique
+
+              // Fetch travel info for each new location and merge into cache.
+              list.fold(new_locations, state.travel_cache, fn(cache, loc) {
+                case travel.get_travel_info(home_address, loc, api_key) {
+                  Ok(result) -> {
+                    let info =
+                      cal.TravelInfo(
+                        city: result.city,
+                        distance_text: result.distance_text,
+                        duration_text: result.duration_text,
+                      )
+                    dict.insert(cache, loc, info)
+                  }
+                  Error(err) -> {
+                    log.println(
+                      "[cal_server] travel lookup failed for \""
+                      <> loc
+                      <> "\": "
+                      <> err,
+                    )
+                    cache
+                  }
+                }
+              })
+            }
+            _, _ -> state.travel_cache
+          }
+
           State(
             ..state,
             events: Ok(events),
             calendar_names: cal_names,
             fetched_at: now_secs,
+            travel_cache: new_travel_cache,
           )
         }
         Error(err) -> {
