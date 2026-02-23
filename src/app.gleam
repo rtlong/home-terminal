@@ -8,11 +8,11 @@ import gleam/erlang/process.{type Selector, type Subject}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 import gleam/int
-import gleam/io
 import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/string
+import log
 import lustre
 import lustre/attribute
 import lustre/element
@@ -45,10 +45,14 @@ fn try_start(
 pub fn main() {
   trap_sigterm()
 
+  // Set up file logging before anything else.
+  let data_dir = state.data_dir()
+  log.set_path(log.default_path())
+  log.println("[app] starting")
+
   // Load CalDAV credentials and start the shared calendar server.
   // Crash hard on misconfiguration rather than silently serving stale data.
   let assert Ok(config) = cal_dav.config_from_env()
-  let data_dir = state.data_dir()
   let assert Ok(cal_server) = cal_server.start(config, data_dir)
 
   let handler = fn(request: Request(Connection)) -> Response(ResponseData) {
@@ -83,7 +87,7 @@ fn start_with_retry(
   case result {
     Ok(_) -> result
     Error(err) if attempts > 1 -> {
-      io.println(
+      log.println(
         "[app] port "
         <> int.to_string(port)
         <> " busy ("

@@ -15,10 +15,10 @@ import cal.{type Event}
 import cal_dav
 import gleam/dict
 import gleam/erlang/process.{type Subject}
-import gleam/io
 import gleam/list
 import gleam/otp/actor
 import gleam/string
+import log
 import state
 
 // CONSTANTS -------------------------------------------------------------------
@@ -30,12 +30,14 @@ const poll_interval_ms = 300_000
 
 /// The calendar payload pushed to registered clients on every update.
 /// Carries the event list result, the full list of discovered calendar names
-/// (even those with zero events in the window), and the display config.
+/// (even those with zero events in the window), the display config, and the
+/// Unix timestamp of the last successful CalDAV fetch (0 = not yet fetched).
 pub type CalendarData {
   CalendarData(
     events: Result(List(Event), String),
     calendar_names: List(String),
     cal_config: state.Config,
+    fetched_at: Int,
   )
 }
 
@@ -66,6 +68,7 @@ type State {
     events: Result(List(Event), String),
     calendar_names: List(String),
     cal_config: state.Config,
+    fetched_at: Int,
   )
 }
 
@@ -93,7 +96,7 @@ pub fn start(
         [] -> Error("Loading…")
         events -> Ok(events)
       }
-      io.println(
+      log.println(
         "[cal_server] loaded "
         <> string.inspect(list.length(cached))
         <> " events from cache",
@@ -108,6 +111,7 @@ pub fn start(
           events: initial_events,
           calendar_names: [],
           cal_config: cal_config,
+          fetched_at: 0,
         )
       actor.initialised(actor_state) |> actor.returning(self_subject) |> Ok
     })
@@ -163,6 +167,7 @@ fn broadcast(state: State) -> Nil {
       events: state.events,
       calendar_names: state.calendar_names,
       cal_config: state.cal_config,
+      fetched_at: state.fetched_at,
     )
   list.each(state.clients, fn(c) { c.callback(data) })
 }
@@ -175,6 +180,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
         events: state.events,
         calendar_names: state.calendar_names,
         cal_config: state.cal_config,
+        fetched_at: state.fetched_at,
       ))
       actor.continue(
         State(..state, clients: [Client(id:, callback:), ..state.clients]),
@@ -190,7 +196,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
       )
 
     PollTimerFired -> {
-      io.println("[cal_server] fetching events...")
+      log.println("[cal_server] fetching events...")
       // Spawn the fetch so the actor mailbox stays unblocked.
       // ClientConnected messages (and the cached-data immediate reply) are
       // processed while the fetch is in flight.
@@ -208,7 +214,8 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
     CalDavFetched(result) -> {
       let new_state = case result {
         Ok(#(cal_names, events)) -> {
-          io.println(
+          let now_secs = unix_seconds_now()
+          log.println(
             "[cal_server] fetched "
             <> string.inspect(list.length(events))
             <> " events from "
@@ -216,10 +223,15 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
             <> " calendars",
           )
           state.write_cache(state.data_dir, events)
-          State(..state, events: Ok(events), calendar_names: cal_names)
+          State(
+            ..state,
+            events: Ok(events),
+            calendar_names: cal_names,
+            fetched_at: now_secs,
+          )
         }
         Error(err) -> {
-          io.println("[cal_server] fetch error: " <> err)
+          log.println("[cal_server] fetch error: " <> err)
           State(..state, events: Error(err))
         }
       }
@@ -240,3 +252,10 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
 fn ignore_timer(_timer: process.Timer) -> Nil {
   Nil
 }
+
+fn unix_seconds_now() -> Int {
+  erlang_system_time_seconds()
+}
+
+@external(erlang, "log_ffi", "system_time_seconds")
+fn erlang_system_time_seconds() -> Int

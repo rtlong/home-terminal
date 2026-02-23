@@ -4,8 +4,11 @@ import cal
 import cal_server.{type Server}
 import gleam/dynamic/decode
 import gleam/erlang/process
+import gleam/int
 import gleam/list
 import gleam/string
+import gleam/time/timestamp
+import log
 import lustre.{type App}
 import lustre/attribute
 import lustre/effect.{type Effect}
@@ -60,6 +63,7 @@ fn init(server: Server) -> #(Model, Effect(Msg)) {
         events: Error("Loading…"),
         calendar_names: [],
         cal_config: state.empty_config(),
+        fetched_at: 0,
       ),
       registration: placeholder,
       server: server,
@@ -158,12 +162,43 @@ fn view_active_tab(model: Model) -> Element(Msg) {
             list.filter(events, fn(e) {
               state.get_calendar_config(cfg, e.calendar_name).visible
             })
-          cal.view_seven_days(visible_events, color_for)
+          html.div(
+            [attribute.class("flex flex-col flex-1 min-h-0 overflow-hidden")],
+            [
+              view_fetch_stamp(model.calendar_data.fetched_at),
+              cal.view_seven_days(visible_events, color_for),
+            ],
+          )
         }
       }
 
     SettingsTab -> view_settings(model)
   }
+}
+
+fn view_fetch_stamp(fetched_at: Int) -> Element(Msg) {
+  let label = case fetched_at {
+    0 -> "not yet fetched"
+    secs -> {
+      let now_secs =
+        timestamp.to_unix_seconds_and_nanoseconds(timestamp.system_time()).0
+      let age_secs = now_secs - secs
+      case age_secs {
+        s if s < 60 -> "updated just now"
+        s if s < 3600 -> "updated " <> int.to_string(s / 60) <> " min ago"
+        s -> "updated " <> int.to_string(s / 3600) <> " hr ago"
+      }
+    }
+  }
+  html.div(
+    [
+      attribute.class(
+        "shrink-0 px-3 py-0.5 text-right text-gray-600 select-none",
+      ),
+      attribute.style("font-size", "9px"),
+    ],
+    [html.text(label)],
+  )
 }
 
 // SETTINGS VIEW ---------------------------------------------------------------

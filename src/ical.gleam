@@ -358,7 +358,7 @@ fn date_day_count(start: calendar.Date, end: calendar.Date) -> Int {
       time: midnight,
       offset: calendar.utc_offset,
     )
-  let diff_secs = duration.to_seconds(timestamp.difference(ts_end, ts_start))
+  let diff_secs = duration.to_seconds(timestamp.difference(ts_start, ts_end))
   let days = float.truncate(diff_secs) / 86_400
   int.max(days, 1)
 }
@@ -713,7 +713,7 @@ fn collect_exdates(
 fn event_duration_secs(start: EventTime, end: EventTime) -> Int {
   case start, end {
     AtTime(s), AtTime(e) -> {
-      let diff = duration.to_seconds(timestamp.difference(e, s))
+      let diff = duration.to_seconds(timestamp.difference(s, e))
       float.truncate(diff)
     }
     _, _ -> 3600
