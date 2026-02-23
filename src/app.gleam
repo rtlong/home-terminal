@@ -63,6 +63,14 @@ pub fn main() {
   process.sleep_forever()
 }
 
+/// Wrap mist.start with exit-signal trapping so that when supervisor:start_link
+/// sends an EXIT to the caller on child failure, we catch it as an Error instead
+/// of crashing the VM. See app_ffi.erl for details.
+@external(erlang, "app_ffi", "try_start_mist")
+fn try_start_mist(
+  start_fun: fn() -> Result(a, actor.StartError),
+) -> Result(a, actor.StartError)
+
 /// Try to start the mist server, retrying on EADDRINUSE up to `attempts` times.
 /// Delay between retries starts at `delay_ms` and doubles each attempt.
 fn start_with_retry(
@@ -71,10 +79,12 @@ fn start_with_retry(
   delay_ms: Int,
 ) {
   let result =
-    mist.new(handler)
-    |> mist.bind("0.0.0.0")
-    |> mist.port(port)
-    |> mist.start
+    try_start_mist(fn() {
+      mist.new(handler)
+      |> mist.bind("0.0.0.0")
+      |> mist.port(port)
+      |> mist.start
+    })
 
   case result {
     Ok(_) -> result
