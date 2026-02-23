@@ -123,12 +123,16 @@ fn serve_html() -> Response(ResponseData) {
           [],
           "(function(){
   var _WS = window.WebSocket;
+  var startedAt = Date.now();
   var connected = false;
   window.WebSocket = function(url, proto) {
     var ws = proto ? new _WS(url, proto) : new _WS(url);
-    if (url.includes('/ws')) {
+    var urlStr = (url && url.toString) ? url.toString() : String(url);
+    if (urlStr.includes('/ws')) {
       ws.addEventListener('open', function() {
-        if (connected) { window.location.reload(); }
+        if (connected && (Date.now() - startedAt) > 3000) {
+          window.location.reload();
+        }
         connected = true;
       });
     }
