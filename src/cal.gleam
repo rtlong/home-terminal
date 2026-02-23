@@ -392,7 +392,7 @@ fn view_all_day_strip(
                 html.div(
                   [
                     attribute.class(
-                      "flex-1 text-xs leading-none truncate border-l-2 p-2 rounded-sm",
+                      "flex-1 text-xs leading-none truncate border-l-2 p-2 rounded-lg",
                     ),
                     attribute.style("border-left-color", color),
                     attribute.style("background-color", bgcolor(color)),
@@ -647,23 +647,14 @@ fn view_timeline(
           let nf = int_to_float(n)
           let cf = int_to_float(c)
           let left_css = case n <= 1 {
-            True -> "2em"
-            False ->
-              "calc(2em + "
-              <> float_pct(cf /. nf *. 100.0)
-              <> " - "
-              <> float_em(cf /. nf *. 2.0)
-              <> ")"
+            True -> "0"
+            False -> "calc(" <> float_pct(cf /. nf *. 100.0) <> ")"
           }
           let right_css = case n <= 1 {
             True -> "0"
             False -> {
               let rf = int_to_float(n - c - 1)
-              "calc("
-              <> float_pct(rf /. nf *. 100.0)
-              <> " - "
-              <> float_em(rf /. nf *. 2.0)
-              <> ")"
+              "calc(" <> float_pct(rf /. nf *. 100.0) <> ")"
             }
           }
 
@@ -671,7 +662,7 @@ fn view_timeline(
             html.div(
               [
                 attribute.class(
-                  "absolute overflow-hidden rounded-sm border-l-2 px-1 hover:brightness-125 cursor-default",
+                  "absolute overflow-hidden rounded-lg border-l-3 px-1 hover:brightness-125 cursor-default",
                 ),
                 attribute.styles([
                   #("top", top_pct),

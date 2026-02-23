@@ -41,19 +41,23 @@
                   pkgs.tailwindcss
                 ];
 
-                # A small script that gleam-builds then starts the server.
-                # Used as the watchexec command so we avoid shell quoting issues
-                # with && inside the processes.dev.exec string.
+                # Build then exec the BEAM directly (exec replaces the shell so
+                # watchexec's SIGTERM reaches beam.smp without an intermediary).
                 scripts.gleam-run-dev.exec = ''
-                  gleam build && gleam run -m app
+                  gleam build && exec gleam run -m app
                 '';
 
                 # Watch src/ for changes, rebuild and restart the server.
+                # --stop-signal TERM   send SIGTERM first (BEAM handles it cleanly)
+                # --stop-timeout 5000  wait up to 5s for it to exit before SIGKILL
+                # This ensures the port is fully released before the new process starts.
                 processes.dev.exec = ''
                   watchexec \
                     --watch src \
                     --exts gleam \
                     --restart \
+                    --stop-signal TERM \
+                    --stop-timeout 5000 \
                     -- gleam-run-dev
                 '';
 
