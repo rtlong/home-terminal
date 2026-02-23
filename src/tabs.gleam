@@ -9,7 +9,6 @@ import gleam/list
 import gleam/string
 import gleam/time/calendar
 import gleam/time/timestamp
-import log
 import lustre.{type App}
 import lustre/attribute
 import lustre/effect.{type Effect}

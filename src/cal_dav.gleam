@@ -13,7 +13,10 @@
 import cal.{type Event}
 import envoy
 import gleam/bit_array
+import gleam/bytes_tree
+import gleam/hackney
 import gleam/http
+import gleam/http/request
 import gleam/list
 import gleam/result
 import gleam/string
@@ -240,14 +243,27 @@ fn send_request(
   body: String,
   extra_headers: List(#(String, String)),
 ) -> Result(String, String) {
-  let method_str = http.method_to_string(method) |> string.uppercase
-  let body_bits = bit_array.from_string(body)
-  use pair <- result.try(
-    caldav_http_request(method_str, url, extra_headers, body_bits)
-    |> result.map_error(fn(err) { "HTTP request failed: " <> err }),
+  use base_req <- result.try(
+    request.to(url)
+    |> result.map_error(fn(_) { "Invalid URL: " <> url }),
   )
-  let #(status, resp_bits) = pair
-  let resp_str = bit_array.to_string(resp_bits) |> result.unwrap("")
+  let body_bytes = bytes_tree.from_string(body)
+  let req =
+    base_req
+    |> request.set_method(method)
+    |> request.set_body(body_bytes)
+  let req =
+    list.fold(extra_headers, req, fn(r, pair) {
+      request.set_header(r, pair.0, pair.1)
+    })
+  use resp <- result.try(
+    hackney.send_bits(req)
+    |> result.map_error(fn(err) {
+      "HTTP request failed: " <> string.inspect(err)
+    }),
+  )
+  let status = resp.status
+  let resp_str = bit_array.to_string(resp.body) |> result.unwrap("")
   case status >= 200 && status < 300 || status == 207 {
     True -> Ok(resp_str)
     False ->
@@ -261,14 +277,6 @@ fn send_request(
       )
   }
 }
-
-@external(erlang, "caldav_http_ffi", "request")
-fn caldav_http_request(
-  method: String,
-  url: String,
-  headers: List(#(String, String)),
-  body: BitArray,
-) -> Result(#(Int, BitArray), String)
 
 fn basic_auth(config: Config) -> String {
   let credentials = config.username <> ":" <> config.password
