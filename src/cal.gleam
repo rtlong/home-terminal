@@ -423,28 +423,31 @@ type PositionedEvent {
 }
 
 /// Assign column indices to timed events so overlapping events sit side by side.
-/// Uses a greedy interval-graph colouring: sort by start, assign to the first
-/// column whose last occupant ends before this event starts.
+///
+/// Pass 1: greedy interval-graph colouring — sort by start, assign each event
+/// to the first column whose last occupant ends before this event starts.
+///
+/// Pass 2: for each event, col_count = 1 + max column index among all events
+/// that directly overlap with it. This means non-overlapping events stay
+/// full-width, and each overlap cluster only narrows its own members.
 fn assign_columns(
   events: List(Event),
   local_offset: duration.Duration,
 ) -> List(PositionedEvent) {
   let sorted = list.sort(events, fn(a, b) { compare_event_start(a, b) })
 
-  // cols: list of end_min values, one per column (the end time of the last
-  // event placed in that column).
-  let #(positioned, cols) =
+  // Pass 1: assign column indices.
+  let positioned =
     list.fold(sorted, #([], []), fn(acc, e) {
       let #(placed, cols) = acc
-      let start_min = event_start_min(e, local_offset)
-      let end_min = event_end_min(e, local_offset)
+      let s = event_start_min(e, local_offset)
+      let en = event_end_min(e, local_offset)
 
-      // Find first column whose last event ends at or before this one starts.
       let maybe_col =
         list.index_map(cols, fn(col_end, idx) { #(idx, col_end) })
         |> list.find(fn(pair) {
           let #(_, col_end) = pair
-          col_end <= start_min
+          col_end <= s
         })
 
       let col_idx = case maybe_col {
@@ -453,35 +456,40 @@ fn assign_columns(
       }
 
       let new_cols = case col_idx >= list.length(cols) {
-        True -> list.append(cols, [end_min])
+        True -> list.append(cols, [en])
         False ->
           list.index_map(cols, fn(v, i) {
             case i == col_idx {
-              True -> end_min
+              True -> en
               False -> v
             }
           })
       }
 
-      // We don't know col_count yet (more events may add columns); we'll fix
-      // it in a second pass.
       #(
         list.append(placed, [
           PositionedEvent(event: e, col: col_idx, col_count: 0),
         ]),
         new_cols,
       )
-    })
+    }).0
 
-  let total_cols = list.length(cols)
-
-  // Second pass: fill in col_count now that we know it.
-  // For events in an overlap group, col_count is the max column index + 1
-  // among all events that overlap with them. For simplicity we use total_cols
-  // as an upper bound — this is correct for a single overlap cluster but
-  // overshoots when there are multiple non-overlapping clusters. Good enough
-  // for a first pass.
-  list.map(positioned, fn(pe) { PositionedEvent(..pe, col_count: total_cols) })
+  // Pass 2: for each event, find all events it overlaps with and take
+  // 1 + max(col_index) across that set as its col_count.
+  list.map(positioned, fn(pe) {
+    let s = event_start_min(pe.event, local_offset)
+    let en = event_end_min(pe.event, local_offset)
+    let max_col =
+      list.fold(positioned, pe.col, fn(acc, other) {
+        let os = event_start_min(other.event, local_offset)
+        let oe = event_end_min(other.event, local_offset)
+        case os < en && oe > s {
+          True -> int.max(acc, other.col)
+          False -> acc
+        }
+      })
+    PositionedEvent(..pe, col_count: max_col + 1)
+  })
 }
 
 fn event_start_min(e: Event, local_offset: duration.Duration) -> Int {
@@ -630,29 +638,33 @@ fn view_timeline(
           let time_str =
             format_time(s, local_offset) <> "–" <> format_time(en, local_offset)
 
-          // Horizontal layout: divide the gutter-offset space into col_count slices.
-          // left  = gutter + col      / col_count * (100% - gutter)
-          // right = (col_count - col - 1) / col_count * (100% - gutter)
-          // We express this using CSS calc() so it works at any column width.
+          // Horizontal layout: divide the post-gutter space into n equal slices,
+          // no gap between adjacent events in the same overlap group.
+          // left  = 2em + c/n * (100% - 2em)
+          // right = (n-c-1)/n * (100% - 2em)
           let n = pe.col_count
           let c = pe.col
+          let nf = int_to_float(n)
+          let cf = int_to_float(c)
           let left_css = case n <= 1 {
             True -> "2em"
             False ->
               "calc(2em + "
-              <> float_pct(int_to_float(c) /. int_to_float(n) *. 100.0)
+              <> float_pct(cf /. nf *. 100.0)
               <> " - "
-              <> float_pct(int_to_float(c) /. int_to_float(n) *. 2.0)
+              <> float_em(cf /. nf *. 2.0)
               <> ")"
           }
           let right_css = case n <= 1 {
-            True -> "2px"
-            False ->
+            True -> "0"
+            False -> {
+              let rf = int_to_float(n - c - 1)
               "calc("
-              <> float_pct(int_to_float(n - c - 1) /. int_to_float(n) *. 100.0)
+              <> float_pct(rf /. nf *. 100.0)
               <> " - "
-              <> float_pct(int_to_float(n - c - 1) /. int_to_float(n) *. 2.0)
-              <> " + 2px)"
+              <> float_em(rf /. nf *. 2.0)
+              <> ")"
+            }
           }
 
           Ok(
