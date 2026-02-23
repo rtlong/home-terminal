@@ -3,11 +3,64 @@
 /* ─── Design tokens ──────────────────────────────────────────────────────────
    Dark mode is the default (this is a wall-display / home terminal).
    Light mode overrides via @media (prefers-color-scheme: light).
+
+   @theme defines the dark defaults and registers the custom tokens so
+   Tailwind generates utility classes (bg-bg, text-text, etc.).
+
+   The light overrides use a plain @layer theme { @media ... { :root {} } }
+   block — same cascade layer as the defaults, so media query specificity
+   works correctly without unlayered styles stomping on them.
    ─────────────────────────────────────────────────────────────────────────── */
 
+@theme {
+  /* Backgrounds — dark defaults */
+  --color-bg:        var(--color-gray-950);
+  --color-surface:   var(--color-gray-900);
+  --color-surface-2: var(--color-gray-800);
+
+  /* Text — dark defaults */
+  --color-text:       var(--color-gray-100);
+  --color-text-muted: var(--color-gray-400);
+  --color-text-faint: var(--color-gray-600);
+
+  /* Borders — dark defaults */
+  --color-border:     var(--color-gray-800);
+  --color-border-dim: var(--color-gray-700);
+
+  /* Accent (emerald) — dark defaults */
+  --color-accent:            var(--color-emerald-400);
+  --color-accent-dim:        var(--color-emerald-600);
+  --color-accent-border:     var(--color-emerald-500);
+  --color-accent-border-dim: var(--color-emerald-800);
+}
+
+/* Light mode overrides — inside @layer theme so they're at the same
+   cascade layer level as the @theme defaults above. */
+@layer theme {
+  @media (prefers-color-scheme: light) {
+    :root {
+      --color-bg:        var(--color-gray-50);
+      --color-surface:   var(--color-white);
+      --color-surface-2: var(--color-gray-100);
+
+      --color-text:       var(--color-gray-900);
+      --color-text-muted: var(--color-gray-500);
+      --color-text-faint: var(--color-gray-400);
+
+      --color-border:     var(--color-gray-200);
+      --color-border-dim: var(--color-gray-300);
+
+      --color-accent:            var(--color-emerald-600);
+      --color-accent-dim:        var(--color-emerald-400);
+      --color-accent-border:     var(--color-emerald-500);
+      --color-accent-border-dim: var(--color-emerald-200);
+    }
+  }
+}
+
 /* ─── Event background lightness ─────────────────────────────────────────────
-   Used by bgcolor() in cal.gleam via hsl(from <color> h s var(--event-bg-l)).
-   Dark: very dark tint; Light: pale tint.
+   Used by bgcolor() in cal.gleam: hsl(from <color> h s var(--event-bg-l))
+   Not a Tailwind token — just a plain CSS variable.
    ─────────────────────────────────────────────────────────────────────────── */
 
 :root {
@@ -17,49 +70,5 @@
 @media (prefers-color-scheme: light) {
   :root {
     --event-bg-l: 88%;
-  }
-}
-
-@theme {
-  /* Backgrounds */
-  --color-bg:        var(--color-gray-950);  /* page background */
-  --color-surface:   var(--color-gray-900);  /* card / panel surface */
-  --color-surface-2: var(--color-gray-800);  /* raised element on surface */
-
-  /* Text */
-  --color-text:       var(--color-gray-100);  /* primary text */
-  --color-text-muted: var(--color-gray-400);  /* secondary / metadata */
-  --color-text-faint: var(--color-gray-600);  /* very low emphasis */
-
-  /* Borders */
-  --color-border:     var(--color-gray-800);  /* default border */
-  --color-border-dim: var(--color-gray-700);  /* subtler border */
-
-  /* Accent (emerald) */
-  --color-accent:     var(--color-emerald-400);  /* bright accent text */
-  --color-accent-dim: var(--color-emerald-600);  /* dimmer accent text */
-  --color-accent-border:     var(--color-emerald-500);  /* accent border */
-  --color-accent-border-dim: var(--color-emerald-800);  /* dim accent border */
-}
-
-/* ─── Light mode overrides ───────────────────────────────────────────────── */
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --color-bg:        var(--color-gray-50);
-    --color-surface:   var(--color-white);
-    --color-surface-2: var(--color-gray-100);
-
-    --color-text:       var(--color-gray-900);
-    --color-text-muted: var(--color-gray-500);
-    --color-text-faint: var(--color-gray-400);
-
-    --color-border:     var(--color-gray-200);
-    --color-border-dim: var(--color-gray-300);
-
-    --color-accent:     var(--color-emerald-600);
-    --color-accent-dim: var(--color-emerald-400);
-    --color-accent-border:     var(--color-emerald-500);
-    --color-accent-border-dim: var(--color-emerald-200);
   }
 }
