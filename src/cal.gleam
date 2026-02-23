@@ -289,9 +289,10 @@ fn view_all_day_strip(
           html.div(
             [
               attribute.class(
-                "flex-1 text-xs leading-none truncate border-l-2 pl-1 rounded-sm",
+                "flex-1 text-xs leading-none truncate border-l-2 p-2 rounded-sm",
               ),
               attribute.style("border-left-color", color),
+              attribute.style("background-color", bgcolor(color)),
             ],
             [html.text(e.summary)],
           ),
@@ -452,7 +453,7 @@ fn view_timeline(
                   #("height", h_pct),
                   #("left", "2em"),
                   #("right", "2px"),
-                  #("background-color", color <> "22"),
+                  #("background-color", bgcolor(color)),
                   #("border-left-color", color),
                 ]),
               ],
@@ -669,6 +670,10 @@ fn float_css(f: Float, unit: String) -> String {
   let int_part = whole / 10
   let frac_part = int.absolute_value(whole % 10)
   string.inspect(int_part) <> "." <> string.inspect(frac_part) <> unit
+}
+
+fn bgcolor(color: String) -> String {
+  "hsl(from " <> color <> " h s 15%)"
 }
 
 @external(erlang, "erlang", "round")
