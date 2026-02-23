@@ -240,7 +240,9 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
     }
 
     UpdateCalendarConfig(name:, config:) -> {
-      let new_cal_config = dict.insert(state.cal_config, name, config)
+      let new_calendars = dict.insert(state.cal_config.calendars, name, config)
+      let new_cal_config =
+        state.Config(..state.cal_config, calendars: new_calendars)
       state.write_config(state.data_dir, new_cal_config)
       let new_state = State(..state, cal_config: new_cal_config)
       broadcast(new_state)

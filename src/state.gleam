@@ -30,14 +30,29 @@ pub type CalendarConfig {
   CalendarConfig(visible: Bool, color: String)
 }
 
-/// The full persisted config: a map from calendar display-name to its config.
-/// Keyed by display name since that's what's stable across re-discoveries.
-pub type Config =
-  Dict(String, CalendarConfig)
+/// Top-level application config, persisted to config.json.
+pub type Config {
+  Config(
+    /// Address used as the origin for travel-time calculations, e.g.
+    /// "123 Main St, Boston MA 02101".
+    home_address: String,
+    /// Ordered list of people tracked in this household, e.g. ["Ryan", "Alex"].
+    people: List(String),
+    /// Maps calendar display-name → list of people who share that calendar.
+    calendar_people: Dict(String, List(String)),
+    /// Per-calendar display settings (visibility, color).
+    calendars: Dict(String, CalendarConfig),
+  )
+}
 
-/// An empty config dict — used as initial state before config.json is read.
+/// An empty config — used as initial state before config.json is read.
 pub fn empty_config() -> Config {
-  dict.new()
+  Config(
+    home_address: "",
+    people: [],
+    calendar_people: dict.new(),
+    calendars: dict.new(),
+  )
 }
 
 /// Default config for a calendar not yet seen in config.json.
@@ -90,24 +105,24 @@ pub fn write_cache(dir: String, events: List(Event)) -> Nil {
 
 // CONFIG ----------------------------------------------------------------------
 
-/// Read per-calendar config from config.json. Returns empty dict if absent.
+/// Read config from config.json. Returns empty config if absent or corrupt.
 pub fn read_config(dir: String) -> Config {
   let path = dir <> "/config.json"
   case file_read(path) {
-    Error(_) -> dict.new()
+    Error(_) -> empty_config()
     Ok(bits) ->
       case bit_array.to_string(bits) {
-        Error(_) -> dict.new()
+        Error(_) -> empty_config()
         Ok(text) ->
           case json.parse(text, config_decoder()) {
             Ok(cfg) -> cfg
-            Error(_) -> dict.new()
+            Error(_) -> empty_config()
           }
       }
   }
 }
 
-/// Write the config dict to config.json.
+/// Write the config to config.json.
 pub fn write_config(dir: String, config: Config) -> Nil {
   let _ = filelib_ensure_dir(dir <> "/placeholder")
   let json_str = json.to_string(encode_config(config))
@@ -117,7 +132,7 @@ pub fn write_config(dir: String, config: Config) -> Nil {
 
 /// Look up a calendar's config, returning the default if not present.
 pub fn get_calendar_config(config: Config, name: String) -> CalendarConfig {
-  dict.get(config, name) |> result.unwrap(default_calendar_config())
+  dict.get(config.calendars, name) |> result.unwrap(default_calendar_config())
 }
 
 // JSON ENCODING ---------------------------------------------------------------
@@ -156,8 +171,8 @@ fn encode_date(date: Date) -> String {
 }
 
 fn encode_config(config: Config) -> json.Json {
-  let entries =
-    dict.to_list(config)
+  let cal_entries =
+    dict.to_list(config.calendars)
     |> list.map(fn(pair) {
       let #(name, cal_cfg) = pair
       #(
@@ -168,7 +183,18 @@ fn encode_config(config: Config) -> json.Json {
         ]),
       )
     })
-  json.object(entries)
+  let cal_people_entries =
+    dict.to_list(config.calendar_people)
+    |> list.map(fn(pair) {
+      let #(name, people) = pair
+      #(name, json.array(people, json.string))
+    })
+  json.object([
+    #("home_address", json.string(config.home_address)),
+    #("people", json.array(config.people, json.string)),
+    #("calendar_people", json.object(cal_people_entries)),
+    #("calendars", json.object(cal_entries)),
+  ])
 }
 
 // JSON DECODING ---------------------------------------------------------------
@@ -210,7 +236,19 @@ fn event_time_decoder() -> decode.Decoder(cal.EventTime) {
 }
 
 fn config_decoder() -> decode.Decoder(Config) {
-  decode.dict(decode.string, calendar_config_decoder())
+  use home_address <- decode.optional_field("home_address", "", decode.string)
+  use people <- decode.optional_field("people", [], decode.list(decode.string))
+  use calendar_people <- decode.optional_field(
+    "calendar_people",
+    dict.new(),
+    decode.dict(decode.string, decode.list(decode.string)),
+  )
+  use calendars <- decode.optional_field(
+    "calendars",
+    dict.new(),
+    decode.dict(decode.string, calendar_config_decoder()),
+  )
+  decode.success(Config(home_address:, people:, calendar_people:, calendars:))
 }
 
 fn calendar_config_decoder() -> decode.Decoder(CalendarConfig) {
