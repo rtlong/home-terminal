@@ -45,14 +45,25 @@ pub type Model {
   )
 }
 
+fn tick_effect() -> Effect(Msg) {
+  effect.from(fn(dispatch) {
+    process.spawn(fn() {
+      process.sleep(tick_interval_ms)
+      dispatch(Tick)
+    })
+    Nil
+  })
+}
+
 fn init(server: Server) -> #(Model, Effect(Msg)) {
-  let effect =
+  let cal_effect =
     effect.select(fn(dispatch, _subject: process.Subject(Msg)) {
       let registration =
         cal_server.register(server, fn(data) { dispatch(CalendarUpdated(data)) })
       dispatch(GotRegistration(registration))
       process.new_selector()
     })
+  let effect = effect.batch([cal_effect, tick_effect()])
 
   let placeholder = cal_server.placeholder_registration()
 
@@ -80,7 +91,10 @@ pub opaque type Msg {
   GotRegistration(cal_server.Registration)
   UserToggledCalendar(name: String, visible: Bool)
   UserChangedColor(name: String, color: String)
+  Tick
 }
+
+const tick_interval_ms = 30_000
 
 fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
@@ -111,6 +125,8 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       cal_server.update_calendar_config(model.server, name, new_cfg)
       #(model, effect.none())
     }
+
+    Tick -> #(model, tick_effect())
   }
 }
 
