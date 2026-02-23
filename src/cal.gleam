@@ -75,6 +75,7 @@ pub fn view_error(reason: String) -> Element(msg) {
 pub fn view_seven_days(
   events: List(Event),
   color_for: fn(String) -> String,
+  travel_cache: Dict(String, TravelInfo),
 ) -> Element(msg) {
   let now = timestamp.system_time()
   let local_offset = calendar.local_offset()
@@ -141,6 +142,7 @@ pub fn view_seven_days(
         all_day_row_map,
         all_day_row_count,
         color_for,
+        travel_cache,
       )
     }),
   )
@@ -311,6 +313,7 @@ fn view_day(
   all_day_row_map: Dict(String, Int),
   all_day_row_count: Int,
   color_for: fn(String) -> String,
+  travel_cache: Dict(String, TravelInfo),
 ) -> Element(msg) {
   html.div(
     [
@@ -327,8 +330,16 @@ fn view_day(
         all_day_row_map,
         all_day_row_count,
         color_for,
+        travel_cache,
       ),
-      view_timeline(timed_events, local_offset, window, is_today, color_for),
+      view_timeline(
+        timed_events,
+        local_offset,
+        window,
+        is_today,
+        color_for,
+        travel_cache,
+      ),
     ],
   )
 }
@@ -377,6 +388,7 @@ fn view_all_day_strip(
   row_map: Dict(String, Int),
   row_count: Int,
   color_for: fn(String) -> String,
+  travel_cache: Dict(String, TravelInfo),
 ) -> Element(msg) {
   let row_em = 1.4
   let strip_h = float_em(int_to_float(row_count) *. row_em)
@@ -389,6 +401,15 @@ fn view_all_day_strip(
           let color = color_for(e.calendar_name)
           let top_em = float_em(int_to_float(row) *. row_em)
           let h_em = float_em(row_em -. 0.1)
+          // Show city suffix for all-day events with a resolved location.
+          let city_suffix = case e.location {
+            "" -> ""
+            loc ->
+              case dict.get(travel_cache, loc) {
+                Ok(info) -> " · " <> info.city
+                Error(_) -> ""
+              }
+          }
           Ok(
             html.div(
               [
@@ -406,7 +427,7 @@ fn view_all_day_strip(
                     attribute.style("border-left-color", color),
                     attribute.style("background-color", bgcolor(color)),
                   ],
-                  [html.text(e.summary)],
+                  [html.text(e.summary <> city_suffix)],
                 ),
               ],
             ),
@@ -530,6 +551,7 @@ fn view_timeline(
   window: Window,
   is_today: Bool,
   color_for: fn(String) -> String,
+  travel_cache: Dict(String, TravelInfo),
 ) -> Element(msg) {
   let total_min = window.end_min - window.start_min
   let total_f = int_to_float(total_min)
@@ -647,6 +669,23 @@ fn view_timeline(
           let time_str =
             format_time(s, local_offset) <> "–" <> format_time(en, local_offset)
 
+          // Travel info line: "Boston • 12 min" if location resolves.
+          let travel_el = case e.location {
+            "" -> element.none()
+            loc ->
+              case dict.get(travel_cache, loc) {
+                Error(_) -> element.none()
+                Ok(info) ->
+                  html.p(
+                    [
+                      attribute.class("leading-none text-text-faint truncate"),
+                      attribute.style("font-size", "9px"),
+                    ],
+                    [html.text(info.city <> " • " <> info.duration_text)],
+                  )
+              }
+          }
+
           // Horizontal layout: divide the post-gutter space into n equal slices,
           // no gap between adjacent events in the same overlap group.
           // left  = 2em + c/n * (100% - 2em)
@@ -698,6 +737,7 @@ fn view_timeline(
                   ],
                   [html.text(time_str)],
                 ),
+                travel_el,
               ],
             ),
           )
