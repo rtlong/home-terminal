@@ -48,14 +48,17 @@
                 '';
 
                 # Watch src/ for changes, rebuild and restart the server.
-                # watchexec sends SIGTERM by default and waits up to 10s — the
-                # BEAM's SIGTERM handler will call init:stop(), shut down
-                # supervisors, release the port, and exit cleanly before then.
+                # --wrap-process=session: puts the child in a new session so
+                # SIGTERM is delivered to beam.smp (and all its children) even
+                # though gleam run forks it via erl_child_setup. Without this,
+                # beam.smp survives after gleam run is killed and holds the port.
                 processes.dev.exec = ''
                   watchexec \
                     --watch src \
                     --exts gleam \
                     --restart \
+                    --wrap-process=session \
+                    --stop-signal SIGTERM \
                     -- gleam-run-dev
                 '';
 
