@@ -337,23 +337,28 @@ fn view_timeline(
       let hour_line =
         html.div(
           [
-            attribute.class("absolute left-0 right-0 flex items-center"),
+            // Zero-height row: the border-t is exactly at `top`, overflow visible
+            // lets the label hang below without pushing events down.
+            attribute.class(
+              "absolute left-0 right-0 border-t border-gray-800 overflow-visible",
+            ),
             attribute.style("top", top),
           ],
           [
-            // Hour label
+            // Label sits just below the line via absolute positioning.
             html.span(
               [
                 attribute.class(
-                  "text-gray-600 text-xs leading-none select-none shrink-0",
+                  "absolute text-gray-600 leading-none select-none",
                 ),
-                attribute.style("width", px(gutter_px)),
-                attribute.style("font-size", "9px"),
+                attribute.styles([
+                  #("top", "1px"),
+                  #("left", "2px"),
+                  #("font-size", "9px"),
+                ]),
               ],
               [html.text(format_hour(h))],
             ),
-            // Solid hour line
-            html.div([attribute.class("flex-1 border-t border-gray-800")], []),
           ],
         )
 
@@ -363,12 +368,9 @@ fn view_timeline(
           html.div(
             [
               attribute.class(
-                "absolute right-0 border-t border-dashed border-gray-900",
+                "absolute left-0 right-0 border-t border-dashed border-gray-800/50",
               ),
-              attribute.styles([
-                #("top", half_top),
-                #("left", px(gutter_px)),
-              ]),
+              attribute.style("top", half_top),
             ],
             [],
           ),
