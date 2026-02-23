@@ -12,6 +12,7 @@ import gleam/io
 import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/string
 import lustre
 import lustre/attribute
 import lustre/element
@@ -26,10 +27,13 @@ import tabs
 const port = 46_548
 
 /// How many times to retry binding before giving up.
-const bind_max_attempts = 10
+const bind_max_attempts = 20
 
-/// Milliseconds to wait between bind retries (doubles each attempt, capped).
-const bind_retry_delay_ms = 500
+/// Initial milliseconds to wait between bind retries (doubles each attempt, capped at bind_retry_max_delay_ms).
+const bind_retry_delay_ms = 250
+
+/// Maximum delay between retries in milliseconds.
+const bind_retry_max_delay_ms = 10_000
 
 // MAIN ------------------------------------------------------------------------
 
@@ -50,6 +54,9 @@ pub fn main() {
     }
   }
 
+  // Brief pause before first bind attempt — gives the OS time to release the
+  // port after the previous VM exits (avoids EADDRINUSE on rapid restarts).
+  process.sleep(bind_retry_delay_ms)
   let assert Ok(_) =
     start_with_retry(handler, bind_max_attempts, bind_retry_delay_ms)
 
@@ -71,12 +78,18 @@ fn start_with_retry(
 
   case result {
     Ok(_) -> result
-    Error(actor.InitFailed(msg)) if attempts > 1 -> {
+    Error(err) if attempts > 1 -> {
+      let reason = case err {
+        actor.InitFailed(msg) -> msg
+        actor.InitTimeout -> "init timeout"
+        actor.InitExited(exit_reason) ->
+          "exited: " <> string.inspect(exit_reason)
+      }
       io.println(
         "[app] port "
         <> int.to_string(port)
-        <> " in use ("
-        <> msg
+        <> " unavailable ("
+        <> reason
         <> "), retrying in "
         <> int.to_string(delay_ms)
         <> "ms ("
@@ -84,7 +97,7 @@ fn start_with_retry(
         <> " attempts left)…",
       )
       process.sleep(delay_ms)
-      let next_delay = int.min(delay_ms * 2, 5000)
+      let next_delay = int.min(delay_ms * 2, bind_retry_max_delay_ms)
       start_with_retry(handler, attempts - 1, next_delay)
     }
     Error(_) -> result
