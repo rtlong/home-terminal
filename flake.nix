@@ -41,69 +41,22 @@
                   pkgs.tailwindcss
                 ];
 
-                # Build then run. erlang:halt(0) on SIGTERM exits synchronously
-                # so the port is released before process-compose starts the next
-                # instance. restart=always covers both clean exits and signals.
-                processes.beam.exec = ''
-                  gleam build
-                  PA=$(find build/dev/erlang -maxdepth 2 -name ebin -type d \
-                         | sort | sed 's/^/-pa /' | tr '\n' ' ')
-                  exec erl $PA -eval "home_terminal@@main:run(app)" -noshell
-                '';
-
-                processes.beam.process-compose = {
-                  availability = {
-                    restart = "always";
-                    backoff_seconds = 1;
-                    max_restarts = 0;
-                  };
-                };
-
-                # On a file change: build, then SIGTERM beam.smp directly by
-                # argv. erlang:halt(0) exits synchronously, port released
-                # immediately. process-compose sees the exit and restarts beam.
+                # On a file change: build then SIGTERM beam directly by argv.
+                # erlang:halt(0) exits synchronously so the port is released
+                # immediately. process-compose restart=always brings it back.
                 scripts.rebuild-and-restart.exec = ''
                   gleam build && pkill -TERM -f 'home_terminal@@main'
                 '';
 
-                processes.watcher.exec = ''
-                  watchexec \
-                    --watch src \
-                    --exts gleam \
-                    --on-busy-update queue \
-                    -- rebuild-and-restart
-                '';
-
-                processes.watcher.process-compose = {
-                  availability = {
-                    restart = "on_failure";
-                    backoff_seconds = 1;
-                    max_restarts = 0;
-                  };
-                };
-
-                # Tailwind CSS watcher — regenerates priv/static/app.css whenever
-                # src/*.gleam files change. Runs in parallel with the Gleam server.
-                processes.tailwind.exec = ''
-                  tailwindcss \
-                    --config tailwind.config.js \
-                    --input tailwind.css \
-                    --output priv/static/app.css \
-                    --watch
-                '';
-
-                processes.tailwind.process-compose = {
-                  availability = {
-                    restart = "on_failure";
-                    backoff_seconds = 1;
-                    max_restarts = 0;
-                  };
-                };
+                # NOTE: processes are defined in process-compose.yaml directly,
+                # not via devenv, because devenv wraps every process in
+                # devenv-tasks which doesn't exit when the child exits —
+                # breaking process-compose's restart lifecycle entirely.
 
                 enterShell = ''
                   echo "Gleam $(gleam --version)"
                   echo ""
-                  echo "Run 'devenv up' to start the dev server with auto-reload."
+                  echo "Run 'process-compose up' to start the dev server with auto-reload."
                   echo "App will be available at http://localhost:46548"
                   echo ""
                   echo "One-shot CSS build (from outside the shell):"
