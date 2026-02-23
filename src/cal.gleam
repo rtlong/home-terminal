@@ -392,7 +392,7 @@ fn view_all_day_strip(
                 html.div(
                   [
                     attribute.class(
-                      "flex-1 text-xs leading-none truncate border-l-2 pl-1 rounded-sm",
+                      "flex-1 text-xs leading-none truncate border-l-2 p-2 rounded-sm",
                     ),
                     attribute.style("border-left-color", color),
                     attribute.style("background-color", bgcolor(color)),
@@ -897,7 +897,7 @@ fn float_css(f: Float, unit: String) -> String {
 }
 
 fn bgcolor(color: String) -> String {
-  color <> "22"
+  "hsl(from " <> color <> " h s 15%)"
 }
 
 @external(erlang, "erlang", "round")
