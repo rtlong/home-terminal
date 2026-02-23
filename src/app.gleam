@@ -120,6 +120,28 @@ fn serve_html() -> Response(ResponseData) {
           attribute.href("/app.css"),
         ]),
         html.script(
+          [],
+          "(function(){
+  var _WS = window.WebSocket;
+  var connected = false;
+  window.WebSocket = function(url, proto) {
+    var ws = proto ? new _WS(url, proto) : new _WS(url);
+    if (url.includes('/ws')) {
+      ws.addEventListener('open', function() {
+        if (connected) { window.location.reload(); }
+        connected = true;
+      });
+    }
+    return ws;
+  };
+  window.WebSocket.prototype = _WS.prototype;
+  window.WebSocket.CONNECTING = _WS.CONNECTING;
+  window.WebSocket.OPEN       = _WS.OPEN;
+  window.WebSocket.CLOSING    = _WS.CLOSING;
+  window.WebSocket.CLOSED     = _WS.CLOSED;
+})();",
+        ),
+        html.script(
           [attribute.type_("module"), attribute.src("/lustre/runtime.mjs")],
           "",
         ),
