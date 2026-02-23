@@ -64,15 +64,18 @@
                   };
                 };
 
-                # Watcher — detects file changes, builds, then tells
-                # process-compose to restart the beam process.
-                # It has no child processes of its own; it just pokes the API.
+                # On a file change: build, then tell process-compose to restart
+                # the beam process. No children of its own — just pokes the API.
+                scripts.rebuild-and-restart.exec = ''
+                  gleam build && process-compose process restart beam -U
+                '';
+
                 processes.watcher.exec = ''
                   watchexec \
                     --watch src \
                     --exts gleam \
                     --on-busy-update queue \
-                    -- bash -c 'gleam build && process-compose process restart beam -U'
+                    -- rebuild-and-restart
                 '';
 
                 processes.watcher.process-compose = {
