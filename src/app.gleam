@@ -24,7 +24,16 @@ const port = 46_548
 
 // MAIN ------------------------------------------------------------------------
 
+/// Register an OS-level SIGTERM handler that calls init:stop(), giving the
+/// BEAM VM time to shut down supervisors (and release the TCP port) before
+/// the process exits. Without this, watchexec kills gleam-run-dev but
+/// beam.smp keeps holding the port, causing EADDRINUSE on the next start.
+@external(erlang, "signal_handler_ffi", "trap_sigterm")
+fn trap_sigterm() -> Nil
+
 pub fn main() {
+  trap_sigterm()
+
   // Load CalDAV credentials and start the shared calendar server.
   // Crash hard on misconfiguration rather than silently serving stale data.
   let assert Ok(config) = cal_dav.config_from_env()

@@ -41,23 +41,21 @@
                   pkgs.tailwindcss
                 ];
 
-                # Build then exec the BEAM directly (exec replaces the shell so
-                # watchexec's SIGTERM reaches beam.smp without an intermediary).
+                # Build then run the app. The BEAM handles SIGTERM via
+                # signal_handler_ffi (calls init:stop() for orderly shutdown).
                 scripts.gleam-run-dev.exec = ''
-                  gleam build && exec gleam run -m app
+                  gleam build && gleam run -m app
                 '';
 
                 # Watch src/ for changes, rebuild and restart the server.
-                # --stop-signal TERM   send SIGTERM first (BEAM handles it cleanly)
-                # --stop-timeout 5000  wait up to 5s for it to exit before SIGKILL
-                # This ensures the port is fully released before the new process starts.
+                # watchexec sends SIGTERM by default and waits up to 10s — the
+                # BEAM's SIGTERM handler will call init:stop(), shut down
+                # supervisors, release the port, and exit cleanly before then.
                 processes.dev.exec = ''
                   watchexec \
                     --watch src \
                     --exts gleam \
                     --restart \
-                    --stop-signal TERM \
-                    --stop-timeout 5000 \
                     -- gleam-run-dev
                 '';
 
