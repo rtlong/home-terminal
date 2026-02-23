@@ -1,5 +1,5 @@
 -module(signal_handler_ffi).
--export([trap_sigterm/0]).
+-export([trap_sigterm/0, try_start/1]).
 -behaviour(gen_event).
 -export([init/1, handle_event/2, handle_call/2, handle_info/2, terminate/2, code_change/3]).
 
@@ -10,6 +10,26 @@ trap_sigterm() ->
     os:set_signal(sigterm, handle),
     gen_event:add_handler(erl_signal_server, ?MODULE, []),
     nil.
+
+%% Wrap a mist.start call with trap_exit so that if supervisor:start_link
+%% sends an EXIT to the caller before returning, we catch it as an error
+%% instead of crashing. This lets Gleam see the Error result and retry.
+try_start(StartFun) ->
+    OldTrap = erlang:process_flag(trap_exit, true),
+    Result = try StartFun() of
+        {ok, _} = Ok -> Ok;
+        {error, _} = Err -> Err
+    catch
+        exit:Reason -> {error, {init_exited, {abnormal, Reason}}};
+        error:Reason -> {error, {init_exited, {abnormal, Reason}}}
+    end,
+    %% Drain any queued EXIT message that arrived during the call.
+    receive
+        {'EXIT', _, _} -> ok
+    after 0 -> ok
+    end,
+    erlang:process_flag(trap_exit, OldTrap),
+    Result.
 
 %% gen_event callbacks
 

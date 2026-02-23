@@ -7,8 +7,12 @@ import gleam/erlang/application
 import gleam/erlang/process.{type Selector, type Subject}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
+import gleam/int
+import gleam/io
 import gleam/json
 import gleam/option.{type Option, None, Some}
+import gleam/otp/actor
+import gleam/string
 import lustre
 import lustre/attribute
 import lustre/element
@@ -31,6 +35,13 @@ const port = 46_548
 @external(erlang, "signal_handler_ffi", "trap_sigterm")
 fn trap_sigterm() -> Nil
 
+/// Wraps mist.start with process trap_exit so supervisor EXIT signals
+/// are caught as Error results rather than crashing the process.
+@external(erlang, "signal_handler_ffi", "try_start")
+fn try_start(
+  start_fun: fn() -> Result(a, actor.StartError),
+) -> Result(a, actor.StartError)
+
 pub fn main() {
   trap_sigterm()
 
@@ -50,13 +61,42 @@ pub fn main() {
     }
   }
 
-  let assert Ok(_) =
-    mist.new(handler)
-    |> mist.bind("0.0.0.0")
-    |> mist.port(port)
-    |> mist.start
-
+  let assert Ok(_) = start_with_retry(handler, 20, 250)
   process.sleep_forever()
+}
+
+/// Retry binding the port up to `attempts` times with exponential backoff.
+/// Needed because the previous BEAM's socket lingers briefly after SIGTERM
+/// even after the process exits — init:stop() is async.
+fn start_with_retry(
+  handler: fn(Request(Connection)) -> Response(ResponseData),
+  attempts: Int,
+  delay_ms: Int,
+) -> Result(_, actor.StartError) {
+  let result =
+    try_start(fn() {
+      mist.new(handler)
+      |> mist.bind("0.0.0.0")
+      |> mist.port(port)
+      |> mist.start
+    })
+  case result {
+    Ok(_) -> result
+    Error(err) if attempts > 1 -> {
+      io.println(
+        "[app] port "
+        <> int.to_string(port)
+        <> " busy ("
+        <> string.inspect(err)
+        <> "), retrying in "
+        <> int.to_string(delay_ms)
+        <> "ms…",
+      )
+      process.sleep(delay_ms)
+      start_with_retry(handler, attempts - 1, int.min(delay_ms * 2, 5000))
+    }
+    Error(_) -> result
+  }
 }
 
 // HTML ------------------------------------------------------------------------
