@@ -125,7 +125,18 @@ fn expand_vevent(
   case get_prop(props, "UID"), get_prop(props, "SUMMARY") {
     Ok(uid), Ok(summary) -> {
       let dtstart_is_local = has_tzid_param(lines, "DTSTART")
-      let dtend_is_local = has_tzid_param(lines, "DTEND")
+      let dtend_is_local =
+        has_tzid_param(lines, "DTEND")
+        // If DTSTART has TZID and DTEND is floating (no TZID, no Z), treat
+        // DTEND as local too — some servers emit mixed-type start/end.
+        || {
+          dtstart_is_local
+          && !has_tzid_param(lines, "DTEND")
+          && case get_prop_prefix(props, "DTEND") {
+            Ok(v) -> is_floating_datetime(v)
+            Error(Nil) -> False
+          }
+        }
 
       case get_prop_prefix(props, "DTSTART"), get_prop_prefix(props, "DTEND") {
         Ok(dtstart_raw), Ok(dtend_raw) -> {
@@ -171,6 +182,7 @@ fn expand_vevent(
                     summary,
                     calendar_name,
                     start,
+                    end,
                     duration_secs,
                     exdates,
                     uid_overrides,
@@ -194,11 +206,13 @@ fn expand_vevent(
 /// Generate weekly occurrences of a recurring event within [window_start, window_end).
 /// - Skip dates in exdates
 /// - Replace instances that have a matching RECURRENCE-ID override
+/// Dispatches to timed or all-day expansion based on master_start type.
 fn expand_weekly(
   uid: String,
   summary: String,
   calendar_name: String,
   master_start: EventTime,
+  master_end: EventTime,
   duration_secs: Int,
   exdates: List(timestamp.Timestamp),
   uid_overrides: List(List(String)),
@@ -206,41 +220,56 @@ fn expand_weekly(
   window_start: timestamp.Timestamp,
   window_end: timestamp.Timestamp,
 ) -> List(Event) {
-  // Collect overrides that already fall in window (by their actual DTSTART)
-  // We'll emit these for occurrences that are replaced, plus any orphan overrides
   let override_events =
     list.filter_map(uid_overrides, fn(lines) {
       parse_override_event(lines, uid, calendar_name, local_offset)
     })
 
-  // Get the base timestamp from master_start
-  let base_ts = case master_start {
-    AtTime(ts) -> ts
-    AllDay(_) -> window_start
-    // all-day recurrences not handled
+  let instances = case master_start {
+    AtTime(base_ts) ->
+      // Timed recurring event: expand by advancing timestamps weekly.
+      generate_weekly_timed(
+        base_ts,
+        duration_secs,
+        exdates,
+        uid_overrides,
+        uid,
+        summary,
+        calendar_name,
+        local_offset,
+        window_start,
+        window_end,
+        [],
+      )
+    AllDay(base_date) -> {
+      // All-day recurring event: compute the event's day-count duration,
+      // then expand by advancing the date by 7 days at a time.
+      let day_count = case master_end {
+        AllDay(end_date) -> date_day_count(base_date, end_date)
+        _ -> 1
+      }
+      let window_start_date =
+        timestamp.to_calendar(window_start, local_offset).0
+      let window_end_date = timestamp.to_calendar(window_end, local_offset).0
+      generate_weekly_allday(
+        base_date,
+        day_count,
+        exdates,
+        uid_overrides,
+        uid,
+        summary,
+        calendar_name,
+        local_offset,
+        window_start_date,
+        window_end_date,
+        [],
+      )
+    }
   }
 
-  // Walk forward weekly from base_ts, collecting instances in window
-  let instances =
-    generate_weekly_instances(
-      base_ts,
-      duration_secs,
-      exdates,
-      uid_overrides,
-      uid,
-      summary,
-      calendar_name,
-      local_offset,
-      window_start,
-      window_end,
-      [],
-    )
-
-  // Also include override events whose RECURRENCE-ID is outside the generated
-  // instances (the override itself may fall in window even though the original
-  // occurrence was outside). We detect these by checking if the override's
-  // DTSTART appears in the window and isn't already covered.
-  let _ = base_ts
+  // Also include override events that fall in the window but weren't covered
+  // by the generated instances (e.g. the original occurrence was outside the
+  // window but the override's actual DTSTART is inside).
   let override_in_window =
     list.filter(override_events, fn(e) {
       event_in_window(e.start, e.end, window_start, window_end)
@@ -252,7 +281,239 @@ fn expand_weekly(
   list.append(instances, override_in_window)
 }
 
-fn generate_weekly_instances(
+/// Advance a Date by exactly `n` days using calendar arithmetic.
+fn advance_date_by_n(date: calendar.Date, n: Int) -> calendar.Date {
+  case n <= 0 {
+    True -> date
+    False -> advance_date_by_n(advance_one_day(date), n - 1)
+  }
+}
+
+fn advance_one_day(date: calendar.Date) -> calendar.Date {
+  let days_in = days_in_month(date.month, date.year)
+  case date.day < days_in {
+    True -> calendar.Date(..date, day: date.day + 1)
+    False ->
+      case date.month {
+        calendar.December ->
+          calendar.Date(year: date.year + 1, month: calendar.January, day: 1)
+        _ -> calendar.Date(..date, month: next_month_cal(date.month), day: 1)
+      }
+  }
+}
+
+fn days_in_month(month: calendar.Month, year: Int) -> Int {
+  case month {
+    calendar.January -> 31
+    calendar.February ->
+      case calendar.is_leap_year(year) {
+        True -> 29
+        False -> 28
+      }
+    calendar.March -> 31
+    calendar.April -> 30
+    calendar.May -> 31
+    calendar.June -> 30
+    calendar.July -> 31
+    calendar.August -> 31
+    calendar.September -> 30
+    calendar.October -> 31
+    calendar.November -> 30
+    calendar.December -> 31
+  }
+}
+
+fn next_month_cal(m: calendar.Month) -> calendar.Month {
+  case m {
+    calendar.January -> calendar.February
+    calendar.February -> calendar.March
+    calendar.March -> calendar.April
+    calendar.April -> calendar.May
+    calendar.May -> calendar.June
+    calendar.June -> calendar.July
+    calendar.July -> calendar.August
+    calendar.August -> calendar.September
+    calendar.September -> calendar.October
+    calendar.October -> calendar.November
+    calendar.November -> calendar.December
+    calendar.December -> calendar.January
+  }
+}
+
+/// Compute how many days from `start` to `end` (exclusive end, as in iCal).
+/// Returns at least 1.
+fn date_day_count(start: calendar.Date, end: calendar.Date) -> Int {
+  // Convert both to approximate timestamps for the diff (UTC midnight).
+  let midnight =
+    calendar.TimeOfDay(hours: 0, minutes: 0, seconds: 0, nanoseconds: 0)
+  let ts_start =
+    timestamp.from_calendar(
+      date: start,
+      time: midnight,
+      offset: calendar.utc_offset,
+    )
+  let ts_end =
+    timestamp.from_calendar(
+      date: end,
+      time: midnight,
+      offset: calendar.utc_offset,
+    )
+  let diff_secs = duration.to_seconds(timestamp.difference(ts_end, ts_start))
+  let days = float.truncate(diff_secs) / 86_400
+  int.max(days, 1)
+}
+
+/// Compare two dates: True if a < b.
+fn date_before(a: calendar.Date, b: calendar.Date) -> Bool {
+  calendar.naive_date_compare(a, b) == order.Lt
+}
+
+/// Expand an all-day weekly recurring event within [window_start_date, window_end_date).
+fn generate_weekly_allday(
+  current_date: calendar.Date,
+  day_count: Int,
+  exdates: List(timestamp.Timestamp),
+  uid_overrides: List(List(String)),
+  uid: String,
+  summary: String,
+  calendar_name: String,
+  local_offset: duration.Duration,
+  window_start_date: calendar.Date,
+  window_end_date: calendar.Date,
+  acc: List(Event),
+) -> List(Event) {
+  // Stop when current_date >= window_end_date (no more overlap possible).
+  // Guard against infinite loops: if we've gone more than 500 weeks past the window.
+  let past_end = !date_before(current_date, window_end_date)
+  let too_far =
+    !date_before(current_date, advance_date_by_n(window_end_date, 500 * 7))
+
+  case past_end || too_far {
+    True -> list.reverse(acc)
+    False -> {
+      let next_date = advance_date_by_n(current_date, 7)
+      let instance_end_date = advance_date_by_n(current_date, day_count)
+
+      // In window if instance start < window_end AND instance end > window_start
+      let in_window =
+        date_before(current_date, window_end_date)
+        && !date_before(instance_end_date, window_start_date)
+        && calendar.naive_date_compare(instance_end_date, window_start_date)
+        != order.Eq
+
+      let new_acc = case in_window {
+        False ->
+          generate_weekly_allday(
+            next_date,
+            day_count,
+            exdates,
+            uid_overrides,
+            uid,
+            summary,
+            calendar_name,
+            local_offset,
+            window_start_date,
+            window_end_date,
+            acc,
+          )
+        True -> {
+          // Check EXDATE: an EXDATE matching this date excludes the instance.
+          let is_excluded =
+            list.any(exdates, fn(ex) {
+              let #(ex_date, _) = timestamp.to_calendar(ex, local_offset)
+              ex_date == current_date
+            })
+
+          case is_excluded {
+            True ->
+              generate_weekly_allday(
+                next_date,
+                day_count,
+                exdates,
+                uid_overrides,
+                uid,
+                summary,
+                calendar_name,
+                local_offset,
+                window_start_date,
+                window_end_date,
+                acc,
+              )
+            False -> {
+              // Check for RECURRENCE-ID override matching this date.
+              let override_event =
+                list.find_map(uid_overrides, fn(ol) {
+                  let oprops = list.filter_map(ol, parse_property)
+                  case get_prop_prefix(oprops, "RECURRENCE-ID") {
+                    Ok(rec_raw) -> {
+                      case parse_event_time(rec_raw, False, local_offset) {
+                        Ok(AllDay(rec_date)) ->
+                          case rec_date == current_date {
+                            True ->
+                              parse_override_event(
+                                ol,
+                                uid,
+                                calendar_name,
+                                local_offset,
+                              )
+                            False -> Error(Nil)
+                          }
+                        Ok(AtTime(rec_ts)) -> {
+                          let #(rec_date, _) =
+                            timestamp.to_calendar(rec_ts, local_offset)
+                          case rec_date == current_date {
+                            True ->
+                              parse_override_event(
+                                ol,
+                                uid,
+                                calendar_name,
+                                local_offset,
+                              )
+                            False -> Error(Nil)
+                          }
+                        }
+                        Error(Nil) -> Error(Nil)
+                      }
+                    }
+                    Error(Nil) -> Error(Nil)
+                  }
+                })
+
+              let event = case override_event {
+                Ok(e) -> e
+                Error(Nil) ->
+                  Event(
+                    uid:,
+                    summary:,
+                    start: AllDay(current_date),
+                    end: AllDay(instance_end_date),
+                    calendar_name:,
+                  )
+              }
+
+              generate_weekly_allday(
+                next_date,
+                day_count,
+                exdates,
+                uid_overrides,
+                uid,
+                summary,
+                calendar_name,
+                local_offset,
+                window_start_date,
+                window_end_date,
+                [event, ..acc],
+              )
+            }
+          }
+        }
+      }
+      new_acc
+    }
+  }
+}
+
+fn generate_weekly_timed(
   current_ts: timestamp.Timestamp,
   duration_secs: Int,
   exdates: List(timestamp.Timestamp),
@@ -289,7 +550,7 @@ fn generate_weekly_instances(
 
       let new_acc = case in_window {
         False ->
-          generate_weekly_instances(
+          generate_weekly_timed(
             next_ts,
             duration_secs,
             exdates,
@@ -311,7 +572,7 @@ fn generate_weekly_instances(
 
           case is_excluded {
             True ->
-              generate_weekly_instances(
+              generate_weekly_timed(
                 next_ts,
                 duration_secs,
                 exdates,
@@ -372,7 +633,7 @@ fn generate_weekly_instances(
                   )
               }
 
-              generate_weekly_instances(
+              generate_weekly_timed(
                 next_ts,
                 duration_secs,
                 exdates,
@@ -405,7 +666,13 @@ fn parse_override_event(
   use dtstart_raw <- result.try(get_prop_prefix(props, "DTSTART"))
   use dtend_raw <- result.try(get_prop_prefix(props, "DTEND"))
   let dtstart_is_local = has_tzid_param(lines, "DTSTART")
-  let dtend_is_local = has_tzid_param(lines, "DTEND")
+  let dtend_is_local =
+    has_tzid_param(lines, "DTEND")
+    || {
+      dtstart_is_local
+      && !has_tzid_param(lines, "DTEND")
+      && is_floating_datetime(dtend_raw)
+    }
   use start <- result.try(parse_event_time(
     dtstart_raw,
     dtstart_is_local,
@@ -564,6 +831,13 @@ fn has_tzid_param(lines: List(String), prop_name: String) -> Bool {
     let upper = string.uppercase(line)
     string.starts_with(upper, prop_name <> ";TZID=")
   })
+}
+
+/// True if a datetime value string is a floating local time (no Z suffix, 15 chars).
+/// YYYYMMDDTHHMMSS (15 chars) = floating; YYYYMMDDTHHMMSSZ (16 chars) = UTC.
+fn is_floating_datetime(value: String) -> Bool {
+  let trimmed = string.trim(value)
+  string.length(trimmed) == 15
 }
 
 // DATETIME PARSING ------------------------------------------------------------
