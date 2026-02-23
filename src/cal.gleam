@@ -33,20 +33,15 @@ pub type Event {
 
 // LAYOUT CONSTANTS ------------------------------------------------------------
 
-/// Pixels per minute on the timeline.
-const px_per_min = 1.5
-
 /// Default visible window: 7:00 am.
 const default_window_start_min = 420
 
 /// Default visible window: 9:00 pm.
 const default_window_end_min = 1260
 
-/// Minimum event block height in pixels (so tiny events are still clickable).
-const min_event_height_px = 18
-
-/// Width of the hour-label gutter on the left of each day column.
-const gutter_px = 32
+/// Minimum event block height as a fraction of the total window (0.0–1.0).
+/// Corresponds to ~15 minutes regardless of window size.
+const min_event_frac = 0.0173
 
 // VIEW ------------------------------------------------------------------------
 
@@ -101,7 +96,7 @@ pub fn view_seven_days(
   html.div(
     [
       attribute.class(
-        "flex-1 grid grid-cols-7 gap-px p-2 overflow-y-auto bg-gray-900",
+        "flex-1 min-h-0 grid grid-cols-7 gap-px p-2 overflow-hidden bg-gray-900",
       ),
     ],
     list.map2(days, day_event_lists, fn(day, day_evts) {
@@ -209,38 +204,49 @@ fn view_day(
       }
     })
 
-  let header_bg = case is_today {
-    True -> "bg-gray-800 border-b border-emerald-800"
-    False -> "bg-gray-900 border-b border-gray-800"
-  }
-  let weekday_cls = case is_today {
-    True -> "text-xs font-semibold uppercase tracking-wide text-emerald-400"
-    False -> "text-xs font-semibold uppercase tracking-wide text-gray-500"
-  }
-  let date_cls = case is_today {
-    True -> "text-xs text-emerald-600"
-    False -> "text-xs text-gray-600"
-  }
-  let col_border = case is_today {
-    True -> "border border-gray-700 bg-gray-900"
-    False -> "border border-gray-800"
-  }
-
   html.div(
-    [attribute.class("flex flex-col rounded-lg overflow-hidden " <> col_border)],
+    [
+      attribute.class("flex flex-col rounded-lg overflow-hidden border"),
+      attribute.class(case is_today {
+        True -> "border-gray-700 bg-gray-900"
+        False -> "border-gray-800"
+      }),
+    ],
     [
       // Date header
       html.div(
         [
           attribute.class(
-            "flex items-baseline gap-2 px-2 py-1.5 shrink-0 " <> header_bg,
+            "flex items-baseline gap-2 px-2 py-1.5 shrink-0 border-b ",
           ),
+          attribute.class(case is_today {
+            True -> "bg-gray-800 border-emerald-800"
+            False -> "bg-gray-900 border-gray-800"
+          }),
         ],
         [
-          html.span([attribute.class(weekday_cls)], [
-            html.text(weekday_name(date)),
-          ]),
-          html.span([attribute.class(date_cls)], [html.text(format_date(date))]),
+          html.span(
+            [
+              attribute.class("text-xs font-semibold uppercase tracking-wide"),
+              attribute.class(case is_today {
+                True -> "text-emerald-400"
+                False -> "text-grey-500"
+              }),
+            ],
+            [
+              html.text(weekday_name(date)),
+            ],
+          ),
+          html.span(
+            [
+              attribute.class("text-xs"),
+              attribute.class(case is_today {
+                True -> "text-emerald-600"
+                False -> "text-grey-600"
+              }),
+            ],
+            [html.text(format_date(date))],
+          ),
         ],
       ),
       // All-day event rows (fixed count = max_all_day so timelines align)
@@ -260,21 +266,23 @@ fn view_all_day_strip(
   max_rows: Int,
   color_for: fn(String) -> String,
 ) -> Element(msg) {
-  // Each row is 20px tall.
-  let row_h = 20
-  let strip_h = max_rows * row_h
+  // Each all-day row is 1.4em tall; the strip height is max_rows * 1.4em.
+  let row_em = 1.4
+  let strip_h = float_pct_of_em(int_to_float(max_rows) *. row_em)
 
   let event_els =
     list.index_map(events, fn(e, i) {
       let color = color_for(e.calendar_name)
+      let top_em = float_em(int_to_float(i) *. row_em)
+      let h_em = float_em(row_em -. 0.1)
       html.div(
         [
           attribute.class(
             "absolute left-0 right-0 flex items-center px-1 overflow-hidden",
           ),
           attribute.styles([
-            #("top", px(i * row_h)),
-            #("height", px(row_h - 1)),
+            #("top", top_em),
+            #("height", h_em),
           ]),
         ],
         [
@@ -294,7 +302,7 @@ fn view_all_day_strip(
   html.div(
     [
       attribute.class("relative shrink-0 border-b border-gray-800"),
-      attribute.style("height", px(strip_h)),
+      attribute.style("height", strip_h),
     ],
     event_els,
   )
@@ -303,6 +311,8 @@ fn view_all_day_strip(
 // TIMELINE --------------------------------------------------------------------
 
 /// The time-positioned portion of a day column.
+/// All vertical positions are percentages of the container height so the
+/// timeline fills whatever space the viewport offers without fixed pixel math.
 fn view_timeline(
   events: List(Event),
   local_offset: duration.Duration,
@@ -311,7 +321,13 @@ fn view_timeline(
   color_for: fn(String) -> String,
 ) -> Element(msg) {
   let total_min = window.end_min - window.start_min
-  let total_h = float_px(int_to_float(total_min) *. px_per_min)
+  let total_f = int_to_float(total_min)
+
+  // pct converts a number of minutes into the container as a "X%" string.
+  let pct = fn(min: Int) -> String {
+    let f = int_to_float(min) /. total_f *. 100.0
+    float_pct(f)
+  }
 
   // Build hour marks from first full hour inside window to last.
   let first_hour =
@@ -329,23 +345,21 @@ fn view_timeline(
   let hour_lines =
     list.flat_map(hours, fn(h) {
       let top_min = h * 60 - window.start_min
-      let top = float_px(int_to_float(top_min) *. px_per_min)
+      let top = pct(top_min)
       let half_top_min = top_min + 30
-      let half_top = float_px(int_to_float(half_top_min) *. px_per_min)
       let show_half = h * 60 + 30 < window.end_min
 
       let hour_line =
         html.div(
           [
-            // Zero-height row: the border-t is exactly at `top`, overflow visible
-            // lets the label hang below without pushing events down.
+            // Zero-height div: border-t sits exactly at the percentage position.
+            // overflow-visible lets the label hang below without affecting layout.
             attribute.class(
               "absolute left-0 right-0 border-t border-gray-800 overflow-visible",
             ),
             attribute.style("top", top),
           ],
           [
-            // Label sits just below the line via absolute positioning.
             html.span(
               [
                 attribute.class(
@@ -370,7 +384,7 @@ fn view_timeline(
               attribute.class(
                 "absolute left-0 right-0 border-t border-dashed border-gray-800/50",
               ),
-              attribute.style("top", half_top),
+              attribute.style("top", pct(half_top_min)),
             ],
             [],
           ),
@@ -380,7 +394,7 @@ fn view_timeline(
       [hour_line, ..half_line]
     })
 
-  // Now-line: only shown for today.
+  // Now-line: only shown on today's column.
   let now_line = case is_today {
     False -> []
     True -> {
@@ -389,24 +403,17 @@ fn view_timeline(
       let now_min = t.hours * 60 + t.minutes
       case now_min >= window.start_min && now_min <= window.end_min {
         False -> []
-        True -> {
-          let top =
-            float_px(int_to_float(now_min - window.start_min) *. px_per_min)
-          [
-            html.div(
-              [
-                attribute.class(
-                  "absolute right-0 border-t border-emerald-500/60 z-10",
-                ),
-                attribute.styles([
-                  #("top", top),
-                  #("left", px(gutter_px)),
-                ]),
-              ],
-              [],
-            ),
-          ]
-        }
+        True -> [
+          html.div(
+            [
+              attribute.class(
+                "absolute left-0 right-0 border-t border-emerald-500/60 z-10",
+              ),
+              attribute.style("top", pct(now_min - window.start_min)),
+            ],
+            [],
+          ),
+        ]
       }
     }
   }
@@ -419,17 +426,18 @@ fn view_timeline(
           let #(_, et) = timestamp.to_calendar(en, local_offset)
           let start_min = st.hours * 60 + st.minutes
           let end_min = et.hours * 60 + et.minutes
-          // Clamp to window
+          // Clamp to window.
           let clamped_start = int.max(start_min, window.start_min)
           let clamped_end = int.min(end_min, window.end_min)
           let dur_min = int.max(clamped_end - clamped_start, 0)
-          let top_f =
-            int_to_float(clamped_start - window.start_min) *. px_per_min
-          let h_f = int_to_float(dur_min) *. px_per_min
-          let h_f_min = case h_f <. int_to_float(min_event_height_px) {
-            True -> int_to_float(min_event_height_px)
-            False -> h_f
+          let top_pct = pct(clamped_start - window.start_min)
+          // Apply minimum event height fraction so very short events are visible.
+          let dur_frac = int_to_float(dur_min) /. total_f
+          let h_frac = case dur_frac <. min_event_frac {
+            True -> min_event_frac
+            False -> dur_frac
           }
+          let h_pct = float_pct(h_frac *. 100.0)
           let color = color_for(e.calendar_name)
           let time_str =
             format_time(s, local_offset) <> "–" <> format_time(en, local_offset)
@@ -440,9 +448,9 @@ fn view_timeline(
                   "absolute overflow-hidden rounded-sm border-l-2 px-1 hover:brightness-125 cursor-default",
                 ),
                 attribute.styles([
-                  #("top", float_px(top_f)),
-                  #("height", float_px(h_f_min)),
-                  #("left", px(gutter_px + 2)),
+                  #("top", top_pct),
+                  #("height", h_pct),
+                  #("left", "2em"),
                   #("right", "2px"),
                   #("background-color", color <> "22"),
                   #("border-left-color", color),
@@ -472,11 +480,9 @@ fn view_timeline(
       }
     })
 
+  // flex-1 fills remaining column height; position:relative anchors children.
   html.div(
-    [
-      attribute.class("relative overflow-y-auto"),
-      attribute.style("height", total_h),
-    ],
+    [attribute.class("relative flex-1 min-h-0 overflow-hidden")],
     list.flatten([hour_lines, now_line, event_els]),
   )
 }
@@ -637,21 +643,32 @@ fn weekday_name(date: Date) -> String {
 
 // CSS HELPERS -----------------------------------------------------------------
 
-/// Integer pixels as a CSS string, e.g. 42 -> "42px".
-fn px(n: Int) -> String {
-  string.inspect(n) <> "px"
-}
-
-/// Float pixels as a CSS string, rounded to 1 decimal place.
-fn float_px(f: Float) -> String {
-  // Gleam has no built-in float formatting to N decimals without FFI,
-  // so we round to the nearest integer.
-  let rounded = float_round(f)
-  string.inspect(rounded) <> "px"
-}
-
 fn int_to_float(n: Int) -> Float {
   int.to_float(n)
+}
+
+/// Float as a CSS "X.Xem" string (1 decimal place).
+fn float_em(f: Float) -> String {
+  float_css(f, "em")
+}
+
+/// Float as a CSS "X.X%" string (1 decimal place).
+fn float_pct(f: Float) -> String {
+  float_css(f, "%")
+}
+
+/// Float as a CSS "X.Xem" string for use as a height value
+/// (same as float_em, kept separate for readability at call sites).
+fn float_pct_of_em(f: Float) -> String {
+  float_em(f)
+}
+
+/// Render a float with one decimal place followed by `unit`.
+fn float_css(f: Float, unit: String) -> String {
+  let whole = float_round(f *. 10.0)
+  let int_part = whole / 10
+  let frac_part = int.absolute_value(whole % 10)
+  string.inspect(int_part) <> "." <> string.inspect(frac_part) <> unit
 }
 
 @external(erlang, "erlang", "round")
