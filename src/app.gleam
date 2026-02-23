@@ -102,15 +102,19 @@ fn serve_html() -> Response(ResponseData) {
           attribute.content("width=device-width, initial-scale=1"),
         ]),
         html.title([], "Home Terminal"),
-        html.style([], calendar_css()),
+        html.script([], "window.tailwind = { config: { darkMode: 'class' } }"),
+        html.script([attribute.src("https://cdn.tailwindcss.com")], ""),
         html.script(
           [attribute.type_("module"), attribute.src("/lustre/runtime.mjs")],
           "",
         ),
       ]),
-      html.body([], [
-        server_component.element([server_component.route("/ws")], []),
-      ]),
+      html.body(
+        [attribute.class("dark bg-gray-950 text-gray-100 min-h-screen")],
+        [
+          server_component.element([server_component.route("/ws")], []),
+        ],
+      ),
     ])
     |> element.to_document_string_tree
     |> bytes_tree.from_string_tree
@@ -118,29 +122,6 @@ fn serve_html() -> Response(ResponseData) {
   response.new(200)
   |> response.set_body(mist.Bytes(html))
   |> response.set_header("content-type", "text/html")
-}
-
-// CSS -------------------------------------------------------------------------
-
-fn calendar_css() -> String {
-  "
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, sans-serif; font-size: 14px; background: #111; color: #eee; }
-  .cal-seven-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2rem; padding: 1rem; }
-  .cal-day { border: 1px solid #333; border-radius: 6px; overflow: hidden; }
-  .cal-day-header { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.4rem 0.75rem; background: #1e1e1e; border-bottom: 1px solid #333; }
-  .cal-day-header.cal-today { background: #1a2a1a; border-bottom-color: #4a8; }
-  .cal-weekday { font-weight: 600; font-size: 0.85rem; color: #aaa; text-transform: uppercase; letter-spacing: 0.05em; }
-  .cal-today .cal-weekday { color: #4a8; }
-  .cal-date { font-size: 0.85rem; color: #666; }
-  .cal-today .cal-date { color: #4a8; }
-  .cal-events { list-style: none; padding: 0.25rem 0; }
-  .cal-empty { padding: 0.25rem 0.75rem; color: #444; font-style: italic; font-size: 0.8rem; }
-  .cal-event { display: flex; gap: 0.5rem; padding: 0.2rem 0.5rem 0.2rem 0.75rem; border-left: 3px solid transparent; }
-  .cal-event:hover { background: #1e1e1e; }
-  .cal-event-time { color: #888; min-width: 4.5rem; font-size: 0.8rem; padding-top: 0.05rem; flex-shrink: 0; }
-  .cal-event-summary { color: #ddd; }
-  "
 }
 
 // JAVASCRIPT ------------------------------------------------------------------

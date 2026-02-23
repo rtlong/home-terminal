@@ -35,16 +35,20 @@ pub type Event {
 
 /// Rendered while calendar_server has not yet delivered its first fetch.
 pub fn view_loading() -> Element(msg) {
-  html.p([], [html.text("Loading calendar…")])
+  html.p([attribute.class("p-4 text-gray-500 italic text-sm")], [
+    html.text("Loading calendar…"),
+  ])
 }
 
 /// Rendered when the CalDAV fetch failed.
 pub fn view_error(reason: String) -> Element(msg) {
-  html.p([], [html.text("Calendar error: " <> reason)])
+  html.p([attribute.class("p-4 text-red-400 text-sm")], [
+    html.text("Calendar error: " <> reason),
+  ])
 }
 
 /// The main 7-day view. Shows events for today and the next 6 days,
-/// grouped by day, with timed events before all-day events.
+/// grouped by day, with timed events after all-day events within each day.
 /// `color_for` is a fn(calendar_name) -> css_color_string for per-cal coloring.
 pub fn view_seven_days(
   events: List(Event),
@@ -56,7 +60,7 @@ pub fn view_seven_days(
   let days = next_n_dates(today_date, 7)
 
   html.div(
-    [attribute.class("cal-seven-days")],
+    [attribute.class("grid grid-cols-7 gap-3 p-4 h-screen")],
     list.map(days, fn(day) {
       view_day(day, day == today_date, events, local_offset, color_for)
     }),
@@ -88,28 +92,49 @@ fn view_day(
       }
     })
   let sorted_timed = list.sort(timed, fn(a, b) { compare_event_start(a, b) })
+  // All-day events first, then timed events sorted by start
   let ordered = list.append(all_day, sorted_timed)
 
-  let header_class = case is_today {
-    True -> "cal-day-header cal-today"
-    False -> "cal-day-header"
+  let day_classes = case is_today {
+    True ->
+      "flex flex-col min-h-0 rounded-lg border border-gray-700 overflow-hidden bg-gray-900"
+    False ->
+      "flex flex-col min-h-0 rounded-lg border border-gray-800 overflow-hidden"
+  }
+  let header_classes = case is_today {
+    True ->
+      "flex items-baseline gap-2 px-2 py-1.5 bg-gray-800 border-b border-emerald-800 shrink-0"
+    False ->
+      "flex items-baseline gap-2 px-2 py-1.5 bg-gray-900 border-b border-gray-800 shrink-0"
+  }
+  let weekday_classes = case is_today {
+    True -> "text-xs font-semibold uppercase tracking-wide text-emerald-400"
+    False -> "text-xs font-semibold uppercase tracking-wide text-gray-500"
+  }
+  let date_classes = case is_today {
+    True -> "text-xs text-emerald-600"
+    False -> "text-xs text-gray-600"
   }
 
-  html.div([attribute.class("cal-day")], [
-    html.div([attribute.class(header_class)], [
-      html.span([attribute.class("cal-weekday")], [
+  html.div([attribute.class(day_classes)], [
+    html.div([attribute.class(header_classes)], [
+      html.span([attribute.class(weekday_classes)], [
         html.text(weekday_name(date)),
       ]),
-      html.span([attribute.class("cal-date")], [
-        html.text(format_date(date)),
-      ]),
+      html.span([attribute.class(date_classes)], [html.text(format_date(date))]),
     ]),
-    html.ul([attribute.class("cal-events")], case ordered {
-      [] -> [
-        html.li([attribute.class("cal-empty")], [html.text("—")]),
-      ]
-      _ -> list.map(ordered, fn(e) { view_event(e, local_offset, color_for) })
-    }),
+    html.ul(
+      [attribute.class("flex flex-col gap-px py-1 overflow-y-auto min-h-0")],
+      case ordered {
+        [] -> [
+          html.li(
+            [attribute.class("px-2 py-0.5 text-xs text-gray-700 italic")],
+            [html.text("—")],
+          ),
+        ]
+        _ -> list.map(ordered, fn(e) { view_event(e, local_offset, color_for) })
+      },
+    ),
   ])
 }
 
@@ -120,17 +145,21 @@ fn view_event(
 ) -> Element(msg) {
   let color = color_for(event.calendar_name)
   let time_str = case event.start {
-    AllDay(_) -> ""
-    AtTime(ts) -> format_time(ts, local_offset) <> " "
+    AllDay(_) -> "all day"
+    AtTime(ts) -> format_time(ts, local_offset)
   }
   html.li(
     [
-      attribute.class("cal-event"),
+      attribute.class(
+        "flex flex-col gap-px px-1.5 py-0.5 border-l-2 mx-1 rounded-sm hover:bg-gray-800 cursor-default",
+      ),
       attribute.style("border-left-color", color),
     ],
     [
-      html.span([attribute.class("cal-event-time")], [html.text(time_str)]),
-      html.span([attribute.class("cal-event-summary")], [
+      html.span([attribute.class("text-xs text-gray-500 leading-none")], [
+        html.text(time_str),
+      ]),
+      html.span([attribute.class("text-xs text-gray-200 leading-snug")], [
         html.text(event.summary),
       ]),
     ],

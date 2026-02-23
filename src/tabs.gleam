@@ -4,9 +4,11 @@ import cal
 import cal_server.{type Server}
 import gleam/erlang/process
 import lustre.{type App}
+import lustre/attribute
 import lustre/effect.{type Effect}
 import lustre/element.{type Element}
 import lustre/element/html
+import lustre/event
 import state
 
 // COMPONENT -------------------------------------------------------------------
@@ -86,22 +88,31 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 // VIEW ------------------------------------------------------------------------
 
 fn view(model: Model) -> Element(Msg) {
-  html.div([], [
+  html.div([attribute.class("flex flex-col h-screen overflow-hidden")], [
     view_tab_bar(model.active_tab),
-    view_active_tab(model),
+    html.div([attribute.class("flex-1 min-h-0 overflow-hidden")], [
+      view_active_tab(model),
+    ]),
   ])
 }
 
 fn view_tab_bar(active: Tab) -> Element(Msg) {
-  html.nav([], [
-    view_tab_button("Calendar", CalendarTab, active),
-  ])
+  html.nav(
+    [attribute.class("flex gap-1 px-3 py-2 border-b border-gray-800 shrink-0")],
+    [view_tab_button("Calendar", CalendarTab, active)],
+  )
 }
 
 fn view_tab_button(label: String, tab: Tab, active: Tab) -> Element(Msg) {
-  let _is_active = tab == active
-  // TODO: wire up on_click and active styling
-  html.button([], [html.text(label)])
+  let is_active = tab == active
+  let classes = case is_active {
+    True -> "px-3 py-1 text-sm rounded bg-gray-800 text-white font-medium"
+    False ->
+      "px-3 py-1 text-sm rounded text-gray-500 hover:text-gray-300 hover:bg-gray-800/50"
+  }
+  html.button([attribute.class(classes), event.on_click(UserSelectedTab(tab))], [
+    html.text(label),
+  ])
 }
 
 fn view_active_tab(model: Model) -> Element(Msg) {
