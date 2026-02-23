@@ -13,6 +13,7 @@
 
 import cal.{type Event}
 import cal_dav
+import gleam/dict
 import gleam/erlang/process.{type Subject}
 import gleam/io
 import gleam/list
@@ -44,6 +45,7 @@ pub opaque type Msg {
   ClientDisconnected(id: Int)
   CalDavFetched(Result(List(Event), String))
   PollTimerFired
+  UpdateCalendarConfig(name: String, config: state.CalendarConfig)
 }
 
 type Client {
@@ -126,6 +128,16 @@ pub fn deregister(registration: Registration) -> Nil {
   process.send(registration.server, ClientDisconnected(registration.id))
 }
 
+/// Update the config for a single calendar by name, persist it, and broadcast
+/// the new CalendarData to all registered clients.
+pub fn update_calendar_config(
+  server: Server,
+  name: String,
+  config: state.CalendarConfig,
+) -> Nil {
+  process.send(server, UpdateCalendarConfig(name:, config:))
+}
+
 /// A placeholder Registration for use before the real one arrives.
 /// The server field points nowhere useful; this must be replaced before
 /// any deregister call. Tabs replaces it immediately via GotRegistration.
@@ -191,6 +203,14 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
         Error(err) -> io.println("[cal_server] fetch error: " <> err)
       }
       let new_state = State(..state, events: result)
+      broadcast(new_state)
+      actor.continue(new_state)
+    }
+
+    UpdateCalendarConfig(name:, config:) -> {
+      let new_cal_config = dict.insert(state.cal_config, name, config)
+      state.write_config(state.data_dir, new_cal_config)
+      let new_state = State(..state, cal_config: new_cal_config)
       broadcast(new_state)
       actor.continue(new_state)
     }

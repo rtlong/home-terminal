@@ -2,7 +2,10 @@
 
 import cal
 import cal_server.{type Server}
+import gleam/dynamic/decode
 import gleam/erlang/process
+import gleam/list
+import gleam/string
 import lustre.{type App}
 import lustre/attribute
 import lustre/effect.{type Effect}
@@ -27,6 +30,7 @@ pub fn component() -> App(Server, Model, Msg) {
 
 pub type Tab {
   CalendarTab
+  SettingsTab
 }
 
 pub type Model {
@@ -34,6 +38,7 @@ pub type Model {
     active_tab: Tab,
     calendar_data: cal_server.CalendarData,
     registration: cal_server.Registration,
+    server: Server,
   )
 }
 
@@ -56,6 +61,7 @@ fn init(server: Server) -> #(Model, Effect(Msg)) {
         cal_config: state.empty_config(),
       ),
       registration: placeholder,
+      server: server,
     )
 
   #(model, effect)
@@ -67,6 +73,8 @@ pub opaque type Msg {
   UserSelectedTab(Tab)
   CalendarUpdated(cal_server.CalendarData)
   GotRegistration(cal_server.Registration)
+  UserToggledCalendar(name: String, visible: Bool)
+  UserChangedColor(name: String, color: String)
 }
 
 fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
@@ -82,6 +90,22 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       Model(..model, calendar_data: data),
       effect.none(),
     )
+
+    UserToggledCalendar(name:, visible:) -> {
+      let current =
+        state.get_calendar_config(model.calendar_data.cal_config, name)
+      let new_cfg = state.CalendarConfig(..current, visible: visible)
+      cal_server.update_calendar_config(model.server, name, new_cfg)
+      #(model, effect.none())
+    }
+
+    UserChangedColor(name:, color:) -> {
+      let current =
+        state.get_calendar_config(model.calendar_data.cal_config, name)
+      let new_cfg = state.CalendarConfig(..current, color: color)
+      cal_server.update_calendar_config(model.server, name, new_cfg)
+      #(model, effect.none())
+    }
   }
 }
 
@@ -99,7 +123,10 @@ fn view(model: Model) -> Element(Msg) {
 fn view_tab_bar(active: Tab) -> Element(Msg) {
   html.nav(
     [attribute.class("flex gap-1 px-3 py-2 border-b border-gray-800 shrink-0")],
-    [view_tab_button("Calendar", CalendarTab, active)],
+    [
+      view_tab_button("Calendar", CalendarTab, active),
+      view_tab_button("Settings", SettingsTab, active),
+    ],
   )
 }
 
@@ -122,11 +149,107 @@ fn view_active_tab(model: Model) -> Element(Msg) {
         Error(reason) if reason == "Loading…" -> cal.view_loading()
         Error(reason) -> cal.view_error(reason)
         Ok(events) -> {
+          let cfg = model.calendar_data.cal_config
           let color_for = fn(cal_name: String) -> String {
-            state.get_calendar_config(model.calendar_data.cal_config, cal_name).color
+            state.get_calendar_config(cfg, cal_name).color
           }
-          cal.view_seven_days(events, color_for)
+          let visible_events =
+            list.filter(events, fn(e) {
+              state.get_calendar_config(cfg, e.calendar_name).visible
+            })
+          cal.view_seven_days(visible_events, color_for)
         }
       }
+
+    SettingsTab -> view_settings(model)
   }
+}
+
+// SETTINGS VIEW ---------------------------------------------------------------
+
+fn view_settings(model: Model) -> Element(Msg) {
+  let cal_names = case model.calendar_data.events {
+    Error(_) -> []
+    Ok(events) ->
+      events
+      |> list.map(fn(e) { e.calendar_name })
+      |> list.unique
+      |> list.sort(string.compare)
+  }
+
+  html.div([attribute.class("p-6 overflow-y-auto h-full")], [
+    html.h2(
+      [
+        attribute.class(
+          "text-sm font-semibold uppercase tracking-wide text-gray-400 mb-4",
+        ),
+      ],
+      [html.text("Calendars")],
+    ),
+    html.ul(
+      [attribute.class("flex flex-col gap-2")],
+      list.map(cal_names, fn(name) {
+        view_calendar_row(name, model.calendar_data.cal_config)
+      }),
+    ),
+  ])
+}
+
+fn view_calendar_row(name: String, cfg: state.Config) -> Element(Msg) {
+  let cal_cfg = state.get_calendar_config(cfg, name)
+
+  // Color picker: native <input type="color"> styled as a small swatch.
+  // The `change` event fires with { target: { value: "#rrggbb" } }.
+  let color_input =
+    html.input([
+      attribute.type_("color"),
+      attribute.value(cal_cfg.color),
+      attribute.class(
+        "w-7 h-7 rounded cursor-pointer border-0 bg-transparent p-0",
+      ),
+      on_color_change(name),
+    ])
+
+  // Visibility toggle checkbox.
+  // The `change` event fires with { target: { checked: Bool } }.
+  let toggle =
+    html.input([
+      attribute.type_("checkbox"),
+      attribute.class("w-4 h-4 rounded accent-emerald-500 cursor-pointer"),
+      attribute.checked(cal_cfg.visible),
+      on_toggle_change(name),
+    ])
+
+  html.li(
+    [
+      attribute.class(
+        "flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-900 border border-gray-800",
+      ),
+    ],
+    [
+      color_input,
+      html.span([attribute.class("flex-1 text-sm text-gray-200")], [
+        html.text(name),
+      ]),
+      toggle,
+    ],
+  )
+}
+
+/// Decode an `input[type=color]` change event → UserChangedColor.
+/// The browser fires: Event { target: { value: "#rrggbb" } }
+fn on_color_change(name: String) -> attribute.Attribute(Msg) {
+  event.on("change", {
+    use value <- decode.subfield(["target", "value"], decode.string)
+    decode.success(UserChangedColor(name:, color: value))
+  })
+}
+
+/// Decode a checkbox change event → UserToggledCalendar.
+/// The browser fires: Event { target: { checked: Bool } }
+fn on_toggle_change(name: String) -> attribute.Attribute(Msg) {
+  event.on("change", {
+    use checked <- decode.subfield(["target", "checked"], decode.bool)
+    decode.success(UserToggledCalendar(name:, visible: checked))
+  })
 }
