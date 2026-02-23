@@ -41,26 +41,17 @@
                   pkgs.tailwindcss
                 ];
 
-                # Build once up front so beam can start immediately.
-                scripts.gleam-build.exec = "gleam build";
-
-                processes.build.exec = "gleam-build";
-                processes.build.process-compose = {
-                  availability.restart = "no";
-                };
-
-                # The BEAM. Runs erl directly — no wrapper script.
-                # erlang:halt(0) in signal_handler_ffi exits immediately on
-                # SIGTERM, so the port is released before process-compose
-                # starts the replacement.
+                # Build then run. erlang:halt(0) on SIGTERM exits synchronously
+                # so the port is released before process-compose starts the next
+                # instance. restart=always covers both clean exits and signals.
                 processes.beam.exec = ''
+                  gleam build
                   PA=$(find build/dev/erlang -maxdepth 2 -name ebin -type d \
                          | sort | sed 's/^/-pa /' | tr '\n' ' ')
                   exec erl $PA -eval "home_terminal@@main:run(app)" -noshell
                 '';
 
                 processes.beam.process-compose = {
-                  depends_on.build.condition = "process_completed_successfully";
                   availability = {
                     restart = "always";
                     backoff_seconds = 1;
