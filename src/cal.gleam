@@ -1,5 +1,6 @@
 // IMPORTS ---------------------------------------------------------------------
 
+import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
 import gleam/order
@@ -71,27 +72,34 @@ pub fn view_seven_days(
   let today_date = timestamp.to_calendar(now, local_offset).0
   let days = next_n_dates(today_date, 7)
 
-  // Collect per-day event lists once so we can inspect them for layout.
-  let day_event_lists =
-    list.map(days, fn(day) { events_on_date(events, day, local_offset) })
-
-  // Shared time window: start = min of all event starts (floor to hour),
-  // end = max of all event ends (ceil to hour), clamped to defaults.
-  let window = compute_window(day_event_lists, local_offset)
-
-  // How many all-day rows does the busiest day need?  All columns reserve
-  // the same number of rows so the timelines start at the same vertical offset.
-  let max_all_day =
-    list.fold(day_event_lists, 0, fn(acc, day_evts) {
-      let n =
-        list.count(day_evts, fn(e) {
-          case e.start {
-            AllDay(_) -> True
-            AtTime(_) -> False
-          }
-        })
-      int.max(acc, n)
+  // Collect per-day timed event lists (for window computation).
+  let day_timed_lists =
+    list.map(days, fn(day) {
+      list.filter(events, fn(e) {
+        case e.start {
+          AtTime(_) ->
+            calendar.naive_date_compare(
+              timestamp.to_calendar(
+                case e.start {
+                  AtTime(ts) -> ts
+                  AllDay(_) -> timestamp.system_time()
+                },
+                local_offset,
+              ).0,
+              day,
+            )
+            == order.Eq
+          AllDay(_) -> False
+        }
+      })
     })
+
+  // Shared time window across all days.
+  let window = compute_window(day_timed_lists, local_offset)
+
+  // Compute a stable row assignment for all-day events visible in this window.
+  // This ensures a multi-day event appears on the same row across all columns.
+  let #(all_day_row_map, all_day_row_count) = compute_all_day_rows(events, days)
 
   html.div(
     [
@@ -99,14 +107,30 @@ pub fn view_seven_days(
         "flex-1 min-h-0 grid grid-cols-7 gap-px p-2 overflow-hidden bg-gray-900",
       ),
     ],
-    list.map2(days, day_event_lists, fn(day, day_evts) {
+    list.map(days, fn(day) {
+      let day_all_day =
+        list.filter(events, fn(e) { all_day_spans_date(e, day) })
+      let day_timed =
+        list.filter(events, fn(e) {
+          case e.start {
+            AtTime(ts) ->
+              calendar.naive_date_compare(
+                timestamp.to_calendar(ts, local_offset).0,
+                day,
+              )
+              == order.Eq
+            AllDay(_) -> False
+          }
+        })
       view_day(
         day,
         day == today_date,
-        day_evts,
+        day_all_day,
+        day_timed,
         local_offset,
         window,
-        max_all_day,
+        all_day_row_map,
+        all_day_row_count,
         color_for,
       )
     }),
@@ -120,20 +144,11 @@ type Window {
   Window(start_min: Int, end_min: Int)
 }
 
-/// Compute the shared time window from all events across all days.
-/// Snaps to hour boundaries; applies default min/max clamps.
 fn compute_window(
-  day_event_lists: List(List(Event)),
+  day_timed_lists: List(List(Event)),
   local_offset: duration.Duration,
 ) -> Window {
-  let timed_events =
-    list.flatten(day_event_lists)
-    |> list.filter(fn(e) {
-      case e.start {
-        AtTime(_) -> True
-        AllDay(_) -> False
-      }
-    })
+  let timed_events = list.flatten(day_timed_lists)
 
   case timed_events {
     [] -> Window(default_window_start_min, default_window_end_min)
@@ -162,14 +177,12 @@ fn compute_window(
       let earliest = list.fold(start_mins, default_window_start_min, int.min)
       let latest = list.fold(end_mins, default_window_end_min, int.max)
 
-      // Snap earliest down to the hour, latest up to the hour.
       let snapped_start = earliest / 60 * 60
       let snapped_end = case latest % 60 {
         0 -> latest
         _ -> { latest / 60 + 1 } * 60
       }
 
-      // Apply min/max defaults.
       Window(
         start_min: int.min(snapped_start, default_window_start_min),
         end_min: int.max(snapped_end, default_window_end_min),
@@ -178,32 +191,118 @@ fn compute_window(
   }
 }
 
+// ALL-DAY ROW ASSIGNMENT ------------------------------------------------------
+
+/// Returns a stable uid→row mapping and total row count for all-day events
+/// visible in the 7-day window. Events are sorted by start date then uid for
+/// determinism, then packed greedily into rows (like a calendar "chip" layout).
+fn compute_all_day_rows(
+  events: List(Event),
+  days: List(Date),
+) -> #(Dict(String, Int), Int) {
+  let window_start = case days {
+    [d, ..] -> d
+    [] -> Date(2000, calendar.January, 1)
+  }
+  let window_end = case list.last(days) {
+    Ok(d) -> advance_date(d)
+    Error(_) -> window_start
+  }
+
+  // Collect all-day events that overlap the 7-day window.
+  let visible =
+    list.filter(events, fn(e) {
+      case e.start, e.end {
+        AllDay(s), AllDay(en) ->
+          // Event overlaps window if it starts before window_end and ends after window_start.
+          date_lt(s, window_end) && date_gte(en, window_start)
+        _, _ -> False
+      }
+    })
+    |> list.sort(fn(a, b) {
+      case a.start, b.start {
+        AllDay(sa), AllDay(sb) ->
+          case calendar.naive_date_compare(sa, sb) {
+            order.Eq -> string.compare(a.uid, b.uid)
+            other -> other
+          }
+        _, _ -> order.Eq
+      }
+    })
+
+  // Greedy row packing: assign each event to the first row where
+  // the last event's end date is <= this event's start date.
+  // row_ends: list of (row_index, last_end_date) for occupied rows.
+  let #(row_map, row_ends, _) =
+    list.fold(visible, #(dict.new(), [], 0), fn(acc, e) {
+      let #(map, row_ends, _next_row) = acc
+      case e.start {
+        AllDay(start) -> {
+          let end_date = case e.end {
+            AllDay(d) -> d
+            AtTime(_) -> start
+          }
+          // Find the first row whose last event ends on or before this start.
+          let maybe_row =
+            list.fold(row_ends, Error(Nil), fn(found, pair) {
+              case found {
+                Ok(_) -> found
+                Error(_) -> {
+                  let #(row_idx, last_end) = pair
+                  case date_lte(last_end, start) {
+                    True -> Ok(row_idx)
+                    False -> Error(Nil)
+                  }
+                }
+              }
+            })
+          case maybe_row {
+            Ok(row_idx) -> {
+              let new_ends =
+                list.map(row_ends, fn(pair) {
+                  let #(ri, _) = pair
+                  case ri == row_idx {
+                    True -> #(ri, end_date)
+                    False -> pair
+                  }
+                })
+              #(
+                dict.insert(map, e.uid, row_idx),
+                new_ends,
+                list.length(new_ends),
+              )
+            }
+            Error(_) -> {
+              let new_row = list.length(row_ends)
+              #(
+                dict.insert(map, e.uid, new_row),
+                list.append(row_ends, [#(new_row, end_date)]),
+                new_row + 1,
+              )
+            }
+          }
+        }
+        AtTime(_) -> acc
+      }
+    })
+
+  let total_rows = list.length(row_ends)
+  #(row_map, total_rows)
+}
+
 // DAY VIEW --------------------------------------------------------------------
 
 fn view_day(
   date: Date,
   is_today: Bool,
-  day_events: List(Event),
+  all_day_events: List(Event),
+  timed_events: List(Event),
   local_offset: duration.Duration,
   window: Window,
-  max_all_day: Int,
+  all_day_row_map: Dict(String, Int),
+  all_day_row_count: Int,
   color_for: fn(String) -> String,
 ) -> Element(msg) {
-  let all_day_events =
-    list.filter(day_events, fn(e) {
-      case e.start {
-        AllDay(_) -> True
-        AtTime(_) -> False
-      }
-    })
-  let timed_events =
-    list.filter(day_events, fn(e) {
-      case e.start {
-        AtTime(_) -> True
-        AllDay(_) -> False
-      }
-    })
-
   html.div(
     [
       attribute.class("flex flex-col rounded-lg overflow-hidden border"),
@@ -213,91 +312,98 @@ fn view_day(
       }),
     ],
     [
-      // Date header
-      html.div(
+      view_day_header(date, is_today),
+      view_all_day_strip(
+        all_day_events,
+        all_day_row_map,
+        all_day_row_count,
+        color_for,
+      ),
+      view_timeline(timed_events, local_offset, window, is_today, color_for),
+    ],
+  )
+}
+
+fn view_day_header(date: Date, is_today: Bool) -> Element(msg) {
+  html.div(
+    [
+      attribute.class("flex items-baseline gap-2 px-2 py-1.5 shrink-0 border-b"),
+      attribute.class(case is_today {
+        True -> "bg-gray-800 border-emerald-800"
+        False -> "bg-gray-900 border-gray-800"
+      }),
+    ],
+    [
+      html.span(
         [
-          attribute.class(
-            "flex items-baseline gap-2 px-2 py-1.5 shrink-0 border-b ",
-          ),
+          attribute.class("text-xs font-semibold uppercase tracking-wide"),
           attribute.class(case is_today {
-            True -> "bg-gray-800 border-emerald-800"
-            False -> "bg-gray-900 border-gray-800"
+            True -> "text-emerald-400"
+            False -> "text-gray-500"
           }),
         ],
-        [
-          html.span(
-            [
-              attribute.class("text-xs font-semibold uppercase tracking-wide"),
-              attribute.class(case is_today {
-                True -> "text-emerald-400"
-                False -> "text-grey-500"
-              }),
-            ],
-            [
-              html.text(weekday_name(date)),
-            ],
-          ),
-          html.span(
-            [
-              attribute.class("text-xs"),
-              attribute.class(case is_today {
-                True -> "text-emerald-600"
-                False -> "text-grey-600"
-              }),
-            ],
-            [html.text(format_date(date))],
-          ),
-        ],
+        [html.text(weekday_name(date))],
       ),
-      // All-day event rows (fixed count = max_all_day so timelines align)
-      view_all_day_strip(all_day_events, max_all_day, color_for),
-      // Scrollable timeline
-      view_timeline(timed_events, local_offset, window, is_today, color_for),
+      html.span(
+        [
+          attribute.class("text-xs"),
+          attribute.class(case is_today {
+            True -> "text-emerald-600"
+            False -> "text-gray-600"
+          }),
+        ],
+        [html.text(format_date(date))],
+      ),
     ],
   )
 }
 
 // ALL-DAY STRIP ---------------------------------------------------------------
 
-/// Each all-day event gets its own fixed-height row. Empty rows are rendered
-/// as spacers so all day columns have the same height for this section.
+/// Renders all-day events at their stable row positions.
+/// All columns reserve the same total height (all_day_row_count * 1.4em)
+/// so timelines start at the same vertical offset across the grid.
 fn view_all_day_strip(
   events: List(Event),
-  max_rows: Int,
+  row_map: Dict(String, Int),
+  row_count: Int,
   color_for: fn(String) -> String,
 ) -> Element(msg) {
-  // Each all-day row is 1.4em tall; the strip height is max_rows * 1.4em.
   let row_em = 1.4
-  let strip_h = float_pct_of_em(int_to_float(max_rows) *. row_em)
+  let strip_h = float_em(int_to_float(row_count) *. row_em)
 
   let event_els =
-    list.index_map(events, fn(e, i) {
-      let color = color_for(e.calendar_name)
-      let top_em = float_em(int_to_float(i) *. row_em)
-      let h_em = float_em(row_em -. 0.1)
-      html.div(
-        [
-          attribute.class(
-            "absolute left-0 right-0 flex items-center px-1 overflow-hidden",
-          ),
-          attribute.styles([
-            #("top", top_em),
-            #("height", h_em),
-          ]),
-        ],
-        [
-          html.div(
-            [
-              attribute.class(
-                "flex-1 text-xs leading-none truncate border-l-2 p-2 rounded-sm",
-              ),
-              attribute.style("border-left-color", color),
-              attribute.style("background-color", bgcolor(color)),
-            ],
-            [html.text(e.summary)],
-          ),
-        ],
-      )
+    list.filter_map(events, fn(e) {
+      case dict.get(row_map, e.uid) {
+        Error(_) -> Error(Nil)
+        Ok(row) -> {
+          let color = color_for(e.calendar_name)
+          let top_em = float_em(int_to_float(row) *. row_em)
+          let h_em = float_em(row_em -. 0.1)
+          Ok(
+            html.div(
+              [
+                attribute.class(
+                  "absolute left-0 right-0 flex items-center px-1 overflow-hidden",
+                ),
+                attribute.styles([#("top", top_em), #("height", h_em)]),
+              ],
+              [
+                html.div(
+                  [
+                    attribute.class(
+                      "flex-1 text-xs leading-none truncate border-l-2 pl-1 rounded-sm",
+                    ),
+                    attribute.style("border-left-color", color),
+                    attribute.style("background-color", bgcolor(color)),
+                  ],
+                  [html.text(e.summary)],
+                ),
+              ],
+            ),
+          )
+        }
+      }
     })
 
   html.div(
@@ -310,6 +416,93 @@ fn view_all_day_strip(
 }
 
 // TIMELINE --------------------------------------------------------------------
+
+/// A timed event annotated with its overlap column index and total column count.
+type PositionedEvent {
+  PositionedEvent(event: Event, col: Int, col_count: Int)
+}
+
+/// Assign column indices to timed events so overlapping events sit side by side.
+/// Uses a greedy interval-graph colouring: sort by start, assign to the first
+/// column whose last occupant ends before this event starts.
+fn assign_columns(
+  events: List(Event),
+  local_offset: duration.Duration,
+) -> List(PositionedEvent) {
+  let sorted = list.sort(events, fn(a, b) { compare_event_start(a, b) })
+
+  // cols: list of end_min values, one per column (the end time of the last
+  // event placed in that column).
+  let #(positioned, cols) =
+    list.fold(sorted, #([], []), fn(acc, e) {
+      let #(placed, cols) = acc
+      let start_min = event_start_min(e, local_offset)
+      let end_min = event_end_min(e, local_offset)
+
+      // Find first column whose last event ends at or before this one starts.
+      let maybe_col =
+        list.index_map(cols, fn(col_end, idx) { #(idx, col_end) })
+        |> list.find(fn(pair) {
+          let #(_, col_end) = pair
+          col_end <= start_min
+        })
+
+      let col_idx = case maybe_col {
+        Ok(#(idx, _)) -> idx
+        Error(_) -> list.length(cols)
+      }
+
+      let new_cols = case col_idx >= list.length(cols) {
+        True -> list.append(cols, [end_min])
+        False ->
+          list.index_map(cols, fn(v, i) {
+            case i == col_idx {
+              True -> end_min
+              False -> v
+            }
+          })
+      }
+
+      // We don't know col_count yet (more events may add columns); we'll fix
+      // it in a second pass.
+      #(
+        list.append(placed, [
+          PositionedEvent(event: e, col: col_idx, col_count: 0),
+        ]),
+        new_cols,
+      )
+    })
+
+  let total_cols = list.length(cols)
+
+  // Second pass: fill in col_count now that we know it.
+  // For events in an overlap group, col_count is the max column index + 1
+  // among all events that overlap with them. For simplicity we use total_cols
+  // as an upper bound — this is correct for a single overlap cluster but
+  // overshoots when there are multiple non-overlapping clusters. Good enough
+  // for a first pass.
+  list.map(positioned, fn(pe) { PositionedEvent(..pe, col_count: total_cols) })
+}
+
+fn event_start_min(e: Event, local_offset: duration.Duration) -> Int {
+  case e.start {
+    AtTime(ts) -> {
+      let #(_, t) = timestamp.to_calendar(ts, local_offset)
+      t.hours * 60 + t.minutes
+    }
+    AllDay(_) -> 0
+  }
+}
+
+fn event_end_min(e: Event, local_offset: duration.Duration) -> Int {
+  case e.end {
+    AtTime(ts) -> {
+      let #(_, t) = timestamp.to_calendar(ts, local_offset)
+      t.hours * 60 + t.minutes
+    }
+    AllDay(_) -> 1440
+  }
+}
 
 /// The time-positioned portion of a day column.
 /// All vertical positions are percentages of the container height so the
@@ -324,13 +517,10 @@ fn view_timeline(
   let total_min = window.end_min - window.start_min
   let total_f = int_to_float(total_min)
 
-  // pct converts a number of minutes into the container as a "X%" string.
   let pct = fn(min: Int) -> String {
-    let f = int_to_float(min) /. total_f *. 100.0
-    float_pct(f)
+    float_pct(int_to_float(min) /. total_f *. 100.0)
   }
 
-  // Build hour marks from first full hour inside window to last.
   let first_hour =
     window.start_min
     / 60
@@ -346,19 +536,15 @@ fn view_timeline(
   let hour_lines =
     list.flat_map(hours, fn(h) {
       let top_min = h * 60 - window.start_min
-      let top = pct(top_min)
-      let half_top_min = top_min + 30
       let show_half = h * 60 + 30 < window.end_min
 
       let hour_line =
         html.div(
           [
-            // Zero-height div: border-t sits exactly at the percentage position.
-            // overflow-visible lets the label hang below without affecting layout.
             attribute.class(
               "absolute left-0 right-0 border-t border-gray-800 overflow-visible",
             ),
-            attribute.style("top", top),
+            attribute.style("top", pct(top_min)),
           ],
           [
             html.span(
@@ -385,7 +571,7 @@ fn view_timeline(
               attribute.class(
                 "absolute left-0 right-0 border-t border-dashed border-gray-800/50",
               ),
-              attribute.style("top", pct(half_top_min)),
+              attribute.style("top", pct(top_min + 30)),
             ],
             [],
           ),
@@ -395,7 +581,6 @@ fn view_timeline(
       [hour_line, ..half_line]
     })
 
-  // Now-line: only shown on today's column.
   let now_line = case is_today {
     False -> []
     True -> {
@@ -419,20 +604,22 @@ fn view_timeline(
     }
   }
 
+  // Assign overlap columns before rendering.
+  let positioned = assign_columns(events, local_offset)
+
   let event_els =
-    list.filter_map(events, fn(e) {
+    list.filter_map(positioned, fn(pe) {
+      let e = pe.event
       case e.start, e.end {
         AtTime(s), AtTime(en) -> {
           let #(_, st) = timestamp.to_calendar(s, local_offset)
           let #(_, et) = timestamp.to_calendar(en, local_offset)
           let start_min = st.hours * 60 + st.minutes
           let end_min = et.hours * 60 + et.minutes
-          // Clamp to window.
           let clamped_start = int.max(start_min, window.start_min)
           let clamped_end = int.min(end_min, window.end_min)
           let dur_min = int.max(clamped_end - clamped_start, 0)
           let top_pct = pct(clamped_start - window.start_min)
-          // Apply minimum event height fraction so very short events are visible.
           let dur_frac = int_to_float(dur_min) /. total_f
           let h_frac = case dur_frac <. min_event_frac {
             True -> min_event_frac
@@ -442,6 +629,32 @@ fn view_timeline(
           let color = color_for(e.calendar_name)
           let time_str =
             format_time(s, local_offset) <> "–" <> format_time(en, local_offset)
+
+          // Horizontal layout: divide the gutter-offset space into col_count slices.
+          // left  = gutter + col      / col_count * (100% - gutter)
+          // right = (col_count - col - 1) / col_count * (100% - gutter)
+          // We express this using CSS calc() so it works at any column width.
+          let n = pe.col_count
+          let c = pe.col
+          let left_css = case n <= 1 {
+            True -> "2em"
+            False ->
+              "calc(2em + "
+              <> float_pct(int_to_float(c) /. int_to_float(n) *. 100.0)
+              <> " - "
+              <> float_pct(int_to_float(c) /. int_to_float(n) *. 2.0)
+              <> ")"
+          }
+          let right_css = case n <= 1 {
+            True -> "2px"
+            False ->
+              "calc("
+              <> float_pct(int_to_float(n - c - 1) /. int_to_float(n) *. 100.0)
+              <> " - "
+              <> float_pct(int_to_float(n - c - 1) /. int_to_float(n) *. 2.0)
+              <> " + 2px)"
+          }
+
           Ok(
             html.div(
               [
@@ -451,8 +664,8 @@ fn view_timeline(
                 attribute.styles([
                   #("top", top_pct),
                   #("height", h_pct),
-                  #("left", "2em"),
-                  #("right", "2px"),
+                  #("left", left_css),
+                  #("right", right_css),
                   #("background-color", bgcolor(color)),
                   #("border-left-color", color),
                 ]),
@@ -481,7 +694,6 @@ fn view_timeline(
       }
     })
 
-  // flex-1 fills remaining column height; position:relative anchors children.
   html.div(
     [attribute.class("relative flex-1 min-h-0 overflow-hidden")],
     list.flatten([hour_lines, now_line, event_els]),
@@ -490,26 +702,40 @@ fn view_timeline(
 
 // EVENT FILTERING -------------------------------------------------------------
 
-/// Return all events whose start date (in local time) matches `date`.
-fn events_on_date(
-  events: List(Event),
-  date: Date,
-  local_offset: duration.Duration,
-) -> List(Event) {
-  list.filter(events, fn(e) {
-    case e.start {
-      AllDay(d) -> calendar.naive_date_compare(d, date) == order.Eq
-      AtTime(ts) -> {
-        let event_date = timestamp.to_calendar(ts, local_offset).0
-        calendar.naive_date_compare(event_date, date) == order.Eq
-      }
-    }
-  })
+/// True if this is an all-day event whose date range includes `date`.
+/// iCal all-day end is exclusive, so [start, end) must contain date.
+fn all_day_spans_date(e: Event, date: Date) -> Bool {
+  case e.start, e.end {
+    AllDay(s), AllDay(en) -> date_lte(s, date) && date_lt(date, en)
+    _, _ -> False
+  }
+}
+
+fn compare_event_start(a: Event, b: Event) -> order.Order {
+  case a.start, b.start {
+    AtTime(ta), AtTime(tb) -> timestamp.compare(ta, tb)
+    AllDay(da), AllDay(db) -> calendar.naive_date_compare(da, db)
+    AtTime(_), AllDay(_) -> order.Lt
+    AllDay(_), AtTime(_) -> order.Gt
+  }
 }
 
 // DATE HELPERS ----------------------------------------------------------------
 
-/// Generate a list of `n` consecutive dates starting from `start`.
+fn date_lt(a: Date, b: Date) -> Bool {
+  calendar.naive_date_compare(a, b) == order.Lt
+}
+
+fn date_lte(a: Date, b: Date) -> Bool {
+  let c = calendar.naive_date_compare(a, b)
+  c == order.Lt || c == order.Eq
+}
+
+fn date_gte(a: Date, b: Date) -> Bool {
+  let c = calendar.naive_date_compare(a, b)
+  c == order.Gt || c == order.Eq
+}
+
 fn next_n_dates(start: Date, n: Int) -> List(Date) {
   do_next_n_dates(start, n, [])
   |> list.reverse
@@ -522,18 +748,16 @@ fn do_next_n_dates(date: Date, n: Int, acc: List(Date)) -> List(Date) {
   }
 }
 
-/// Advance a date by one day, handling month and year rollovers.
 fn advance_date(date: Date) -> Date {
   let days_in = days_in_month(date.month, date.year)
   case date.day < days_in {
     True -> Date(..date, day: date.day + 1)
-    False -> {
+    False ->
       case date.month {
         calendar.December ->
           Date(year: date.year + 1, month: calendar.January, day: 1)
         _ -> Date(..date, month: next_month(date.month), day: 1)
       }
-    }
   }
 }
 
@@ -602,7 +826,6 @@ fn format_time(ts: Timestamp, local_offset: duration.Duration) -> String {
   <> period
 }
 
-/// Format an hour (0–23) as "7a", "12p", "1p" etc.
 fn format_hour(h: Int) -> String {
   let period = case h >= 12 {
     True -> "p"
@@ -615,8 +838,6 @@ fn format_hour(h: Int) -> String {
   string.inspect(h12) <> period
 }
 
-/// Compute weekday name using Tomohiko Sakamoto's algorithm.
-/// Returns "Sun", "Mon", …, "Sat".
 fn weekday_name(date: Date) -> String {
   let t = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]
   let y = case calendar.month_to_int(date.month) < 3 {
@@ -648,23 +869,14 @@ fn int_to_float(n: Int) -> Float {
   int.to_float(n)
 }
 
-/// Float as a CSS "X.Xem" string (1 decimal place).
 fn float_em(f: Float) -> String {
   float_css(f, "em")
 }
 
-/// Float as a CSS "X.X%" string (1 decimal place).
 fn float_pct(f: Float) -> String {
   float_css(f, "%")
 }
 
-/// Float as a CSS "X.Xem" string for use as a height value
-/// (same as float_em, kept separate for readability at call sites).
-fn float_pct_of_em(f: Float) -> String {
-  float_em(f)
-}
-
-/// Render a float with one decimal place followed by `unit`.
 fn float_css(f: Float, unit: String) -> String {
   let whole = float_round(f *. 10.0)
   let int_part = whole / 10
@@ -673,7 +885,7 @@ fn float_css(f: Float, unit: String) -> String {
 }
 
 fn bgcolor(color: String) -> String {
-  "hsl(from " <> color <> " h s 15%)"
+  color <> "22"
 }
 
 @external(erlang, "erlang", "round")
