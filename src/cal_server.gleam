@@ -29,10 +29,14 @@ const poll_interval_ms = 300_000
 // TYPES -----------------------------------------------------------------------
 
 /// The calendar payload pushed to registered clients on every update.
-/// Carries both the event list result and the display config so the view
-/// has everything it needs in one message.
+/// Carries the event list result, the full list of discovered calendar names
+/// (even those with zero events in the window), and the display config.
 pub type CalendarData {
-  CalendarData(events: Result(List(Event), String), cal_config: state.Config)
+  CalendarData(
+    events: Result(List(Event), String),
+    calendar_names: List(String),
+    cal_config: state.Config,
+  )
 }
 
 /// A client callback that receives CalendarData updates.
@@ -43,7 +47,7 @@ pub type ClientCallback =
 pub opaque type Msg {
   ClientConnected(id: Int, callback: ClientCallback)
   ClientDisconnected(id: Int)
-  CalDavFetched(Result(List(Event), String))
+  CalDavFetched(Result(#(List(String), List(Event)), String))
   PollTimerFired
   UpdateCalendarConfig(name: String, config: state.CalendarConfig)
 }
@@ -60,6 +64,7 @@ type State {
     data_dir: String,
     clients: List(Client),
     events: Result(List(Event), String),
+    calendar_names: List(String),
     cal_config: state.Config,
   )
 }
@@ -101,6 +106,7 @@ pub fn start(
           data_dir: data_dir,
           clients: [],
           events: initial_events,
+          calendar_names: [],
           cal_config: cal_config,
         )
       actor.initialised(actor_state) |> actor.returning(self_subject) |> Ok
@@ -152,7 +158,12 @@ pub fn placeholder_registration() -> Registration {
 fn unique_integer() -> Int
 
 fn broadcast(state: State) -> Nil {
-  let data = CalendarData(events: state.events, cal_config: state.cal_config)
+  let data =
+    CalendarData(
+      events: state.events,
+      calendar_names: state.calendar_names,
+      cal_config: state.cal_config,
+    )
   list.each(state.clients, fn(c) { c.callback(data) })
 }
 
@@ -160,7 +171,11 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
   case msg {
     ClientConnected(id:, callback:) -> {
       // Send current data immediately so new client doesn't wait for next poll.
-      callback(CalendarData(events: state.events, cal_config: state.cal_config))
+      callback(CalendarData(
+        events: state.events,
+        calendar_names: state.calendar_names,
+        cal_config: state.cal_config,
+      ))
       actor.continue(
         State(..state, clients: [Client(id:, callback:), ..state.clients]),
       )
@@ -191,18 +206,23 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
     }
 
     CalDavFetched(result) -> {
-      case result {
-        Ok(events) -> {
+      let new_state = case result {
+        Ok(#(cal_names, events)) -> {
           io.println(
             "[cal_server] fetched "
             <> string.inspect(list.length(events))
-            <> " events",
+            <> " events from "
+            <> string.inspect(list.length(cal_names))
+            <> " calendars",
           )
           state.write_cache(state.data_dir, events)
+          State(..state, events: Ok(events), calendar_names: cal_names)
         }
-        Error(err) -> io.println("[cal_server] fetch error: " <> err)
+        Error(err) -> {
+          io.println("[cal_server] fetch error: " <> err)
+          State(..state, events: Error(err))
+        }
       }
-      let new_state = State(..state, events: result)
       broadcast(new_state)
       actor.continue(new_state)
     }

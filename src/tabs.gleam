@@ -58,6 +58,7 @@ fn init(server: Server) -> #(Model, Effect(Msg)) {
       active_tab: CalendarTab,
       calendar_data: cal_server.CalendarData(
         events: Error("Loading…"),
+        calendar_names: [],
         cal_config: state.empty_config(),
       ),
       registration: placeholder,
@@ -168,13 +169,20 @@ fn view_active_tab(model: Model) -> Element(Msg) {
 // SETTINGS VIEW ---------------------------------------------------------------
 
 fn view_settings(model: Model) -> Element(Msg) {
-  let cal_names = case model.calendar_data.events {
-    Error(_) -> []
-    Ok(events) ->
-      events
-      |> list.map(fn(e) { e.calendar_name })
-      |> list.unique
-      |> list.sort(string.compare)
+  // Use the full list of discovered calendar names from the server.
+  // Falls back to names inferred from events if the fetch hasn't run yet.
+  let cal_names = case model.calendar_data.calendar_names {
+    [] ->
+      // Pre-fetch: derive names from any cached events we have
+      case model.calendar_data.events {
+        Error(_) -> []
+        Ok(events) ->
+          events
+          |> list.map(fn(e) { e.calendar_name })
+          |> list.unique
+          |> list.sort(string.compare)
+      }
+    names -> list.sort(names, string.compare)
   }
 
   html.div([attribute.class("p-6 overflow-y-auto h-full")], [

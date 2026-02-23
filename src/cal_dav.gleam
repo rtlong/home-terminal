@@ -35,11 +35,16 @@ pub type Config {
 // PUBLIC API ------------------------------------------------------------------
 
 /// Fetch all events in the next 7 days from the CalDAV server.
-/// Returns a list of Events or an error string suitable for display.
-pub fn fetch_events(config: Config) -> Result(List(Event), String) {
+/// Returns a tuple of (calendar_names, events) so the caller can show all
+/// discovered calendars even if some have zero events in the window.
+pub fn fetch_events(
+  config: Config,
+) -> Result(#(List(String), List(Event)), String) {
   use calendar_infos <- result.try(discover_calendars(config))
   let now = timestamp.system_time()
   let seven_days_later = timestamp.add(now, gleam_time_duration_days(7))
+
+  let calendar_names = list.map(calendar_infos, fn(info) { info.1 })
 
   let events =
     list.flat_map(calendar_infos, fn(info) {
@@ -52,7 +57,7 @@ pub fn fetch_events(config: Config) -> Result(List(Event), String) {
       }
     })
 
-  Ok(events)
+  Ok(#(calendar_names, events))
 }
 
 /// Load credentials from environment variables.
