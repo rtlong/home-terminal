@@ -112,7 +112,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 // VIEW ------------------------------------------------------------------------
 
 fn view(model: Model) -> Element(Msg) {
-  html.div([attribute.class("flex flex-col h-screen overflow-hidden")], [
+  html.div([attribute.class("flex flex-col h-screen overflow-hidden gap-1")], [
     view_tab_bar(model.active_tab),
     html.div([attribute.class("flex-1 min-h-0 overflow-hidden")], [
       view_active_tab(model),

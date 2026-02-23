@@ -36,7 +36,10 @@
                 # https://devenv.sh/reference/options/
                 languages.gleam.enable = true;
 
-                packages = [ pkgs.watchexec ];
+                packages = [
+                  pkgs.watchexec
+                  pkgs.tailwindcss
+                ];
 
                 # A small script that gleam-builds then starts the server.
                 # Used as the watchexec command so we avoid shell quoting issues
@@ -64,11 +67,32 @@
                   };
                 };
 
+                # Tailwind CSS watcher — regenerates priv/static/app.css whenever
+                # src/*.gleam files change. Runs in parallel with the Gleam server.
+                processes.tailwind.exec = ''
+                  tailwindcss \
+                    --config tailwind.config.js \
+                    --input tailwind.css \
+                    --output priv/static/app.css \
+                    --watch
+                '';
+
+                processes.tailwind.process-compose = {
+                  availability = {
+                    restart = "on_failure";
+                    backoff_seconds = 1;
+                    max_restarts = 0;
+                  };
+                };
+
                 enterShell = ''
                   echo "Gleam $(gleam --version)"
                   echo ""
                   echo "Run 'devenv up' to start the dev server with auto-reload."
                   echo "App will be available at http://localhost:46548"
+                  echo ""
+                  echo "One-shot CSS build (from outside the shell):"
+                  echo "  nix develop --impure --command tailwindcss --config tailwind.config.js --input tailwind.css --output priv/static/app.css"
                 '';
               }
             ];

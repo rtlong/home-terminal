@@ -43,6 +43,7 @@ pub fn main() {
   let handler = fn(request: Request(Connection)) -> Response(ResponseData) {
     case request.path_segments(request) {
       [] -> serve_html()
+      ["app.css"] -> serve_static_file("priv/static/app.css", "text/css")
       ["lustre", "runtime.mjs"] -> serve_runtime()
       ["ws"] -> serve_tabs(request, cal_server)
       _ -> response.set_body(response.new(404), mist.Bytes(bytes_tree.new()))
@@ -102,8 +103,10 @@ fn serve_html() -> Response(ResponseData) {
           attribute.content("width=device-width, initial-scale=1"),
         ]),
         html.title([], "Home Terminal"),
-        html.script([], "window.tailwind = { config: { darkMode: 'class' } }"),
-        html.script([attribute.src("https://cdn.tailwindcss.com")], ""),
+        html.link([
+          attribute.rel("stylesheet"),
+          attribute.href("/app.css"),
+        ]),
         html.script(
           [attribute.type_("module"), attribute.src("/lustre/runtime.mjs")],
           "",
@@ -122,6 +125,23 @@ fn serve_html() -> Response(ResponseData) {
   response.new(200)
   |> response.set_body(mist.Bytes(html))
   |> response.set_header("content-type", "text/html")
+}
+
+// STATIC FILES ----------------------------------------------------------------
+
+fn serve_static_file(
+  path: String,
+  content_type: String,
+) -> Response(ResponseData) {
+  case mist.send_file(path, offset: 0, limit: None) {
+    Ok(file) ->
+      response.new(200)
+      |> response.prepend_header("content-type", content_type)
+      |> response.set_body(file)
+    Error(_) ->
+      response.new(404)
+      |> response.set_body(mist.Bytes(bytes_tree.new()))
+  }
 }
 
 // JAVASCRIPT ------------------------------------------------------------------
