@@ -152,7 +152,7 @@ fn view_tab_bar(active: Tab) -> Element(Msg) {
     [
       view_tab_button("Calendar", CalendarTab, active),
       view_tab_button("Settings", SettingsTab, active),
-      html.div([attribute.class("ml-auto")], [view_clock()]),
+      html.div([attribute.class("flex-1 flex justify-end")], [view_clock()]),
     ],
   )
 }
@@ -214,12 +214,12 @@ fn view_clock() -> Element(Msg) {
     html.span(
       [
         attribute.class(
-          "text-3xl font-bold tabular-nums text-white leading-none",
+          "text-5xl font-bold tabular-nums text-white leading-none",
         ),
       ],
       [html.text(time_str)],
     ),
-    html.span([attribute.class("text-sm font-medium text-gray-400")], [
+    html.span([attribute.class("text-lg font-medium text-gray-400")], [
       html.text(date_str),
     ]),
   ])
