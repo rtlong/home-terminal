@@ -41,30 +41,30 @@
                   pkgs.tailwindcss
                 ];
 
-                # Kill any leftover beam.smp from a previous run, then start fresh.
-                # pkill -TERM waits for the signal to be delivered; the sleep gives
-                # the VM time to release the port before erl starts.
-                scripts.start-beam.exec = ''
-                  pkill -TERM -f 'home_terminal@@main' 2>/dev/null || true
-                  sleep 0.5
+                # Build once up front so beam can start immediately.
+                scripts.gleam-build.exec = "gleam build";
+
+                processes.build.exec = "gleam-build";
+                processes.build.process-compose = {
+                  availability.restart = "no";
+                };
+
+                # The BEAM. Runs erl directly — no wrapper script.
+                # erlang:halt(0) in signal_handler_ffi exits immediately on
+                # SIGTERM, so the port is released before process-compose
+                # starts the replacement.
+                processes.beam.exec = ''
                   PA=$(find build/dev/erlang -maxdepth 2 -name ebin -type d \
                          | sort | sed 's/^/-pa /' | tr '\n' ' ')
                   exec erl $PA -eval "home_terminal@@main:run(app)" -noshell
                 '';
 
-                processes.beam.exec = "start-beam";
-
                 processes.beam.process-compose = {
+                  depends_on.build.condition = "process_completed_successfully";
                   availability = {
-                    restart = "on_failure";
+                    restart = "always";
                     backoff_seconds = 1;
                     max_restarts = 0;
-                  };
-                  shutdown = {
-                    # Kill beam.smp directly by name — erl forks it and killing
-                    # erl alone does not kill beam.smp on macOS.
-                    command = "pkill -TERM -f 'home_terminal@@main'";
-                    timeout_seconds = 10;
                   };
                 };
 
