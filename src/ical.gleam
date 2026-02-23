@@ -4,6 +4,10 @@
 // cal.Event values. Only the fields used by the 7-day view are extracted:
 //   UID, SUMMARY, DTSTART, DTEND.
 //
+// Recurring events (RRULE:FREQ=WEEKLY) are expanded into individual instances
+// within the supplied time window. EXDATE exclusions are respected.
+// RECURRENCE-ID overrides replace the corresponding generated instance.
+//
 // DTSTART/DTEND can be in one of three formats:
 //   20240115           — all-day (DATE)
 //   20240115T140000Z   — UTC datetime (DATE-TIME with Z suffix)
@@ -15,6 +19,7 @@ import cal.{type Event, type EventTime, AllDay, AtTime, Event}
 import gleam/float
 import gleam/int
 import gleam/list
+import gleam/order.{Eq, Lt}
 import gleam/result
 import gleam/string
 import gleam/time/calendar.{type Month, Date}
@@ -23,13 +28,36 @@ import gleam/time/timestamp
 
 // PUBLIC API ------------------------------------------------------------------
 
-/// Parse all VEVENT blocks found in `ical_text` and return the valid ones as
-/// cal.Event values.  Malformed events are silently dropped.
-pub fn parse_events(ical_text: String, calendar_name: String) -> List(Event) {
-  ical_text
-  |> unfold_lines
-  |> split_vevents
-  |> list.filter_map(fn(block) { parse_vevent(block, calendar_name) })
+/// Parse all VEVENT blocks found in `ical_text` and return events that fall
+/// within [window_start, window_end). Recurring events are expanded.
+pub fn parse_events(
+  ical_text: String,
+  calendar_name: String,
+  window_start: timestamp.Timestamp,
+  window_end: timestamp.Timestamp,
+) -> List(Event) {
+  let local_offset = calendar.local_offset()
+  let raw_vevents =
+    ical_text
+    |> unfold_lines
+    |> split_vevents
+
+  // Separate masters from overrides
+  let masters =
+    list.filter(raw_vevents, fn(lines) { !has_prop(lines, "RECURRENCE-ID") })
+  let overrides =
+    list.filter(raw_vevents, fn(lines) { has_prop(lines, "RECURRENCE-ID") })
+
+  list.flat_map(masters, fn(lines) {
+    expand_vevent(
+      lines,
+      overrides,
+      calendar_name,
+      local_offset,
+      window_start,
+      window_end,
+    )
+  })
 }
 
 // LINE UNFOLDING --------------------------------------------------------------
@@ -79,24 +107,305 @@ fn do_split_vevents(
   }
 }
 
-// VEVENT PARSING --------------------------------------------------------------
+// VEVENT EXPANSION ------------------------------------------------------------
 
-fn parse_vevent(
+/// Expand a master VEVENT into one or more Events within the window.
+/// If it has RRULE:FREQ=WEEKLY, generate weekly instances.
+/// Applies EXDATE exclusions and RECURRENCE-ID overrides.
+fn expand_vevent(
   lines: List(String),
+  overrides: List(List(String)),
   calendar_name: String,
+  local_offset: duration.Duration,
+  window_start: timestamp.Timestamp,
+  window_end: timestamp.Timestamp,
+) -> List(Event) {
+  let props = list.filter_map(lines, parse_property)
+
+  case get_prop(props, "UID"), get_prop(props, "SUMMARY") {
+    Ok(uid), Ok(summary) -> {
+      let dtstart_is_local = has_tzid_param(lines, "DTSTART")
+      let dtend_is_local = has_tzid_param(lines, "DTEND")
+
+      case get_prop_prefix(props, "DTSTART"), get_prop_prefix(props, "DTEND") {
+        Ok(dtstart_raw), Ok(dtend_raw) -> {
+          case
+            parse_event_time(dtstart_raw, dtstart_is_local, local_offset),
+            parse_event_time(dtend_raw, dtend_is_local, local_offset)
+          {
+            Ok(start), Ok(end) -> {
+              // Check for RRULE:FREQ=WEEKLY
+              let has_weekly_rrule = case get_prop(props, "RRULE") {
+                Ok(rrule) ->
+                  string.contains(string.uppercase(rrule), "FREQ=WEEKLY")
+                Error(Nil) -> False
+              }
+
+              case has_weekly_rrule {
+                False -> {
+                  // Non-recurring: include if it overlaps the window
+                  case event_in_window(start, end, window_start, window_end) {
+                    True -> [
+                      Event(uid:, summary:, start:, end:, calendar_name:),
+                    ]
+                    False -> []
+                  }
+                }
+                True -> {
+                  // Collect EXDATEs as a list of raw date strings to exclude
+                  let exdates = collect_exdates(lines, local_offset)
+
+                  // Find overrides for this UID
+                  let uid_overrides =
+                    list.filter(overrides, fn(ol) {
+                      let oprops = list.filter_map(ol, parse_property)
+                      get_prop(oprops, "UID") == Ok(uid)
+                    })
+
+                  // Compute event duration to apply to each instance
+                  let duration_secs = event_duration_secs(start, end)
+
+                  // Generate weekly instances within window
+                  expand_weekly(
+                    uid,
+                    summary,
+                    calendar_name,
+                    start,
+                    duration_secs,
+                    exdates,
+                    uid_overrides,
+                    local_offset,
+                    window_start,
+                    window_end,
+                  )
+                }
+              }
+            }
+            _, _ -> []
+          }
+        }
+        _, _ -> []
+      }
+    }
+    _, _ -> []
+  }
+}
+
+/// Generate weekly occurrences of a recurring event within [window_start, window_end).
+/// - Skip dates in exdates
+/// - Replace instances that have a matching RECURRENCE-ID override
+fn expand_weekly(
+  uid: String,
+  summary: String,
+  calendar_name: String,
+  master_start: EventTime,
+  duration_secs: Int,
+  exdates: List(timestamp.Timestamp),
+  uid_overrides: List(List(String)),
+  local_offset: duration.Duration,
+  window_start: timestamp.Timestamp,
+  window_end: timestamp.Timestamp,
+) -> List(Event) {
+  // Collect overrides that already fall in window (by their actual DTSTART)
+  // We'll emit these for occurrences that are replaced, plus any orphan overrides
+  let override_events =
+    list.filter_map(uid_overrides, fn(lines) {
+      parse_override_event(lines, uid, calendar_name, local_offset)
+    })
+
+  // Get the base timestamp from master_start
+  let base_ts = case master_start {
+    AtTime(ts) -> ts
+    AllDay(_) -> window_start
+    // all-day recurrences not handled
+  }
+
+  // Walk forward weekly from base_ts, collecting instances in window
+  let instances =
+    generate_weekly_instances(
+      base_ts,
+      duration_secs,
+      exdates,
+      uid_overrides,
+      uid,
+      summary,
+      calendar_name,
+      local_offset,
+      window_start,
+      window_end,
+      [],
+    )
+
+  // Also include override events whose RECURRENCE-ID is outside the generated
+  // instances (the override itself may fall in window even though the original
+  // occurrence was outside). We detect these by checking if the override's
+  // DTSTART appears in the window and isn't already covered.
+  let _ = base_ts
+  let override_in_window =
+    list.filter(override_events, fn(e) {
+      event_in_window(e.start, e.end, window_start, window_end)
+      && !list.any(instances, fn(i) {
+        i.uid == e.uid && times_equal(i.start, e.start)
+      })
+    })
+
+  list.append(instances, override_in_window)
+}
+
+fn generate_weekly_instances(
+  current_ts: timestamp.Timestamp,
+  duration_secs: Int,
+  exdates: List(timestamp.Timestamp),
+  uid_overrides: List(List(String)),
+  uid: String,
+  summary: String,
+  calendar_name: String,
+  local_offset: duration.Duration,
+  window_start: timestamp.Timestamp,
+  window_end: timestamp.Timestamp,
+  acc: List(Event),
+) -> List(Event) {
+  // Stop if we've gone past window_end or too far beyond it (loop guard)
+  let past_end = timestamp.compare(current_ts, window_end) != Lt
+  let too_far =
+    timestamp.compare(
+      current_ts,
+      timestamp.add(window_end, duration.seconds(500 * 7 * 86_400)),
+    )
+    != Lt
+
+  case past_end || too_far {
+    True -> list.reverse(acc)
+    False -> {
+      let week = duration.seconds(7 * 86_400)
+      let next_ts = timestamp.add(current_ts, week)
+
+      // Only emit if current_ts is within or overlapping the window
+      let instance_end_ts =
+        timestamp.add(current_ts, duration.seconds(duration_secs))
+      let in_window =
+        timestamp.compare(instance_end_ts, window_start) != Lt
+        && timestamp.compare(current_ts, window_end) == Lt
+
+      let new_acc = case in_window {
+        False ->
+          generate_weekly_instances(
+            next_ts,
+            duration_secs,
+            exdates,
+            uid_overrides,
+            uid,
+            summary,
+            calendar_name,
+            local_offset,
+            window_start,
+            window_end,
+            acc,
+          )
+        True -> {
+          // Check if this occurrence is excluded
+          let is_excluded =
+            list.any(exdates, fn(ex) {
+              same_day_ts(current_ts, ex, local_offset)
+            })
+
+          case is_excluded {
+            True ->
+              generate_weekly_instances(
+                next_ts,
+                duration_secs,
+                exdates,
+                uid_overrides,
+                uid,
+                summary,
+                calendar_name,
+                local_offset,
+                window_start,
+                window_end,
+                acc,
+              )
+            False -> {
+              // Check for a RECURRENCE-ID override matching this date
+              let override_event =
+                list.find_map(uid_overrides, fn(ol) {
+                  let oprops = list.filter_map(ol, parse_property)
+                  let rec_id_is_local = has_tzid_param(ol, "RECURRENCE-ID")
+                  case get_prop_prefix(oprops, "RECURRENCE-ID") {
+                    Ok(rec_raw) -> {
+                      case
+                        parse_event_time(rec_raw, rec_id_is_local, local_offset)
+                      {
+                        Ok(rec_time) -> {
+                          case
+                            same_day_event_time(
+                              current_ts,
+                              rec_time,
+                              local_offset,
+                            )
+                          {
+                            True ->
+                              parse_override_event(
+                                ol,
+                                uid,
+                                calendar_name,
+                                local_offset,
+                              )
+                            False -> Error(Nil)
+                          }
+                        }
+                        Error(Nil) -> Error(Nil)
+                      }
+                    }
+                    Error(Nil) -> Error(Nil)
+                  }
+                })
+
+              let event = case override_event {
+                Ok(e) -> e
+                Error(Nil) ->
+                  Event(
+                    uid:,
+                    summary:,
+                    start: AtTime(current_ts),
+                    end: AtTime(instance_end_ts),
+                    calendar_name:,
+                  )
+              }
+
+              generate_weekly_instances(
+                next_ts,
+                duration_secs,
+                exdates,
+                uid_overrides,
+                uid,
+                summary,
+                calendar_name,
+                local_offset,
+                window_start,
+                window_end,
+                [event, ..acc],
+              )
+            }
+          }
+        }
+      }
+      new_acc
+    }
+  }
+}
+
+fn parse_override_event(
+  lines: List(String),
+  uid: String,
+  calendar_name: String,
+  local_offset: duration.Duration,
 ) -> Result(Event, Nil) {
   let props = list.filter_map(lines, parse_property)
-  let local_offset = calendar.local_offset()
-
-  use uid <- result.try(get_prop(props, "UID"))
   use summary <- result.try(get_prop(props, "SUMMARY"))
   use dtstart_raw <- result.try(get_prop_prefix(props, "DTSTART"))
   use dtend_raw <- result.try(get_prop_prefix(props, "DTEND"))
-
-  // Detect whether DTSTART/DTEND carry a TZID parameter (local wall-clock time)
   let dtstart_is_local = has_tzid_param(lines, "DTSTART")
   let dtend_is_local = has_tzid_param(lines, "DTEND")
-
   use start <- result.try(parse_event_time(
     dtstart_raw,
     dtstart_is_local,
@@ -107,16 +416,92 @@ fn parse_vevent(
     dtend_is_local,
     local_offset,
   ))
-
   Ok(Event(uid:, summary:, start:, end:, calendar_name:))
 }
 
-/// Check whether a property line for `name` carries a ;TZID= parameter.
-fn has_tzid_param(lines: List(String), prop_name: String) -> Bool {
-  list.any(lines, fn(line) {
+/// Collect all EXDATE values as Timestamps.
+fn collect_exdates(
+  lines: List(String),
+  local_offset: duration.Duration,
+) -> List(timestamp.Timestamp) {
+  list.filter_map(lines, fn(line) {
     let upper = string.uppercase(line)
-    string.starts_with(upper, prop_name <> ";TZID=")
+    case string.starts_with(upper, "EXDATE"), string.split_once(line, ":") {
+      True, Ok(#(param_part, value)) -> {
+        let is_local = string.contains(string.uppercase(param_part), "TZID=")
+        parse_event_time(string.trim(value), is_local, local_offset)
+        |> result.try(fn(et) {
+          case et {
+            AtTime(ts) -> Ok(ts)
+            AllDay(_) -> Error(Nil)
+          }
+        })
+      }
+      _, _ -> Error(Nil)
+    }
   })
+}
+
+/// Compute the duration in seconds between two EventTimes.
+fn event_duration_secs(start: EventTime, end: EventTime) -> Int {
+  case start, end {
+    AtTime(s), AtTime(e) -> {
+      let diff = duration.to_seconds(timestamp.difference(e, s))
+      float.truncate(diff)
+    }
+    _, _ -> 3600
+    // default 1 hour for all-day
+  }
+}
+
+/// True if ts_a and ts_b fall on the same local calendar day.
+fn same_day_ts(
+  a: timestamp.Timestamp,
+  b: timestamp.Timestamp,
+  local_offset: duration.Duration,
+) -> Bool {
+  let #(date_a, _) = timestamp.to_calendar(a, local_offset)
+  let #(date_b, _) = timestamp.to_calendar(b, local_offset)
+  date_a == date_b
+}
+
+/// True if a timestamp and an EventTime fall on the same local calendar day.
+fn same_day_event_time(
+  ts: timestamp.Timestamp,
+  et: EventTime,
+  local_offset: duration.Duration,
+) -> Bool {
+  case et {
+    AtTime(ts2) -> same_day_ts(ts, ts2, local_offset)
+    AllDay(date) -> {
+      let #(date_a, _) = timestamp.to_calendar(ts, local_offset)
+      date_a == date
+    }
+  }
+}
+
+fn times_equal(a: EventTime, b: EventTime) -> Bool {
+  case a, b {
+    AtTime(ta), AtTime(tb) -> timestamp.compare(ta, tb) == Eq
+    AllDay(da), AllDay(db) -> da == db
+    _, _ -> False
+  }
+}
+
+fn event_in_window(
+  start: EventTime,
+  end: EventTime,
+  window_start: timestamp.Timestamp,
+  window_end: timestamp.Timestamp,
+) -> Bool {
+  case start, end {
+    AtTime(s), AtTime(e) ->
+      timestamp.compare(e, window_start) != Lt
+      && timestamp.compare(s, window_end) == Lt
+    AllDay(_), _ -> True
+    // include all-day events always (server already filtered)
+    _, _ -> True
+  }
 }
 
 // PROPERTY PARSING ------------------------------------------------------------
@@ -160,6 +545,24 @@ fn get_prop_prefix(
       True -> Ok(p.1)
       False -> Error(Nil)
     }
+  })
+}
+
+/// Check whether any line in `lines` contains `prop_name` as a property.
+fn has_prop(lines: List(String), prop_name: String) -> Bool {
+  let upper_name = string.uppercase(prop_name)
+  list.any(lines, fn(line) {
+    let upper = string.uppercase(line)
+    string.starts_with(upper, upper_name <> ":")
+    || string.starts_with(upper, upper_name <> ";")
+  })
+}
+
+/// Check whether a property line for `name` carries a ;TZID= parameter.
+fn has_tzid_param(lines: List(String), prop_name: String) -> Bool {
+  list.any(lines, fn(line) {
+    let upper = string.uppercase(line)
+    string.starts_with(upper, prop_name <> ";TZID=")
   })
 }
 

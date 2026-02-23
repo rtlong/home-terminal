@@ -194,7 +194,7 @@ fn fetch_calendar_events(
     xmerl_find_text(root, "urn:ietf:params:xml:ns:caldav", "calendar-data")
   let events =
     list.flat_map(cal_data_texts, fn(ical_text) {
-      ical.parse_events(ical_text, calendar_name)
+      ical.parse_events(ical_text, calendar_name, start_ts, end_ts)
     })
   Ok(events)
 }
