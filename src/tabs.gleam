@@ -7,6 +7,7 @@ import gleam/erlang/process
 import gleam/int
 import gleam/list
 import gleam/string
+import gleam/time/calendar
 import gleam/time/timestamp
 import log
 import lustre.{type App}
@@ -143,12 +144,85 @@ fn view(model: Model) -> Element(Msg) {
 
 fn view_tab_bar(active: Tab) -> Element(Msg) {
   html.nav(
-    [attribute.class("flex gap-1 px-3 py-2 border-b border-gray-800 shrink-0")],
+    [
+      attribute.class(
+        "flex items-center gap-1 px-3 py-2 border-b border-gray-800 shrink-0",
+      ),
+    ],
     [
       view_tab_button("Calendar", CalendarTab, active),
       view_tab_button("Settings", SettingsTab, active),
+      html.div([attribute.class("ml-auto")], [view_clock()]),
     ],
   )
+}
+
+fn view_clock() -> Element(Msg) {
+  let now = timestamp.system_time()
+  let local_offset = calendar.local_offset()
+  let #(date, time) = timestamp.to_calendar(now, local_offset)
+
+  let hour = time.hours
+  let minute = time.minutes
+  let is_pm = hour >= 12
+  let display_hour = case hour % 12 {
+    0 -> 12
+    h -> h
+  }
+  let ampm = case is_pm {
+    True -> "PM"
+    False -> "AM"
+  }
+  let time_str =
+    int.to_string(display_hour)
+    <> ":"
+    <> string.pad_start(int.to_string(minute), 2, "0")
+    <> " "
+    <> ampm
+
+  let month_str = case date.month {
+    calendar.January -> "Jan"
+    calendar.February -> "Feb"
+    calendar.March -> "Mar"
+    calendar.April -> "Apr"
+    calendar.May -> "May"
+    calendar.June -> "Jun"
+    calendar.July -> "Jul"
+    calendar.August -> "Aug"
+    calendar.September -> "Sep"
+    calendar.October -> "Oct"
+    calendar.November -> "Nov"
+    calendar.December -> "Dec"
+  }
+  // Compute day-of-week from Unix epoch: Jan 1 1970 was a Thursday (index 3).
+  // Days since epoch / 7 remainder gives 0=Thu,1=Fri,2=Sat,3=Sun,4=Mon,5=Tue,6=Wed.
+  let days_since_epoch =
+    timestamp.to_unix_seconds_and_nanoseconds(now).0 / 86_400
+  let weekday_str = case { days_since_epoch % 7 + 7 } % 7 {
+    0 -> "Thu"
+    1 -> "Fri"
+    2 -> "Sat"
+    3 -> "Sun"
+    4 -> "Mon"
+    5 -> "Tue"
+    _ -> "Wed"
+  }
+  let date_str =
+    weekday_str <> " " <> month_str <> " " <> int.to_string(date.day)
+
+  html.div([attribute.class("flex items-baseline gap-3 select-none")], [
+    html.span(
+      [
+        attribute.class(
+          "text-3xl font-bold tabular-nums text-white leading-none",
+        ),
+      ],
+      [html.text(time_str)],
+    ),
+    html.span([attribute.class("text-sm font-medium text-gray-400")], [
+      html.text(date_str),
+    ]),
+  ])
 }
 
 fn view_tab_button(label: String, tab: Tab, active: Tab) -> Element(Msg) {
