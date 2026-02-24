@@ -1072,8 +1072,9 @@ fn view_timeline(
 
     // Labels float past the group into the center area.
     // Label deconfliction: within each lane, nudge a label down if it would
-    // overlap the previous label in the same lane. Labels in different lanes
-    // have different horizontal positions and never visually collide.
+    // overlap the previous label. All labels on a bar share the same horizontal
+    // text area regardless of which lane the strip is in, so we deconflict
+    // globally across all lanes with a single last_bottom cursor.
     // gap_min: minimum gap between the bottom of one label and the top of the next.
     let label_gap_min = 3
     let sorted_segs =
@@ -1082,8 +1083,6 @@ fn view_timeline(
     // At 9px font with leading-tight (~1.15), one line ≈ 11px.
     // Window is typically ~840 min over ~800px → ~0.95 px/min → 11px ≈ 12 min.
     // Events have 2 lines (summary + time); travel has 1 line.
-    // We use these estimates to reserve space so the next label doesn't overlap,
-    // without capping the label height in CSS (labels are now unconstrained).
     let label_height_min = fn(seg: BarSegment) -> Int {
       case seg.thick, seg.label2 {
         True, "" -> 12
@@ -1091,18 +1090,12 @@ fn view_timeline(
         False, _ -> 12
       }
     }
-    // last_bottoms: Dict(col, last_bottom_min) tracking per-lane label state.
     let nudged =
-      list.fold(sorted_segs, #([], dict.new()), fn(acc, seg) {
-        let #(placed, last_bottoms) = acc
-        let last_bottom = case dict.get(last_bottoms, seg.col) {
-          Ok(v) -> v
-          Error(_) -> -999
-        }
+      list.fold(sorted_segs, #([], -999), fn(acc, seg) {
+        let #(placed, last_bottom) = acc
         let actual = int.max(seg.top_min, last_bottom + label_gap_min)
         let bottom = actual + label_height_min(seg)
-        let new_bottoms = dict.insert(last_bottoms, seg.col, bottom)
-        #(list.append(placed, [#(actual, seg)]), new_bottoms)
+        #(list.append(placed, [#(actual, seg)]), bottom)
       })
       |> fn(p) { p.0 }
 
