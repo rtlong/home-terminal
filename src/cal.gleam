@@ -1036,7 +1036,7 @@ fn view_timeline(
     // Label deconfliction: next label must start no earlier than the previous
     // segment's end (top + dur) plus a small gap. This prevents a long label
     // from visually running into the next segment's label even if the text wraps.
-    let label_gap_min = 3
+    let label_gap_min = 8
     let sorted_segs =
       list.sort(segs, fn(a, b) { int.compare(a.top_min, b.top_min) })
     let nudged =
@@ -1084,8 +1084,14 @@ fn view_timeline(
             [
               html.div(
                 [
-                  attribute.class("absolute select-none pointer-events-none"),
-                  attribute.styles([#("top", pct(label_top)), ..label_attrs]),
+                  attribute.class(
+                    "absolute select-none pointer-events-none overflow-hidden",
+                  ),
+                  attribute.styles([
+                    #("top", pct(label_top)),
+                    #("max-height", fpct(int_to_float(seg.dur_min))),
+                    ..label_attrs
+                  ]),
                 ],
                 [
                   html.p(
