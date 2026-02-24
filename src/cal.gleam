@@ -839,8 +839,12 @@ pub fn view_gantt(
                   ),
                   attribute.style("left", xpct(min)),
                   attribute.style("font-size", "8px"),
-                  // Center the label over the gridline; let overflow-hidden clip edges.
-                  attribute.style("transform", "translateX(-50%)"),
+                  // Center the label on the gridline; pin left/right at extremes to avoid clipping.
+                  attribute.style("transform", case min {
+                    0 -> "translateX(0%)"
+                    _ if min >= total_min -> "translateX(-100%)"
+                    _ -> "translateX(-50%)"
+                  }),
                 ],
                 [html.text(format_hour(h))],
               ))
