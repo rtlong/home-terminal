@@ -468,113 +468,166 @@ pub fn view_gantt(
 
     let all_bars = list.append(event_bars, travel_bars)
 
-    // Render a single sub-row.
-    // Bars are sorted left→right. Each bar's label runs from bar_right to the
-    // next bar's left (or end of row), so labels never overlap.
-    let view_sub_row = fn(pos: BarPos) -> Element(msg) {
-      let bars =
-        list.filter(all_bars, fn(t) { t.0 == pos })
-        |> list.sort(fn(a, b) { int.compare(a.1, b.1) })
+    // --- Lane assignment ---
+    // Each sub-row gets bars packed into the fewest non-overlapping lanes.
+    // A bar #(pos, left_min, width_min, color, thick, label, label2).
+    // Two bars overlap if one starts before the other ends.
+    // Returns List(#(lane_index, bar_tuple)).
+    // Bar tuple type alias used throughout:
+    // #(BarPos, Int, Int, String, Bool, String, String)
+    //   pos  left width color thick label label2
+    let assign_lanes = fn(
+      bars: List(#(BarPos, Int, Int, String, Bool, String, String)),
+    ) -> List(#(Int, #(BarPos, Int, Int, String, Bool, String, String))) {
+      // Sort by left_min ascending.
+      let sorted =
+        list.sort(
+          bars,
+          fn(
+            a: #(BarPos, Int, Int, String, Bool, String, String),
+            b: #(BarPos, Int, Int, String, Bool, String, String),
+          ) {
+            int.compare(a.1, b.1)
+          },
+        )
+      // lane_ends: List(Int) — the right_min of the last bar in each lane.
+      // Fold carries #(assignments, lane_ends).
+      let init: #(
+        List(#(Int, #(BarPos, Int, Int, String, Bool, String, String))),
+        List(Int),
+      ) = #([], [])
+      list.fold(
+        sorted,
+        init,
+        fn(acc, bar: #(BarPos, Int, Int, String, Bool, String, String)) {
+          let #(assignments, lane_ends) = acc
+          let bar_left = bar.1
+          let bar_right = bar.1 + bar.2
+          // Find first lane whose last bar ended at or before this bar starts.
+          let found =
+            list.index_map(lane_ends, fn(end_min, idx) { #(idx, end_min) })
+            |> list.find(fn(p: #(Int, Int)) { p.1 <= bar_left })
+          case found {
+            Ok(#(lane_idx, _)) -> {
+              let new_ends =
+                list.index_map(lane_ends, fn(e, i) {
+                  case i == lane_idx {
+                    True -> bar_right
+                    False -> e
+                  }
+                })
+              #(list.append(assignments, [#(lane_idx, bar)]), new_ends)
+            }
+            Error(Nil) -> {
+              let lane_idx = list.length(lane_ends)
+              let new_ends = list.append(lane_ends, [bar_right])
+              #(list.append(assignments, [#(lane_idx, bar)]), new_ends)
+            }
+          }
+        },
+      ).0
+    }
 
-      // Compute label right boundaries: for bar[i], right = bar[i+1].left, or total_min.
-      let bars_with_label_rights =
-        list.index_map(bars, fn(b, i) {
-          let next_left = case list.drop(bars, i + 1) {
-            [next, ..] -> next.1
-            [] -> total_min
-          }
-          #(b, next_left)
-        })
+    // Fixed pixel height for every bar (thick or thin).
+    let bar_px = 20
 
-      let els =
-        list.flat_map(bars_with_label_rights, fn(pair) {
-          let #(
-            #(_, left_min, width_min, color, thick, label, label2),
-            label_right_min,
-          ) = pair
-          let bar_h = case thick {
-            True -> "60%"
-            False -> "30%"
+    // Render one sub-row (by BarPos) as stacked lanes.
+    let view_sub_row = fn(pos: BarPos, row_label: String) -> Element(msg) {
+      let bars = list.filter(all_bars, fn(t) { t.0 == pos })
+      let assigned = assign_lanes(bars)
+      let lane_count = case assigned {
+        [] -> 1
+        _ -> list.fold(assigned, 0, fn(mx, p) { int.max(mx, p.0 + 1) })
+      }
+      let row_height_px = lane_count * bar_px
+
+      // Build one absolutely-positioned bar element per assigned bar.
+      let bar_els =
+        list.map(assigned, fn(pair) {
+          let #(lane, #(_, left_min, width_min, color, thick, label, label2)) =
+            pair
+          let top_px = lane * bar_px
+          // Vertical padding inside the lane height.
+          let pad_px = case thick {
+            True -> 2
+            False -> 5
           }
-          let bar_top = case thick {
-            True -> "20%"
-            False -> "35%"
-          }
+          let bar_top_px = top_px + pad_px
+          let bar_height_px = bar_px - pad_px * 2
           let opacity = case thick {
             True -> "0.85"
             False -> "0.55"
           }
-          let bar_right_min = left_min + width_min
-          // Clamp bar width to window so it doesn't extend past the right edge.
-          let clamped_width_min = int.min(width_min, total_min - left_min)
-          let strip =
-            html.div(
-              [
-                attribute.class("absolute rounded-sm pointer-events-none"),
-                attribute.style("left", xpct(left_min)),
-                attribute.style("width", xfpct(int_to_float(clamped_width_min))),
-                attribute.style("top", bar_top),
-                attribute.style("height", bar_h),
-                attribute.style("background-color", color),
-                attribute.style("opacity", opacity),
-              ],
-              [],
-            )
-          // Only show label if there is room to the right of the bar.
-          let label_el = case label, bar_right_min >= total_min {
-            _, True -> element.none()
-            "", _ -> element.none()
-            _, _ ->
-              html.div(
+          let clamped_width = int.min(width_min, total_min - left_min)
+          // Label: primary (summary) + secondary (time) inside the bar.
+          let label_content = case label {
+            "" -> []
+            _ -> [
+              html.span(
                 [
-                  attribute.class(
-                    "absolute top-0 bottom-0 flex flex-col justify-center overflow-hidden pointer-events-none select-none",
-                  ),
-                  attribute.style("left", xpct(bar_right_min)),
-                  // Clip label at the next bar's left edge so labels never overlap.
-                  attribute.style("right", xpct(total_min - label_right_min)),
+                  attribute.class("truncate font-medium leading-none"),
+                  attribute.style("font-size", "9px"),
                 ],
-                [
-                  html.p(
+                [html.text(label)],
+              ),
+              case label2 {
+                "" -> element.none()
+                t ->
+                  html.span(
                     [
-                      attribute.class("leading-tight font-medium m-0 truncate"),
-                      attribute.style("font-size", "9px"),
-                      attribute.style(
-                        "color",
-                        "hsl(from " <> color <> " h s 30%)",
-                      ),
+                      attribute.class("truncate leading-none opacity-70"),
+                      attribute.style("font-size", "8px"),
                     ],
-                    [html.text(label)],
-                  ),
-                  case label2 {
-                    "" -> element.none()
-                    t ->
-                      html.p(
-                        [
-                          attribute.class("leading-tight m-0 truncate"),
-                          attribute.style("font-size", "9px"),
-                          attribute.style("color", "rgba(128,128,128,0.7)"),
-                        ],
-                        [html.text(t)],
-                      )
-                  },
-                ],
-              )
+                    [html.text(" " <> t)],
+                  )
+              },
+            ]
           }
-          [strip, label_el]
+          html.div(
+            [
+              attribute.class(
+                "absolute overflow-hidden flex items-center gap-0.5 px-1 pointer-events-none select-none rounded-sm",
+              ),
+              attribute.style("left", xpct(left_min)),
+              attribute.style("width", xfpct(int_to_float(clamped_width))),
+              attribute.style("top", int.to_string(bar_top_px) <> "px"),
+              attribute.style("height", int.to_string(bar_height_px) <> "px"),
+              attribute.style("background-color", color),
+              attribute.style("opacity", opacity),
+              attribute.style("color", "white"),
+            ],
+            label_content,
+          )
         })
+
+      // Hour gridlines.
+      let grid_lines = list.map(hour_lines, fn(line) { line })
+
+      // Row label (person name) overlaid at top-left of the lane area.
+      let label_el = case row_label {
+        "" -> element.none()
+        name ->
+          html.span(
+            [
+              attribute.class(
+                "absolute top-0.5 left-0.5 text-text-faint leading-none pointer-events-none select-none z-10",
+              ),
+              attribute.style("font-size", "7px"),
+            ],
+            [html.text(name)],
+          )
+      }
 
       html.div(
         [
-          attribute.class(
-            "relative flex-1 min-h-0 border-b border-border/15 overflow-hidden",
-          ),
+          attribute.class("relative border-b border-border/15 overflow-hidden"),
+          attribute.style("height", int.to_string(row_height_px) <> "px"),
         ],
-        list.flatten([hour_lines, els]),
+        list.flatten([grid_lines, bar_els, [label_el]]),
       )
     }
 
-    // Now indicator: vertical line across all sub-rows.
+    // Now indicator: vertical line spanning all sub-rows, positioned inside time_grid.
     let now_offset = now_min - window.start_min
     let now_el = case is_today && now_offset >= 0 && now_offset <= total_min {
       False -> element.none()
@@ -597,7 +650,7 @@ pub fn view_gantt(
         html.span(
           [
             attribute.class(
-              "inline-block px-1 rounded text-white leading-tight truncate max-w-full",
+              "inline-block px-1 rounded text-white leading-tight truncate",
             ),
             attribute.style("font-size", "9px"),
             attribute.style("background-color", color),
@@ -606,78 +659,59 @@ pub fn view_gantt(
         )
       })
 
-    // Date header column: date, person row labels, all-day chips.
-    let date_label =
+    // Top strip: date + all-day chips on one line.
+    let day_header =
       html.div(
         [
-          attribute.class("shrink-0 select-none"),
-          attribute.style("width", "4rem"),
+          attribute.class(
+            "shrink-0 flex flex-row flex-wrap items-baseline gap-x-1 gap-y-0.5 px-0.5 py-0.5 select-none",
+          ),
         ],
         [
-          html.div(
+          html.span(
             [
               attribute.class(case is_today {
-                True -> "font-bold text-accent-border leading-tight"
-                False -> "font-medium text-text-muted leading-tight"
+                True -> "font-bold text-accent-border leading-tight shrink-0"
+                False -> "font-medium text-text-muted leading-tight shrink-0"
               }),
               attribute.style("font-size", "10px"),
             ],
             [html.text(weekday_name(day) <> " " <> format_date(day))],
           ),
-          html.div(
-            [attribute.class("flex flex-col justify-around h-full pt-0.5")],
-            [
-              html.span(
-                [
-                  attribute.class("text-text-faint leading-none"),
-                  attribute.style("font-size", "8px"),
-                ],
-                [html.text(person0)],
-              ),
-              html.span([attribute.style("font-size", "8px")], []),
-              html.span(
-                [
-                  attribute.class("text-text-faint leading-none"),
-                  attribute.style("font-size", "8px"),
-                ],
-                [html.text(person1)],
-              ),
-            ],
-          ),
-          html.div(
-            [attribute.class("flex flex-wrap gap-0.5 mt-0.5")],
-            all_day_chips,
-          ),
+          ..all_day_chips
         ],
       )
 
-    // Time grid: relative, contains now-line and three sub-rows.
+    // Time grid: sub-rows stacked, sized to their lane content.
+    // The now-line spans the full height via absolute positioning.
+    let center_label = case person0, person1 {
+      "", "" -> ""
+      _, _ -> ""
+    }
     let time_grid =
       html.div(
         [
           attribute.class(
-            "relative flex-1 flex flex-col min-w-0 min-h-0 border-l border-border/30 overflow-hidden",
+            "relative flex-1 flex flex-col min-w-0 border-l border-border/30 overflow-hidden",
           ),
         ],
         [
           now_el,
-          view_sub_row(BarLeft),
-          view_sub_row(BarCenter),
-          view_sub_row(BarRight),
+          view_sub_row(BarLeft, person0),
+          view_sub_row(BarCenter, center_label),
+          view_sub_row(BarRight, person1),
         ],
       )
 
     html.div(
       [
-        attribute.class(
-          "flex flex-row min-h-0 flex-1 border-b border-border/30 gap-1",
-        ),
+        attribute.class("flex flex-col flex-1 border-b border-border/30"),
         attribute.class(case is_today {
           True -> "bg-surface-2/20"
           False -> ""
         }),
       ],
-      [date_label, time_grid],
+      [day_header, time_grid],
     )
   }
 
