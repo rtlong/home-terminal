@@ -161,13 +161,20 @@ pub fn compute_travel_blocks(
         // "Return home" gaps (dest == home_key) are departure-aligned; all others are arrival.
         let arrival_aligned = dest != home_key
 
+        // Bookend gaps (home→first or last→home) have no meaningful dwell time
+        // since the "gap" spans to midnight. Suppress dwell for those.
+        let is_bookend = origin == home_key || dest == home_key
+
         case via_home_secs, direct_secs {
           // No travel info at all — skip this gap.
           Error(_), Error(_) -> Error(Nil)
 
           // Only direct route available.
           Error(_), Ok(d) -> {
-            let dwell = int.max(gap_secs - d, 0)
+            let dwell = case is_bookend {
+              True -> 0
+              False -> int.max(gap_secs - d, 0)
+            }
             Ok(TravelBlock(
               gap_start:,
               gap_end:,
@@ -181,7 +188,10 @@ pub fn compute_travel_blocks(
 
           // Only via-home available.
           Ok(vh), Error(_) -> {
-            let dwell = int.max(gap_secs - vh, 0)
+            let dwell = case is_bookend {
+              True -> 0
+              False -> int.max(gap_secs - vh, 0)
+            }
             Ok(TravelBlock(
               gap_start:,
               gap_end:,
@@ -200,7 +210,10 @@ pub fn compute_travel_blocks(
               True -> vh
               False -> d
             }
-            let dwell = int.max(gap_secs - travel, 0)
+            let dwell = case is_bookend {
+              True -> 0
+              False -> int.max(gap_secs - travel, 0)
+            }
             Ok(TravelBlock(
               gap_start:,
               gap_end:,
@@ -1095,13 +1108,16 @@ fn view_timeline(
         True -> {
           let top_pct = pct(clamped_start - window.start_min)
           let h_pct = pct(clamped_end - clamped_start)
-          let label = case b.via_home {
-            True -> "🏠 " <> b.travel_text
-            False -> "🚗 " <> b.travel_text
+          let label = case b.via_home, b.arrival_aligned {
+            True, True -> "🏠 via home · " <> b.travel_text
+            True, False -> "🏠 " <> b.travel_text <> " home"
+            False, True -> "🚗 " <> b.travel_text
+            False, False -> "🚗 " <> b.travel_text <> " home"
           }
-          let dwell_label = case b.dwell_secs > 60 {
+          // Only show dwell time for loc→loc gaps with >10 min to spare.
+          let dwell_label = case b.dwell_secs > 600 {
             False -> ""
-            True -> " • " <> secs_to_min_text(b.dwell_secs) <> " free"
+            True -> " · " <> secs_to_min_text(b.dwell_secs) <> " free"
           }
           Ok(
             html.div(
