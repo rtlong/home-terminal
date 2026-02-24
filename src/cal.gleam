@@ -59,7 +59,7 @@ pub type TravelBlock {
   TravelBlock(
     /// Start of the gap (end of prior event, or midnight for first block).
     gap_start: Timestamp,
-    /// End of the gap (start of next event).
+    /// End of the gap (start of next event, or end-of-day for last block).
     gap_end: Timestamp,
     /// True = the person can make a home stop; False = direct A→B route.
     via_home: Bool,
@@ -69,6 +69,9 @@ pub type TravelBlock {
     travel_text: String,
     /// Free dwell time after travel, in seconds (gap - travel).
     dwell_secs: Int,
+    /// True = anchor block at gap_end (arrival-aligned: depart home / between events).
+    /// False = anchor at gap_start (departure-aligned: return home after last event).
+    arrival_aligned: Bool,
   )
 }
 
@@ -153,6 +156,11 @@ pub fn compute_travel_blocks(
         // Try direct route: origin→dest.
         let direct_secs = get_leg(origin, dest)
 
+        // Arrival-aligned = block renders ending at gap_end (right before next event).
+        // Departure-aligned = block renders starting at gap_start (right after last event).
+        // "Return home" gaps (dest == home_key) are departure-aligned; all others are arrival.
+        let arrival_aligned = dest != home_key
+
         case via_home_secs, direct_secs {
           // No travel info at all — skip this gap.
           Error(_), Error(_) -> Error(Nil)
@@ -167,6 +175,7 @@ pub fn compute_travel_blocks(
               travel_secs: d,
               travel_text: secs_to_min_text(d),
               dwell_secs: dwell,
+              arrival_aligned:,
             ))
           }
 
@@ -180,6 +189,7 @@ pub fn compute_travel_blocks(
               travel_secs: vh,
               travel_text: secs_to_min_text(vh),
               dwell_secs: dwell,
+              arrival_aligned:,
             ))
           }
 
@@ -198,6 +208,7 @@ pub fn compute_travel_blocks(
               travel_secs: travel,
               travel_text: secs_to_min_text(travel),
               dwell_secs: dwell,
+              arrival_aligned:,
             ))
           }
         }
@@ -1063,9 +1074,20 @@ fn view_timeline(
   // Render travel blocks: semi-transparent strips showing drive time.
   let block_els =
     list.filter_map(travel_blocks, fn(b) {
-      let #(_, start_t) = timestamp.to_calendar(b.gap_start, local_offset)
-      let block_start_min = start_t.hours * 60 + start_t.minutes
-      let block_end_min = block_start_min + b.travel_secs / 60
+      // Arrival-aligned: block ends at gap_end (right before next event starts).
+      // Departure-aligned: block starts at gap_start (right after last event ends).
+      let #(block_start_min, block_end_min) = case b.arrival_aligned {
+        True -> {
+          let #(_, end_t) = timestamp.to_calendar(b.gap_end, local_offset)
+          let end_min = end_t.hours * 60 + end_t.minutes
+          #(end_min - b.travel_secs / 60, end_min)
+        }
+        False -> {
+          let #(_, start_t) = timestamp.to_calendar(b.gap_start, local_offset)
+          let start_min = start_t.hours * 60 + start_t.minutes
+          #(start_min, start_min + b.travel_secs / 60)
+        }
+      }
       let clamped_start = int.max(block_start_min, window.start_min)
       let clamped_end = int.min(block_end_min, window.end_min)
       case clamped_end > clamped_start {

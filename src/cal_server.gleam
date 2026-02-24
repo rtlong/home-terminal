@@ -296,6 +296,21 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
                   }
                 })
 
+              // Seed leg cache with home→loc entries from travel cache
+              // (these come free from get_travel_info, no extra API calls needed).
+              let leg_cache_with_home_fwd =
+                dict.fold(
+                  updated_travel_cache,
+                  state.leg_cache,
+                  fn(cache, loc, info) {
+                    let key = travel.leg_cache_key(home_address, loc)
+                    case dict.has_key(cache, key) {
+                      True -> cache
+                      False -> dict.insert(cache, key, info.duration_secs)
+                    }
+                  },
+                )
+
               // ── Phase B: point-to-point legs for routing ─────────────────────
               // We need: loc→home, and loc_a→loc_b for each consecutive
               // located-event pair on the same day.
@@ -322,32 +337,55 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
                 |> list.unique
                 |> list.filter(fn(pair) {
                   let #(o, d) = pair
-                  !dict.has_key(state.leg_cache, travel.leg_cache_key(o, d))
+                  !dict.has_key(
+                    leg_cache_with_home_fwd,
+                    travel.leg_cache_key(o, d),
+                  )
                 })
 
+              log.println(
+                "[cal_server] fetching "
+                <> string.inspect(list.length(all_required_legs))
+                <> " new legs",
+              )
+
               let updated_leg_cache =
-                list.fold(all_required_legs, state.leg_cache, fn(cache, pair) {
-                  let #(o, d) = pair
-                  case travel.get_leg(o, d, api_key) {
-                    Ok(leg) ->
-                      dict.insert(
-                        cache,
-                        travel.leg_cache_key(o, d),
-                        leg.duration_secs,
-                      )
-                    Error(err) -> {
-                      log.println(
-                        "[cal_server] leg failed \""
-                        <> o
-                        <> "\"→\""
-                        <> d
-                        <> "\": "
-                        <> err,
-                      )
-                      cache
+                list.fold(
+                  all_required_legs,
+                  leg_cache_with_home_fwd,
+                  fn(cache, pair) {
+                    let #(o, d) = pair
+                    case travel.get_leg(o, d, api_key) {
+                      Ok(leg) -> {
+                        log.println(
+                          "[cal_server] leg ok \""
+                          <> o
+                          <> "\"→\""
+                          <> d
+                          <> "\": "
+                          <> string.inspect(leg.duration_secs)
+                          <> "s",
+                        )
+                        dict.insert(
+                          cache,
+                          travel.leg_cache_key(o, d),
+                          leg.duration_secs,
+                        )
+                      }
+                      Error(err) -> {
+                        log.println(
+                          "[cal_server] leg failed \""
+                          <> o
+                          <> "\"→\""
+                          <> d
+                          <> "\": "
+                          <> err,
+                        )
+                        cache
+                      }
                     }
-                  }
-                })
+                  },
+                )
 
               #(updated_travel_cache, updated_leg_cache)
             }
