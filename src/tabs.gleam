@@ -281,6 +281,8 @@ fn view_active_tab(model: Model) -> Element(Msg) {
                 visible_events,
                 color_for,
                 model.calendar_data.travel_cache,
+                model.calendar_data.leg_cache,
+                model.calendar_data.cal_config.home_address,
               ),
             ],
           )

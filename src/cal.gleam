@@ -12,6 +12,7 @@ import gleam/time/timestamp.{type Timestamp}
 import lustre/attribute
 import lustre/element.{type Element}
 import lustre/element/html
+import travel
 
 // TYPES -----------------------------------------------------------------------
 
@@ -222,19 +223,24 @@ fn build_gaps(
         [first_loc, ..] -> {
           let last_loc = list.fold(located, first_loc, fn(_, e) { e })
 
-          // home → first located event
+          // home → first located event:
+          // gap spans from midnight (day start) to first event start.
           let first_gap = case first_loc.start {
-            AtTime(ts) -> [
-              #(ts, ts, home_key, first_loc.location),
-            ]
+            AtTime(ts) -> {
+              let day_start = day_midnight(ts)
+              [#(day_start, ts, home_key, first_loc.location)]
+            }
             AllDay(_) -> []
           }
 
-          // last located event → home
+          // last located event → home:
+          // gap spans from last event end to end of day.
           let last_gap = case last_loc.end {
-            AtTime(ts) -> [
-              #(ts, ts, last_loc.location, home_key),
-            ]
+            AtTime(ts) -> {
+              let day_end =
+                timestamp.add(day_midnight(ts), gleam_time_duration_hours(24))
+              [#(ts, day_end, last_loc.location, home_key)]
+            }
             AllDay(_) -> []
           }
 
@@ -300,6 +306,22 @@ fn is_epoch(ts: Timestamp) -> Bool {
   timestamp.to_unix_seconds_and_nanoseconds(ts).0 == 0
 }
 
+/// Return the midnight (00:00 UTC) timestamp for the same calendar day as `ts`
+/// in the local timezone. Used to define day-start bookend gaps.
+fn day_midnight(ts: Timestamp) -> Timestamp {
+  let local_offset = calendar.local_offset()
+  let offset_secs = duration.to_seconds(local_offset) |> float_to_int_floor
+  // Get the local unix seconds and truncate to day boundary.
+  let unix_secs = timestamp.to_unix_seconds_and_nanoseconds(ts).0
+  let local_secs = unix_secs + offset_secs
+  let day_start_local = local_secs - local_secs % 86_400
+  timestamp.from_unix_seconds(day_start_local - offset_secs)
+}
+
+fn gleam_time_duration_hours(n: Int) -> duration.Duration {
+  duration.seconds(n * 3600)
+}
+
 fn float_to_int_floor(f: Float) -> Int {
   case f >=. 0.0 {
     True -> float_truncate(f)
@@ -351,6 +373,8 @@ pub fn view_seven_days(
   events: List(Event),
   color_for: fn(String) -> String,
   travel_cache: Dict(String, TravelInfo),
+  leg_cache: LegCache,
+  home_address: String,
 ) -> Element(msg) {
   let now = timestamp.system_time()
   let local_offset = calendar.local_offset()
@@ -407,6 +431,17 @@ pub fn view_seven_days(
             AllDay(_) -> False
           }
         })
+      // Compute travel blocks for this day's events.
+      let day_blocks = case home_address {
+        "" -> []
+        addr ->
+          compute_travel_blocks(
+            day_timed,
+            leg_cache,
+            addr,
+            travel.leg_cache_key,
+          )
+      }
       view_day(
         day,
         day == today_date,
@@ -418,6 +453,7 @@ pub fn view_seven_days(
         all_day_row_count,
         color_for,
         travel_cache,
+        day_blocks,
       )
     }),
   )
@@ -589,6 +625,7 @@ fn view_day(
   all_day_row_count: Int,
   color_for: fn(String) -> String,
   travel_cache: Dict(String, TravelInfo),
+  day_blocks: List(TravelBlock),
 ) -> Element(msg) {
   html.div(
     [
@@ -614,6 +651,7 @@ fn view_day(
         is_today,
         color_for,
         travel_cache,
+        day_blocks,
       ),
     ],
   )
@@ -827,6 +865,7 @@ fn view_timeline(
   is_today: Bool,
   color_for: fn(String) -> String,
   travel_cache: Dict(String, TravelInfo),
+  travel_blocks: List(TravelBlock),
 ) -> Element(msg) {
   let total_min = window.end_min - window.start_min
   let total_f = int_to_float(total_min)
@@ -1021,9 +1060,61 @@ fn view_timeline(
       }
     })
 
+  // Render travel blocks: semi-transparent strips showing drive time.
+  let block_els =
+    list.filter_map(travel_blocks, fn(b) {
+      let #(_, start_t) = timestamp.to_calendar(b.gap_start, local_offset)
+      let block_start_min = start_t.hours * 60 + start_t.minutes
+      let block_end_min = block_start_min + b.travel_secs / 60
+      let clamped_start = int.max(block_start_min, window.start_min)
+      let clamped_end = int.min(block_end_min, window.end_min)
+      case clamped_end > clamped_start {
+        False -> Error(Nil)
+        True -> {
+          let top_pct = pct(clamped_start - window.start_min)
+          let h_pct = pct(clamped_end - clamped_start)
+          let label = case b.via_home {
+            True -> "🏠 " <> b.travel_text
+            False -> "🚗 " <> b.travel_text
+          }
+          let dwell_label = case b.dwell_secs > 60 {
+            False -> ""
+            True -> " • " <> secs_to_min_text(b.dwell_secs) <> " free"
+          }
+          Ok(
+            html.div(
+              [
+                attribute.class(
+                  "absolute left-0 right-0 overflow-hidden select-none pointer-events-none",
+                ),
+                attribute.styles([
+                  #("top", top_pct),
+                  #("height", h_pct),
+                  #(
+                    "background",
+                    "repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(128,128,128,0.08) 3px, rgba(128,128,128,0.08) 6px)",
+                  ),
+                  #("border-top", "1px solid rgba(128,128,128,0.25)"),
+                ]),
+              ],
+              [
+                html.span(
+                  [
+                    attribute.class("text-text-faint leading-none pl-1"),
+                    attribute.style("font-size", "9px"),
+                  ],
+                  [html.text(label <> dwell_label)],
+                ),
+              ],
+            ),
+          )
+        }
+      }
+    })
+
   html.div(
     [attribute.class("relative flex-1 min-h-0 overflow-hidden")],
-    list.flatten([hour_lines, now_line, event_els]),
+    list.flatten([hour_lines, now_line, block_els, event_els]),
   )
 }
 
