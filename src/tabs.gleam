@@ -295,18 +295,33 @@ fn view_active_tab(model: Model) -> Element(Msg) {
             list.filter(events, fn(e) {
               state.get_calendar_config(cfg, e.calendar_name).visible
             })
-          // Map each event to a bar position based on the first assigned person.
+          // Map each event to its (BarPos, color) pairs — one per assigned person.
+          // An event assigned to both people gets a pair for each.
           // people[0] → BarLeft, people[1] → BarRight, unassigned → BarCenter.
           let people = cfg.people
-          let bar_for_event = fn(e: cal.Event) -> cal.BarPos {
+          let bars_for_event = fn(e: cal.Event) -> List(#(cal.BarPos, String)) {
             let assigned =
               dict.get(cfg.calendar_people, e.calendar_name)
               |> result.unwrap([])
-            case assigned, people {
-              [], _ -> cal.BarCenter
-              [person, ..], [p0, ..] if person == p0 -> cal.BarLeft
-              [person, ..], [_, p1, ..] if person == p1 -> cal.BarRight
-              _, _ -> cal.BarCenter
+            case assigned {
+              [] -> [
+                #(
+                  cal.BarCenter,
+                  state.get_calendar_config(cfg, e.calendar_name).color,
+                ),
+              ]
+              _ ->
+                list.filter_map(assigned, fn(person) {
+                  let bar = case people {
+                    [p0, ..] if person == p0 -> cal.BarLeft
+                    [_, p1, ..] if person == p1 -> cal.BarRight
+                    _ -> cal.BarCenter
+                  }
+                  let color =
+                    dict.get(cfg.people_colors, person)
+                    |> result.unwrap("#888888")
+                  Ok(#(bar, color))
+                })
             }
           }
           html.div(
@@ -320,8 +335,7 @@ fn view_active_tab(model: Model) -> Element(Msg) {
                 model.calendar_data.leg_cache,
                 model.calendar_data.cal_config.home_address,
                 colors_for_event,
-                people,
-                bar_for_event,
+                bars_for_event,
               ),
             ],
           )

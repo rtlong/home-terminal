@@ -4,6 +4,7 @@ import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
 import gleam/order
+import gleam/result
 import gleam/string
 import gleam/time/calendar.{type Date, Date}
 import gleam/time/duration
@@ -167,10 +168,10 @@ pub fn view_error(reason: String) -> Element(msg) {
 
 /// The main 7-day view. Shows events for today and the next 6 days.
 /// All columns share the same time window so timelines are aligned.
-/// `color_for` maps calendar_name → CSS color for event blocks.
+/// `color_for` maps calendar_name → CSS color (used for all-day events).
 /// `colors_for_event` returns all person colors for an event (one per assigned person).
-/// `people` is the ordered list of people: [0]=left bar, [1]=right bar.
-/// `bar_for_event` maps each event to its bar position.
+/// `bars_for_event` returns one (BarPos, color) pair per assigned person — used for
+///   both rendering event segments and deciding travel block bars.
 pub fn view_seven_days(
   events: List(Event),
   color_for: fn(String) -> String,
@@ -178,8 +179,7 @@ pub fn view_seven_days(
   leg_cache: LegCache,
   home_address: String,
   colors_for_event: fn(Event) -> List(String),
-  people: List(String),
-  bar_for_event: fn(Event) -> BarPos,
+  bars_for_event: fn(Event) -> List(#(BarPos, String)),
 ) -> Element(msg) {
   let now = timestamp.system_time()
   let local_offset = calendar.local_offset()
@@ -221,7 +221,11 @@ pub fn view_seven_days(
             addr,
             travel.leg_cache_key,
             colors_for_event,
-            bar_for_event,
+            fn(e) {
+              list.map(bars_for_event(e), fn(pair) { pair.0 })
+              |> list.first
+              |> result.unwrap(BarCenter)
+            },
           )
       }
       #(day_timed, day_blocks)
@@ -258,8 +262,7 @@ pub fn view_seven_days(
         color_for,
         travel_cache,
         day_blocks,
-        people,
-        bar_for_event,
+        bars_for_event,
       )
     }),
   )
@@ -471,14 +474,15 @@ fn view_day(
   color_for: fn(String) -> String,
   travel_cache: Dict(String, TravelInfo),
   day_blocks: List(TravelBlock),
-  people: List(String),
-  bar_for_event: fn(Event) -> BarPos,
+  bars_for_event: fn(Event) -> List(#(BarPos, String)),
 ) -> Element(msg) {
   html.div(
     [
-      attribute.class("flex flex-col rounded-lg overflow-hidden border"),
+      attribute.class(
+        "flex flex-col rounded-lg overflow-hidden border-2 bg-surface",
+      ),
       attribute.class(case is_today {
-        True -> "border-border-dim bg-surface"
+        True -> "border-accent-border"
         False -> "border-border"
       }),
     ],
@@ -496,11 +500,9 @@ fn view_day(
         local_offset,
         window,
         is_today,
-        color_for,
         travel_cache,
         day_blocks,
-        people,
-        bar_for_event,
+        bars_for_event,
       ),
     ],
   )
@@ -635,18 +637,18 @@ type BarSegment {
 }
 
 /// The time-positioned portion of a day column.
-/// Renders three vertical timeline bars (left/center/right) as thin lines
-/// that thicken for event and travel segments. Labels float into the center.
+/// Renders three vertical timeline bars (left/center/right).
+/// Event and travel segments thicken the bar at their time slot.
+/// Labels float into the center area.
+/// `bars_for_event` returns one (BarPos, color) pair per assigned person.
 fn view_timeline(
   events: List(Event),
   local_offset: duration.Duration,
   window: Window,
   is_today: Bool,
-  color_for: fn(String) -> String,
   travel_cache: Dict(String, TravelInfo),
   travel_blocks: List(TravelBlock),
-  people: List(String),
-  bar_for_event: fn(Event) -> BarPos,
+  bars_for_event: fn(Event) -> List(#(BarPos, String)),
 ) -> Element(msg) {
   let total_min = window.end_min - window.start_min
   let total_f = int_to_float(total_min)
@@ -738,16 +740,11 @@ fn view_timeline(
     }
   }
 
-  // ── Determine which bars are active ────────────────────────────────────────
-  // Left bar = person[0], Right bar = person[1], Center = unassigned.
-  // Only render bars that are actually needed (have events or blocks).
-  let has_left = list.length(people) >= 1
-  let has_right = list.length(people) >= 2
-
   // ── Collect segments per bar ───────────────────────────────────────────────
-  // Events → segments
+  // Events → one segment per (bar, color) pair.
+  // An event assigned to both people appears on both bars simultaneously.
   let event_segs =
-    list.filter_map(events, fn(e) {
+    list.flat_map(events, fn(e) {
       case e.start, e.end {
         AtTime(s), AtTime(en) -> {
           let #(_, st) = timestamp.to_calendar(s, local_offset)
@@ -757,7 +754,6 @@ fn view_timeline(
           let top_min = int.max(start_min, window.start_min) - window.start_min
           let bot_min = int.min(end_min, window.end_min) - window.start_min
           let dur_min = int.max(bot_min - top_min, 1)
-          let color = color_for(e.calendar_name)
           let time_str =
             format_time(s, local_offset) <> "–" <> format_time(en, local_offset)
           let loc_suffix = case e.location {
@@ -768,20 +764,22 @@ fn view_timeline(
                 Error(_) -> ""
               }
           }
-          let bar = bar_for_event(e)
-          Ok(#(
-            bar,
-            BarSegment(
-              top_min:,
-              dur_min:,
-              color:,
-              thick: True,
-              label: e.summary <> loc_suffix,
-              label2: time_str,
-            ),
-          ))
+          list.map(bars_for_event(e), fn(pair) {
+            let #(bar, color) = pair
+            #(
+              bar,
+              BarSegment(
+                top_min:,
+                dur_min:,
+                color:,
+                thick: True,
+                label: e.summary <> loc_suffix,
+                label2: time_str,
+              ),
+            )
+          })
         }
-        _, _ -> Error(Nil)
+        _, _ -> []
       }
     })
 
@@ -857,8 +855,7 @@ fn view_timeline(
   let center_segs = segs_for(BarCenter)
 
   // ── Bar width constants ────────────────────────────────────────────────────
-  // Bar is 6px thin, 10px thick for events, 7px for travel. Labels float in.
-  let bar_w_thin = "6px"
+  // Thick bar for events, thinner for travel.
   let bar_w_thick = "10px"
   let bar_w_travel = "7px"
 
@@ -873,21 +870,6 @@ fn view_timeline(
     label_right: String,
     label_align: String,
   ) -> List(Element(msg)) {
-    // Thin baseline bar spanning full height
-    let base_bar =
-      html.div(
-        [
-          attribute.class("absolute top-0 bottom-0 pointer-events-none"),
-          attribute.styles([
-            #("left", bar_left),
-            #("right", bar_right),
-            #("width", bar_w_thin),
-            #("background-color", "rgba(128,128,128,0.15)"),
-          ]),
-        ],
-        [],
-      )
-
     // Segment elements (thick/thin strips on the bar)
     let seg_els =
       list.map(segs, fn(seg) {
@@ -925,7 +907,7 @@ fn view_timeline(
     let nudged_labels =
       list.fold(sorted_segs, #([], -999), fn(acc, seg) {
         let #(placed, last_top) = acc
-        let ideal = seg.top_min + seg.dur_min / 2
+        let ideal = seg.top_min
         let actual = int.max(ideal, last_top + min_gap_min)
         #(list.append(placed, [#(actual, seg)]), actual)
       })
@@ -977,32 +959,20 @@ fn view_timeline(
         }
       })
 
-    [base_bar, ..list.append(seg_els, label_els)]
+    list.append(seg_els, label_els)
   }
 
   // ── Render the three bars ──────────────────────────────────────────────────
-  // Left bar: flush left, labels go right into left half of center
-  // Right bar: flush right, labels go left into right half of center
-  // Center bar: centered, labels centered below segment midpoint
-  let left_els = case has_left {
-    False -> []
-    True -> render_bar(left_segs, "0", "auto", bar_w_thick, "50%", "left")
-  }
-  let right_els = case has_right {
-    False -> []
-    True -> render_bar(right_segs, "auto", "0", "50%", bar_w_thick, "right")
-  }
-  let center_els = case left_els == [] && right_els == [] {
-    // Only show center bar when there are no person bars, or when center has segs
-    True ->
-      render_bar(center_segs, "calc(50% - 3px)", "auto", "0", "0", "center")
-    False ->
-      case center_segs {
-        [] -> []
-        _ ->
-          render_bar(center_segs, "calc(50% - 3px)", "auto", "0", "0", "center")
-      }
-  }
+  // Bars are inset from column edges so they sit visually inside the day.
+  // Left bar: 8px from left edge. Right bar: 8px from right edge.
+  // Center bar: centered.
+  let bar_inset = "8px"
+  let left_els =
+    render_bar(left_segs, bar_inset, "auto", bar_w_thick, "50%", "left")
+  let right_els =
+    render_bar(right_segs, "auto", bar_inset, "50%", bar_w_thick, "right")
+  let center_els =
+    render_bar(center_segs, "calc(50% - 3px)", "auto", "0", "0", "center")
 
   html.div(
     [attribute.class("relative flex-1 min-h-0 overflow-hidden")],
