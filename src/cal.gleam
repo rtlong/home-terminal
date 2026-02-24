@@ -946,18 +946,24 @@ fn view_timeline(
           True -> "0.9"
           False -> "0.55"
         }
-        let lane_offset = anchor_px + seg.col * lane_stride
-        // For center bar: position as calc(50% - half_group + lane_offset)
+        // Center the strip over its lane's anchor point.
+        // Lane i's center is at anchor_px + i*lane_stride from the anchor edge.
+        // Strip left edge = center - strip_w/2.
+        let lane_center = anchor_px + seg.col * lane_stride
+        let strip_edge = lane_center - strip_w / 2
+        // For center bar: mirror so the group center is at 50%.
+        // Group center offset from left = total_lanes*lane_stride/2.
+        // So each strip's left = calc(50% - group_half + strip_edge).
         let pos_css = case center_bar {
           True ->
-            "calc(50% - "
-            <> px_str(total_lanes * lane_stride / 2 - lane_offset)
+            "calc(50% + "
+            <> px_str(strip_edge - total_lanes * lane_stride / 2)
             <> ")"
-          False -> px_str(lane_offset)
+          False -> px_str(strip_edge)
         }
         html.div(
           [
-            attribute.class("absolute pointer-events-none rounded-sm"),
+            attribute.class("absolute pointer-events-none"),
             attribute.styles([
               #(
                 case from_right {

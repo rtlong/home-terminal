@@ -279,33 +279,33 @@ fn view_active_tab(model: Model) -> Element(Msg) {
             list.filter(events, fn(e) {
               state.get_calendar_config(cfg, e.calendar_name).visible
             })
-          // Map each event to its (BarPos, color) pairs — one per assigned person.
-          // An event assigned to both people gets a pair for each.
-          // people[0] → BarLeft, people[1] → BarRight, unassigned → BarCenter.
+          // Map each event to (BarPos, color). Color is always the calendar color.
+          // Unassigned → BarCenter.
+          // Assigned to one person → BarLeft (person 0) or BarRight (person 1).
+          // Assigned to both people → BarCenter (one strip in the middle).
           let people = cfg.people
+          let cal_color = fn(e: cal.Event) {
+            state.get_calendar_config(cfg, e.calendar_name).color
+          }
           let bars_for_event = fn(e: cal.Event) -> List(#(cal.BarPos, String)) {
             let assigned =
               dict.get(cfg.calendar_people, e.calendar_name)
               |> result.unwrap([])
-            case assigned {
-              [] -> [
-                #(
-                  cal.BarCenter,
-                  state.get_calendar_config(cfg, e.calendar_name).color,
-                ),
-              ]
-              _ ->
-                list.filter_map(assigned, fn(person) {
-                  let bar = case people {
-                    [p0, ..] if person == p0 -> cal.BarLeft
-                    [_, p1, ..] if person == p1 -> cal.BarRight
-                    _ -> cal.BarCenter
-                  }
-                  let color =
-                    dict.get(cfg.people_colors, person)
-                    |> result.unwrap("#888888")
-                  Ok(#(bar, color))
-                })
+            let color = cal_color(e)
+            case assigned, people {
+              // Unassigned
+              [], _ -> [#(cal.BarCenter, color)]
+              // Assigned to both people → center strip
+              [_, _, ..], [_, _, ..] -> [#(cal.BarCenter, color)]
+              // Assigned to one person → their bar
+              [person, ..], _ -> {
+                let bar = case people {
+                  [p0, ..] if person == p0 -> cal.BarLeft
+                  [_, p1, ..] if person == p1 -> cal.BarRight
+                  _ -> cal.BarCenter
+                }
+                [#(bar, color)]
+              }
             }
           }
           html.div(
