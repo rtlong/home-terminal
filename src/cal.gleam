@@ -1118,21 +1118,26 @@ fn view_timeline(
                 #("right", "0"),
                 #("text-align", "left"),
               ]
-              False ->
+              False -> {
+                // Label must clear the rightmost lane's strip right edge.
+                // Lane (total_lanes-1) center = anchor_px + (total_lanes-1)*lane_stride.
+                // Its right edge = center + lane_w/2.
+                // Add 2px gap → label_edge = anchor_px + (total_lanes-1)*lane_stride + lane_w/2 + 2.
+                let label_edge =
+                  anchor_px + { total_lanes - 1 } * lane_stride + lane_w / 2 + 2
                 case from_right {
                   False -> [
-                    // Label starts just past lane-0 strip right edge: anchor + lane_w + gap.
-                    // This is fixed regardless of how many extra lanes exist.
-                    #("left", px_str(anchor_px + lane_w + 2)),
+                    #("left", px_str(label_edge)),
                     #("right", "50%"),
                     #("text-align", "left"),
                   ]
                   True -> [
                     #("left", "50%"),
-                    #("right", px_str(anchor_px + lane_w + 2)),
+                    #("right", px_str(label_edge)),
                     #("text-align", "right"),
                   ]
                 }
+              }
             }
             [
               html.div(
