@@ -565,28 +565,22 @@ fn view_all_day_strip(
                 Error(_) -> ""
               }
           }
-          // Determine horizontal extent from bar position (same rules as timed events).
           let bar = case bars_for_event(e) {
             [#(b, _), ..] -> b
             [] -> BarCenter
           }
-          let #(chip_left, chip_right) = case bar {
-            BarLeft -> #("0", "50%")
-            BarRight -> #("50%", "0")
-            BarCenter -> #("0", "0")
+          let text_align = case bar {
+            BarLeft -> "left"
+            BarRight -> "right"
+            BarCenter -> "left"
           }
           Ok(
             html.div(
               [
                 attribute.class(
-                  "absolute flex items-center px-1 overflow-hidden",
+                  "absolute left-0 right-0 flex items-center px-1 overflow-hidden",
                 ),
-                attribute.styles([
-                  #("top", top_em),
-                  #("height", h_em),
-                  #("left", chip_left),
-                  #("right", chip_right),
-                ]),
+                attribute.styles([#("top", top_em), #("height", h_em)]),
               ],
               [
                 html.div(
@@ -596,6 +590,7 @@ fn view_all_day_strip(
                     ),
                     attribute.style("border-left-color", color),
                     attribute.style("background-color", bgcolor(color)),
+                    attribute.style("text-align", text_align),
                   ],
                   [html.text(e.summary <> city_suffix)],
                 ),
