@@ -255,6 +255,431 @@ pub fn view_seven_days(
   )
 }
 
+// GANTT VIEW ------------------------------------------------------------------
+
+/// Horizontal gantt-style 7-day view.
+/// Each day is a row; time runs left→right across the full width.
+/// Events are horizontal bars in one of three sub-rows per day:
+///   top    = person 0 (BarLeft)
+///   middle = both / unassigned (BarCenter)
+///   bottom = person 1 (BarRight)
+/// Labels flow to the right of each bar — no vertical deconfliction needed
+/// since events rarely overlap for the same person.
+pub fn view_gantt(
+  events: List(Event),
+  color_for: fn(String) -> String,
+  travel_cache: Dict(String, TravelInfo),
+  leg_cache: LegCache,
+  home_address: String,
+  bars_for_event: fn(Event) -> List(#(BarPos, String)),
+  people: List(String),
+) -> Element(msg) {
+  let now = timestamp.system_time()
+  let local_offset = calendar.local_offset()
+  let today_date = timestamp.to_calendar(now, local_offset).0
+  let days = next_n_dates(today_date, 7)
+
+  // Per-day timed event lists for window computation.
+  let day_timed_lists =
+    list.map(days, fn(day) {
+      list.filter(events, fn(e) {
+        case e.start, e.end {
+          AtTime(s), AtTime(en) -> {
+            let start_date = timestamp.to_calendar(s, local_offset).0
+            let end_date = timestamp.to_calendar(en, local_offset).0
+            date_lte(start_date, day) && date_gte(end_date, day)
+          }
+          _, _ -> False
+        }
+      })
+    })
+
+  let day_timed_and_blocks =
+    list.map(day_timed_lists, fn(day_timed) {
+      let day_blocks = case home_address {
+        "" -> []
+        addr ->
+          compute_travel_blocks(
+            day_timed,
+            leg_cache,
+            addr,
+            travel.leg_cache_key,
+            bars_for_event,
+          )
+      }
+      #(day_timed, day_blocks)
+    })
+
+  let all_day_blocks = list.flat_map(day_timed_and_blocks, fn(p) { p.1 })
+  let window = compute_window(day_timed_lists, all_day_blocks, local_offset)
+  let total_min = window.end_min - window.start_min
+  let total_f = int_to_float(total_min)
+
+  // Percentage helpers relative to the time window.
+  let xpct = fn(min: Int) -> String {
+    float_pct(int_to_float(min) /. total_f *. 100.0)
+  }
+  let xfpct = fn(f: Float) -> String { float_pct(f /. total_f *. 100.0) }
+
+  // Person names for sub-row labels.
+  let person0 = case people {
+    [p, ..] -> p
+    [] -> ""
+  }
+  let person1 = case people {
+    [_, p, ..] -> p
+    _ -> ""
+  }
+
+  // Now-indicator: minutes from window start (for horizontal line).
+  let now_min = {
+    let #(_, t) = timestamp.to_calendar(now, local_offset)
+    t.hours * 60 + t.minutes
+  }
+
+  // Hour gridlines — shared across all rows.
+  let first_hour = case window.start_min % 60 {
+    0 -> window.start_min / 60
+    _ -> window.start_min / 60 + 1
+  }
+  let last_hour = window.end_min / 60
+  let hour_lines =
+    list.filter_map(list.range(first_hour, last_hour), fn(h) {
+      let min = h * 60 - window.start_min
+      case min > 0 && min < total_min {
+        False -> Error(Nil)
+        True ->
+          Ok(
+            html.div(
+              [
+                attribute.class(
+                  "absolute top-0 bottom-0 border-l border-border/40 pointer-events-none",
+                ),
+                attribute.style("left", xpct(min)),
+              ],
+              [],
+            ),
+          )
+      }
+    })
+
+  // Render one day row.
+  let view_gantt_day = fn(
+    day: Date,
+    is_today: Bool,
+    day_timed: List(Event),
+    day_blocks: List(TravelBlock),
+    all_day_events: List(Event),
+  ) -> Element(msg) {
+    // Build horizontal bar segments for timed events.
+    // left_min = start offset from window start; width_min = duration.
+    let event_bars =
+      list.flat_map(day_timed, fn(e) {
+        case e.start, e.end {
+          AtTime(s), AtTime(en) -> {
+            let #(start_date, st) = timestamp.to_calendar(s, local_offset)
+            let #(end_date, et) = timestamp.to_calendar(en, local_offset)
+            let start_min = case calendar.naive_date_compare(start_date, day) {
+              order.Eq -> st.hours * 60 + st.minutes
+              _ -> 0
+            }
+            let end_min = case calendar.naive_date_compare(end_date, day) {
+              order.Eq -> et.hours * 60 + et.minutes
+              _ -> 1440
+            }
+            let left_min =
+              int.max(start_min, window.start_min) - window.start_min
+            let right_min = int.min(end_min, window.end_min) - window.start_min
+            let width_min = int.max(right_min - left_min, 1)
+            let time_str =
+              format_time(s, local_offset)
+              <> "–"
+              <> format_time(en, local_offset)
+            let loc_suffix = case e.location {
+              "" -> ""
+              loc ->
+                case dict.get(travel_cache, loc) {
+                  Ok(info) -> " · " <> info.city
+                  Error(_) -> ""
+                }
+            }
+            list.map(bars_for_event(e), fn(pair) {
+              let #(bar, color) = pair
+              #(
+                bar,
+                left_min,
+                width_min,
+                color,
+                True,
+                e.summary <> loc_suffix,
+                time_str,
+              )
+            })
+          }
+          _, _ -> []
+        }
+      })
+
+    // Travel block bars (thin, low opacity).
+    let travel_bars =
+      list.filter_map(day_blocks, fn(b) {
+        case b {
+          DriveTo(event_start:, travel_secs:, travel_text:, color:, bar:) -> {
+            let #(_, t) = timestamp.to_calendar(event_start, local_offset)
+            let anchor = t.hours * 60 + t.minutes
+            let travel_min = { travel_secs + 30 } / 60
+            let raw_start = anchor - travel_min
+            let left_min =
+              int.max(raw_start, window.start_min) - window.start_min
+            let right_min = int.min(anchor, window.end_min) - window.start_min
+            let width_min = int.max(right_min - left_min, 0)
+            case width_min > 0 {
+              False -> Error(Nil)
+              True ->
+                Ok(#(bar, left_min, width_min, color, False, travel_text, ""))
+            }
+          }
+          DriveFrom(event_end:, travel_secs:, travel_text:, color:, bar:) -> {
+            let #(_, t) = timestamp.to_calendar(event_end, local_offset)
+            let anchor = t.hours * 60 + t.minutes
+            let travel_min = { travel_secs + 30 } / 60
+            let raw_end = anchor + travel_min
+            let left_min = int.max(anchor, window.start_min) - window.start_min
+            let right_min = int.min(raw_end, window.end_min) - window.start_min
+            let width_min = int.max(right_min - left_min, 0)
+            case width_min > 0 {
+              False -> Error(Nil)
+              True ->
+                Ok(#(
+                  bar,
+                  left_min,
+                  width_min,
+                  color,
+                  False,
+                  travel_text <> " home",
+                  "",
+                ))
+            }
+          }
+        }
+      })
+
+    let all_bars = list.append(event_bars, travel_bars)
+
+    // Filter bars to a specific sub-row (BarPos).
+    let bars_for = fn(pos: BarPos) {
+      list.filter(all_bars, fn(t) { t.0 == pos })
+    }
+
+    // Render a single sub-row of bars.
+    let view_sub_row = fn(pos: BarPos, row_label: String) -> Element(msg) {
+      let bars = bars_for(pos)
+      let bar_els =
+        list.flat_map(bars, fn(b) {
+          let #(_, left_min, width_min, color, thick, label, label2) = b
+          let bar_h = case thick {
+            True -> "70%"
+            False -> "40%"
+          }
+          let bar_top = case thick {
+            True -> "15%"
+            False -> "30%"
+          }
+          let opacity = case thick {
+            True -> "0.85"
+            False -> "0.55"
+          }
+          let bar_right = left_min + width_min
+          // The bar strip itself.
+          let strip =
+            html.div(
+              [
+                attribute.class("absolute rounded-sm pointer-events-none"),
+                attribute.style("left", xpct(left_min)),
+                attribute.style("width", xfpct(int_to_float(width_min))),
+                attribute.style("top", bar_top),
+                attribute.style("height", bar_h),
+                attribute.style("background-color", color),
+                attribute.style("opacity", opacity),
+              ],
+              [],
+            )
+          // Label floats right of the bar, within the time slot to end of row.
+          let label_el = case label {
+            "" -> element.none()
+            _ ->
+              html.div(
+                [
+                  attribute.class(
+                    "absolute top-0 bottom-0 flex flex-col justify-center overflow-hidden pointer-events-none select-none",
+                  ),
+                  attribute.style("left", xpct(bar_right)),
+                  attribute.style("right", "0"),
+                ],
+                [
+                  html.p(
+                    [
+                      attribute.class("leading-tight font-medium m-0 truncate"),
+                      attribute.style("font-size", "9px"),
+                      attribute.style(
+                        "color",
+                        "hsl(from " <> color <> " h s 30%)",
+                      ),
+                    ],
+                    [html.text(label)],
+                  ),
+                  case label2 {
+                    "" -> element.none()
+                    t ->
+                      html.p(
+                        [
+                          attribute.class("leading-tight m-0 truncate"),
+                          attribute.style("font-size", "9px"),
+                          attribute.style("color", "rgba(128,128,128,0.7)"),
+                        ],
+                        [html.text(t)],
+                      )
+                  },
+                ],
+              )
+          }
+          [strip, label_el]
+        })
+      // Sub-row label (person name) on the left — zero-width, doesn't affect layout.
+      let row_name_el = case row_label {
+        "" -> element.none()
+        name ->
+          html.div(
+            [
+              attribute.class(
+                "absolute left-0 top-0 bottom-0 flex items-center pointer-events-none select-none z-10",
+              ),
+              attribute.style("transform", "translateX(-100%)"),
+            ],
+            [
+              html.span(
+                [
+                  attribute.class("text-text-faint pr-1"),
+                  attribute.style("font-size", "8px"),
+                ],
+                [html.text(name)],
+              ),
+            ],
+          )
+      }
+      html.div(
+        [
+          attribute.class("relative flex-1 min-h-0"),
+          ..case pos {
+            BarLeft -> [attribute.class("border-b border-border/20")]
+            BarCenter -> [attribute.class("border-b border-border/20")]
+            BarRight -> []
+          }
+        ],
+        list.flatten([[row_name_el], hour_lines, bar_els]),
+      )
+    }
+
+    // Now indicator — vertical line at current time, only for today.
+    let now_el = case is_today {
+      False -> element.none()
+      True -> {
+        let now_offset = now_min - window.start_min
+        case now_offset >= 0 && now_offset <= total_min {
+          False -> element.none()
+          True ->
+            html.div(
+              [
+                attribute.class(
+                  "absolute top-0 bottom-0 w-px bg-accent-border z-20 pointer-events-none",
+                ),
+                attribute.style("left", xpct(now_offset)),
+              ],
+              [],
+            )
+        }
+      }
+    }
+
+    // All-day chips in the day header section.
+    let all_day_chips =
+      list.map(all_day_events, fn(e) {
+        let color = color_for(e.calendar_name)
+        html.span(
+          [
+            attribute.class(
+              "inline-block px-1 rounded text-white leading-tight truncate max-w-full",
+            ),
+            attribute.style("font-size", "9px"),
+            attribute.style("background-color", color),
+          ],
+          [html.text(e.summary)],
+        )
+      })
+
+    let date_label =
+      html.div(
+        [
+          attribute.class(
+            "flex flex-col items-start gap-0.5 shrink-0 pr-2 select-none",
+          ),
+          attribute.style("width", "3.5rem"),
+        ],
+        [
+          html.div(
+            [
+              attribute.class(case is_today {
+                True -> "font-bold text-accent-border text-xs leading-tight"
+                False -> "font-medium text-text-muted text-xs leading-tight"
+              }),
+            ],
+            [html.text(weekday_name(day) <> " " <> format_date(day))],
+          ),
+          ..all_day_chips
+        ],
+      )
+
+    // The time grid: relative container for hour lines, now line, and sub-rows.
+    let time_grid =
+      html.div(
+        [
+          attribute.class(
+            "relative flex-1 flex flex-col min-w-0 border-l border-border/30",
+          ),
+        ],
+        [
+          now_el,
+          view_sub_row(BarLeft, person0),
+          view_sub_row(BarCenter, ""),
+          view_sub_row(BarRight, person1),
+        ],
+      )
+
+    html.div(
+      [
+        attribute.class(
+          "flex flex-row items-stretch px-1 border-b border-border/40",
+        ),
+        attribute.class(case is_today {
+          True -> "bg-surface-2/30"
+          False -> ""
+        }),
+      ],
+      [date_label, time_grid],
+    )
+  }
+
+  // Render all 7 day rows.
+  html.div(
+    [attribute.class("flex-1 min-h-0 flex flex-col overflow-hidden p-2 gap-px")],
+    list.map(list.zip(days, day_timed_and_blocks), fn(pair) {
+      let #(day, #(day_timed, day_blocks)) = pair
+      let all_day = list.filter(events, fn(e) { all_day_spans_date(e, day) })
+      view_gantt_day(day, day == today_date, day_timed, day_blocks, all_day)
+    }),
+  )
+}
+
 // TIME WINDOW -----------------------------------------------------------------
 
 /// Minutes-since-midnight window shared across all day columns.

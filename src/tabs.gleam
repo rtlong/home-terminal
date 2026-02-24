@@ -312,13 +312,14 @@ fn view_active_tab(model: Model) -> Element(Msg) {
             [attribute.class("flex flex-col flex-1 min-h-0 overflow-hidden")],
             [
               view_fetch_stamp(model.calendar_data.fetched_at),
-              cal.view_seven_days(
+              cal.view_gantt(
                 visible_events,
                 color_for,
                 model.calendar_data.travel_cache,
                 model.calendar_data.leg_cache,
                 model.calendar_data.cal_config.home_address,
                 bars_for_event,
+                cfg.people,
               ),
             ],
           )
