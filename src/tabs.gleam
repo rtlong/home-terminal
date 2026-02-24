@@ -96,7 +96,6 @@ pub opaque type Msg {
   UserToggledCalendar(name: String, visible: Bool)
   UserChangedColor(name: String, color: String)
   UserToggledCalendarPerson(cal_name: String, person: String, assigned: Bool)
-  UserChangedPeopleList(raw: String)
   UserChangedPersonColor(person: String, color: String)
   Tick
 }
@@ -147,16 +146,6 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         False -> list.filter(current_people, fn(p) { p != person })
       }
       cal_server.update_calendar_people(model.server, cal_name, new_people)
-      #(model, effect.none())
-    }
-
-    UserChangedPeopleList(raw:) -> {
-      // Parse comma-separated names, trim whitespace, drop empties.
-      let people =
-        string.split(raw, ",")
-        |> list.map(string.trim)
-        |> list.filter(fn(s) { s != "" })
-      cal_server.update_people(model.server, people)
       #(model, effect.none())
     }
 
@@ -390,7 +379,6 @@ fn view_settings(model: Model) -> Element(Msg) {
 
 fn view_people_settings(cfg: state.Config) -> Element(Msg) {
   let people = cfg.people
-  let people_str = string.join(people, ", ")
 
   html.div([], [
     html.h2(
@@ -401,24 +389,11 @@ fn view_people_settings(cfg: state.Config) -> Element(Msg) {
       ],
       [html.text("People")],
     ),
-    // Name list input
-    html.div([attribute.class("flex flex-col gap-1 mb-4")], [
-      html.label([attribute.class("text-xs text-text-muted")], [
-        html.text("Names (comma-separated)"),
-      ]),
-      html.input([
-        attribute.type_("text"),
-        attribute.value(people_str),
-        attribute.placeholder("Ryan, Alex"),
-        attribute.class(
-          "px-3 py-1.5 rounded-lg border border-border bg-surface text-sm text-text focus:outline-none focus:border-accent-border",
-        ),
-        on_people_input_change(),
-      ]),
-    ]),
-    // Per-person color pickers
     case people {
-      [] -> element.none()
+      [] ->
+        html.p([attribute.class("text-xs text-text-muted italic")], [
+          html.text("Add people to config.json to assign colors."),
+        ])
       _ ->
         html.div(
           [attribute.class("flex flex-col gap-2")],
@@ -552,14 +527,6 @@ fn on_person_toggle_change(
   event.on("change", {
     use assigned <- decode.subfield(["target", "checked"], decode.bool)
     decode.success(UserToggledCalendarPerson(cal_name:, person:, assigned:))
-  })
-}
-
-/// Decode a text input change/blur event → UserChangedPeopleList.
-fn on_people_input_change() -> attribute.Attribute(Msg) {
-  event.on("change", {
-    use raw <- decode.subfield(["target", "value"], decode.string)
-    decode.success(UserChangedPeopleList(raw:))
   })
 }
 
