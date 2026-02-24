@@ -919,6 +919,7 @@ pub fn view_gantt(
             "grid-auto-rows",
             "minmax(" <> int.to_string(bar_px) <> "px, auto)",
           ),
+          attribute.style("row-gap", "2px"),
           attribute.style("border-bottom", "1px solid oklch(0 0 0 / 8%)"),
         ],
         list.map(groups, render_group),
