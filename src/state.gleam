@@ -10,7 +10,7 @@
 
 // IMPORTS ---------------------------------------------------------------------
 
-import cal.{type Event, AllDay, AtTime, Event}
+import cal.{type Event, type TravelInfo, AllDay, AtTime, Event, TravelInfo}
 import envoy
 import gleam/bit_array
 import gleam/dict.{type Dict}
@@ -40,6 +40,9 @@ pub type Config {
     people: List(String),
     /// Maps calendar display-name → list of people who share that calendar.
     calendar_people: Dict(String, List(String)),
+    /// Maps person name → CSS color string for travel block tinting.
+    /// e.g. {"Ryan": "#4a88cc", "Alex": "#e06ea0"}
+    people_colors: Dict(String, String),
     /// Per-calendar display settings (visibility, color).
     calendars: Dict(String, CalendarConfig),
   )
@@ -51,6 +54,7 @@ pub fn empty_config() -> Config {
     home_address: "",
     people: [],
     calendar_people: dict.new(),
+    people_colors: dict.new(),
     calendars: dict.new(),
   )
 }
@@ -101,6 +105,102 @@ pub fn write_cache(dir: String, events: List(Event)) -> Nil {
   let json_str = json.to_string(json.array(events, encode_event))
   let _ = file_write(dir <> "/cache.json", bit_array.from_string(json_str))
   Nil
+}
+
+// TRAVEL CACHE ----------------------------------------------------------------
+
+/// Persisted travel caches: home→loc TravelInfo and point-to-point leg durations.
+pub type TravelCaches {
+  TravelCaches(travel_cache: Dict(String, TravelInfo), leg_cache: cal.LegCache)
+}
+
+/// Read travel caches from travel_cache.json. Returns empty caches if absent.
+pub fn read_travel_caches(dir: String) -> TravelCaches {
+  let path = dir <> "/travel_cache.json"
+  case file_read(path) {
+    Error(_) -> TravelCaches(travel_cache: dict.new(), leg_cache: dict.new())
+    Ok(bits) ->
+      case bit_array.to_string(bits) {
+        Error(_) ->
+          TravelCaches(travel_cache: dict.new(), leg_cache: dict.new())
+        Ok(text) ->
+          case json.parse(text, travel_caches_decoder()) {
+            Ok(tc) -> tc
+            Error(_) ->
+              TravelCaches(travel_cache: dict.new(), leg_cache: dict.new())
+          }
+      }
+  }
+}
+
+/// Write travel caches to travel_cache.json.
+pub fn write_travel_caches(
+  dir: String,
+  travel_cache: Dict(String, TravelInfo),
+  leg_cache: cal.LegCache,
+) -> Nil {
+  let _ = filelib_ensure_dir(dir <> "/placeholder")
+  let json_str = json.to_string(encode_travel_caches(travel_cache, leg_cache))
+  let _ =
+    file_write(dir <> "/travel_cache.json", bit_array.from_string(json_str))
+  Nil
+}
+
+fn encode_travel_caches(
+  travel_cache: Dict(String, TravelInfo),
+  leg_cache: cal.LegCache,
+) -> json.Json {
+  let tc_entries =
+    dict.to_list(travel_cache)
+    |> list.map(fn(pair) {
+      let #(loc, info) = pair
+      #(
+        loc,
+        json.object([
+          #("city", json.string(info.city)),
+          #("distance_text", json.string(info.distance_text)),
+          #("duration_text", json.string(info.duration_text)),
+          #("duration_secs", json.int(info.duration_secs)),
+        ]),
+      )
+    })
+  let lc_entries =
+    dict.to_list(leg_cache)
+    |> list.map(fn(pair) {
+      let #(key, secs) = pair
+      #(key, json.int(secs))
+    })
+  json.object([
+    #("travel_cache", json.object(tc_entries)),
+    #("leg_cache", json.object(lc_entries)),
+  ])
+}
+
+fn travel_caches_decoder() -> decode.Decoder(TravelCaches) {
+  use travel_cache <- decode.optional_field(
+    "travel_cache",
+    dict.new(),
+    decode.dict(decode.string, travel_info_decoder()),
+  )
+  use leg_cache <- decode.optional_field(
+    "leg_cache",
+    dict.new(),
+    decode.dict(decode.string, decode.int),
+  )
+  decode.success(TravelCaches(travel_cache:, leg_cache:))
+}
+
+fn travel_info_decoder() -> decode.Decoder(TravelInfo) {
+  use city <- decode.field("city", decode.string)
+  use distance_text <- decode.field("distance_text", decode.string)
+  use duration_text <- decode.field("duration_text", decode.string)
+  use duration_secs <- decode.field("duration_secs", decode.int)
+  decode.success(TravelInfo(
+    city:,
+    distance_text:,
+    duration_text:,
+    duration_secs:,
+  ))
 }
 
 // CONFIG ----------------------------------------------------------------------
@@ -189,10 +289,17 @@ fn encode_config(config: Config) -> json.Json {
       let #(name, people) = pair
       #(name, json.array(people, json.string))
     })
+  let people_colors_entries =
+    dict.to_list(config.people_colors)
+    |> list.map(fn(pair) {
+      let #(person, color) = pair
+      #(person, json.string(color))
+    })
   json.object([
     #("home_address", json.string(config.home_address)),
     #("people", json.array(config.people, json.string)),
     #("calendar_people", json.object(cal_people_entries)),
+    #("people_colors", json.object(people_colors_entries)),
     #("calendars", json.object(cal_entries)),
   ])
 }
@@ -243,12 +350,23 @@ fn config_decoder() -> decode.Decoder(Config) {
     dict.new(),
     decode.dict(decode.string, decode.list(decode.string)),
   )
+  use people_colors <- decode.optional_field(
+    "people_colors",
+    dict.new(),
+    decode.dict(decode.string, decode.string),
+  )
   use calendars <- decode.optional_field(
     "calendars",
     dict.new(),
     decode.dict(decode.string, calendar_config_decoder()),
   )
-  decode.success(Config(home_address:, people:, calendar_people:, calendars:))
+  decode.success(Config(
+    home_address:,
+    people:,
+    calendar_people:,
+    people_colors:,
+    calendars:,
+  ))
 }
 
 fn calendar_config_decoder() -> decode.Decoder(CalendarConfig) {

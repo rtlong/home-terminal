@@ -4,7 +4,6 @@ import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
 import gleam/order
-import gleam/result
 import gleam/string
 import gleam/time/calendar.{type Date, Date}
 import gleam/time/duration
@@ -54,307 +53,78 @@ pub type TravelInfo {
 pub type LegCache =
   Dict(String, Int)
 
-/// A travel block to render between (or around) events on the timeline.
+/// A travel block to render on the timeline.
+///
+/// Each located event independently generates:
+///   - A DriveTo block: home → event, arrival-aligned (strip ends at event start)
+///   - A DriveFrom block: event → home, departure-aligned (strip starts at event end)
+///
+/// Strips may overlap when two events are close together — that is visually
+/// correct (you'd be driving to the next event before you've even left the last).
+/// Each block carries the person color derived from the event's calendar assignment.
 pub type TravelBlock {
-  TravelBlock(
-    /// Start of the gap (end of prior event, or midnight for first block).
-    gap_start: Timestamp,
-    /// End of the gap (start of next event, or end-of-day for last block).
-    gap_end: Timestamp,
-    /// True = the person can make a home stop; False = direct A→B route.
-    via_home: Bool,
-    /// Chosen travel time in seconds.
+  /// Home → event. Strip is arrival-aligned: ends at `event_start`.
+  DriveTo(
+    event_start: Timestamp,
     travel_secs: Int,
-    /// Human-readable travel label, e.g. "8 min" or "22 min".
     travel_text: String,
-    /// Free dwell time after travel, in seconds (gap - travel).
-    dwell_secs: Int,
-    /// True = anchor block at gap_end (arrival-aligned: depart home / between events).
-    /// False = anchor at gap_start (departure-aligned: return home after last event).
-    arrival_aligned: Bool,
+    color: String,
+  )
+  /// Event → home. Strip is departure-aligned: starts at `event_end`.
+  DriveFrom(
+    event_end: Timestamp,
+    travel_secs: Int,
+    travel_text: String,
+    color: String,
   )
 }
 
 // TRAVEL BLOCK COMPUTATION ----------------------------------------------------
 
-/// Slack added on top of via-home travel time before choosing home route (secs).
-const home_detour_slack_secs = 900
-
-/// Compute travel blocks for a sequence of timed events on a single day.
+/// Compute travel blocks for a day's timed events.
 ///
-/// `events`        — timed events for this person on this day, sorted by start.
-/// `travel_cache`  — home→loc cache (keyed by location string).
-/// `leg_cache`     — point-to-point durations keyed by leg_cache_key/2.
-/// `home_key`      — the canonical home address string used as a cache key.
-/// `leg_key`       — fn(origin, dest) -> String cache key (from travel module).
-///
-/// Returns a list of TravelBlocks. Blocks are only generated where there is a
-/// known travel time on at least one side of the gap.
+/// For each located timed event, emits a DriveTo (home→loc) and a DriveFrom
+/// (loc→home) block if the respective leg is in the cache.
+/// `color_for_event` maps an event to its person's CSS color string.
 pub fn compute_travel_blocks(
   events: List(Event),
   leg_cache: LegCache,
   home_key: String,
   leg_key: fn(String, String) -> String,
+  color_for_event: fn(Event) -> String,
 ) -> List(TravelBlock) {
-  // Keep only timed events with a known start/end.
-  let timed =
-    list.filter(events, fn(e) {
-      case e.start, e.end {
-        AtTime(_), AtTime(_) -> True
-        _, _ -> False
-      }
-    })
-
-  case timed {
-    [] -> []
-    _ -> {
-      // Helper: look up leg duration in seconds.
-      let get_leg = fn(origin: String, dest: String) -> Result(Int, Nil) {
-        dict.get(leg_cache, leg_key(origin, dest))
-      }
-
-      // Build a list of gaps to analyse. Each gap is:
-      //   #(gap_start_ts, gap_end_ts, origin_loc, dest_loc)
-      // where origin_loc / dest_loc are "" for "home" or locationless events.
-      //
-      // We generate:
-      //   home → first located event
-      //   located_event_end → next located event_start  (skipping locationless)
-      //   last located event → home
-      //
-      // "locationless" events are in-place: we do NOT travel to them, but we
-      // DO let time pass through them. For routing purposes they are transparent:
-      // travel home happens after the last located event before the locationless
-      // run, only if there's enough time before the next located event.
-
-      // Separate into located vs locationless for the sequencing.
-      // We work through the sorted event list and emit a gap wherever we have
-      // origin and destination locations.
-      let gaps = build_gaps(timed, home_key)
-
-      list.filter_map(gaps, fn(gap) {
-        let #(gap_start, gap_end, origin, dest) = gap
-        let gap_secs =
-          timestamp.difference(gap_end, gap_start)
-          |> duration.to_seconds
-          |> float_to_int_floor
-
-        // Try via-home route: origin→home + home→dest.
-        let via_home_secs = case origin == home_key, dest == home_key {
-          // Already at home: no outbound leg needed.
-          True, _ -> result.map(get_leg(home_key, dest), fn(d) { d })
-          // Returning home: no inbound leg needed.
-          _, True -> result.map(get_leg(origin, home_key), fn(o) { o })
-          // Neither endpoint is home.
-          False, False -> {
-            use o <- result.try(get_leg(origin, home_key))
-            use d <- result.try(get_leg(home_key, dest))
-            Ok(o + d)
-          }
+  list.flat_map(events, fn(e) {
+    case e.location, e.start, e.end {
+      loc, AtTime(start), AtTime(end) if loc != "" -> {
+        let color = color_for_event(e)
+        let to_block = case dict.get(leg_cache, leg_key(home_key, loc)) {
+          Ok(secs) -> [
+            DriveTo(
+              event_start: start,
+              travel_secs: secs,
+              travel_text: secs_to_min_text(secs),
+              color:,
+            ),
+          ]
+          Error(_) -> []
         }
-
-        // Try direct route: origin→dest.
-        let direct_secs = get_leg(origin, dest)
-
-        // Arrival-aligned = block renders ending at gap_end (right before next event).
-        // Departure-aligned = block renders starting at gap_start (right after last event).
-        // "Return home" gaps (dest == home_key) are departure-aligned; all others are arrival.
-        let arrival_aligned = dest != home_key
-
-        // Bookend gaps (home→first or last→home) have no meaningful dwell time
-        // since the "gap" spans to midnight. Suppress dwell for those.
-        let is_bookend = origin == home_key || dest == home_key
-
-        case via_home_secs, direct_secs {
-          // No travel info at all — skip this gap.
-          Error(_), Error(_) -> Error(Nil)
-
-          // Only direct route available.
-          Error(_), Ok(d) -> {
-            let dwell = case is_bookend {
-              True -> 0
-              False -> int.max(gap_secs - d, 0)
-            }
-            Ok(TravelBlock(
-              gap_start:,
-              gap_end:,
-              via_home: False,
-              travel_secs: d,
-              travel_text: secs_to_min_text(d),
-              dwell_secs: dwell,
-              arrival_aligned:,
-            ))
-          }
-
-          // Only via-home available.
-          Ok(vh), Error(_) -> {
-            let dwell = case is_bookend {
-              True -> 0
-              False -> int.max(gap_secs - vh, 0)
-            }
-            Ok(TravelBlock(
-              gap_start:,
-              gap_end:,
-              via_home: True,
-              travel_secs: vh,
-              travel_text: secs_to_min_text(vh),
-              dwell_secs: dwell,
-              arrival_aligned:,
-            ))
-          }
-
-          // Both available: choose home route if it fits with slack.
-          Ok(vh), Ok(d) -> {
-            let use_home = vh + home_detour_slack_secs <= gap_secs
-            let travel = case use_home {
-              True -> vh
-              False -> d
-            }
-            let dwell = case is_bookend {
-              True -> 0
-              False -> int.max(gap_secs - travel, 0)
-            }
-            Ok(TravelBlock(
-              gap_start:,
-              gap_end:,
-              via_home: use_home,
-              travel_secs: travel,
-              travel_text: secs_to_min_text(travel),
-              dwell_secs: dwell,
-              arrival_aligned:,
-            ))
-          }
+        let from_block = case dict.get(leg_cache, leg_key(loc, home_key)) {
+          Ok(secs) -> [
+            DriveFrom(
+              event_end: end,
+              travel_secs: secs,
+              travel_text: secs_to_min_text(secs),
+              color:,
+            ),
+          ]
+          Error(_) -> []
         }
-      })
+        list.append(to_block, from_block)
+      }
+      _, _, _ -> []
     }
-  }
+  })
 }
-
-/// Build the list of #(gap_start, gap_end, origin_loc, dest_loc) tuples from
-/// a sorted list of timed events. Origin/dest are location strings; home_key
-/// is used for the first and last synthetic gap.
-fn build_gaps(
-  events: List(Event),
-  home_key: String,
-) -> List(#(Timestamp, Timestamp, String, String)) {
-  case events {
-    [] -> []
-    _ -> {
-      // Find the first and last event that have a location (for home bookends).
-      let located = list.filter(events, fn(e) { e.location != "" })
-      case located {
-        [] -> []
-        [first_loc, ..] -> {
-          let last_loc = list.fold(located, first_loc, fn(_, e) { e })
-
-          // home → first located event:
-          // gap spans from midnight (day start) to first event start.
-          let first_gap = case first_loc.start {
-            AtTime(ts) -> {
-              let day_start = day_midnight(ts)
-              [#(day_start, ts, home_key, first_loc.location)]
-            }
-            AllDay(_) -> []
-          }
-
-          // last located event → home:
-          // gap spans from last event end to end of day.
-          let last_gap = case last_loc.end {
-            AtTime(ts) -> {
-              let day_end =
-                timestamp.add(day_midnight(ts), gleam_time_duration_hours(24))
-              [#(ts, day_end, last_loc.location, home_key)]
-            }
-            AllDay(_) -> []
-          }
-
-          // Between consecutive events: walk through and emit gaps where
-          // the prior event had a location and the next event has a location,
-          // using event end→start as the gap timestamps.
-          // Locationless events are transparent (in-place), so we track the
-          // "current origin" as the last seen located event's location.
-          let between_gaps = build_between_gaps(events, located, home_key)
-
-          list.flatten([first_gap, between_gaps, last_gap])
-        }
-      }
-    }
-  }
-}
-
-/// Emit inter-event gaps. We iterate the full event list, tracking the
-/// "current origin location" = location of the last event that had one.
-/// When we encounter an event with a location, we emit a gap from
-/// (end of prior located event OR home) to (start of this event).
-fn build_between_gaps(
-  all_events: List(Event),
-  _located: List(Event),
-  home_key: String,
-) -> List(#(Timestamp, Timestamp, String, String)) {
-  // Walk events in order. prev_loc = location of last event with a location.
-  // prev_end = end timestamp of that event.
-  let #(gaps, _, _) =
-    list.fold(all_events, #([], home_key, option_none_ts()), fn(acc, e) {
-      let #(gaps, prev_loc, prev_end) = acc
-      case e.location, e.start, e.end {
-        loc, AtTime(s), AtTime(en) if loc != "" -> {
-          // This event has a location. Emit a gap from prev_end to s,
-          // but only if there was a prior located event (prev_end != epoch).
-          let new_gaps = case is_epoch(prev_end) {
-            True -> gaps
-            False -> [#(prev_end, s, prev_loc, loc), ..gaps]
-          }
-          #(new_gaps, loc, en)
-        }
-        _, AtTime(_), AtTime(en) -> {
-          // Locationless event: transparent, but advance prev_end so
-          // the next located event measures gap from after this one.
-          // prev_loc stays the same (still "at" wherever we were before).
-          let new_end = case is_epoch(prev_end) {
-            True -> prev_end
-            False -> en
-          }
-          #(gaps, prev_loc, new_end)
-        }
-        _, _, _ -> acc
-      }
-    })
-  list.reverse(gaps)
-}
-
-fn option_none_ts() -> Timestamp {
-  timestamp.from_unix_seconds(0)
-}
-
-fn is_epoch(ts: Timestamp) -> Bool {
-  timestamp.to_unix_seconds_and_nanoseconds(ts).0 == 0
-}
-
-/// Return the midnight (00:00 UTC) timestamp for the same calendar day as `ts`
-/// in the local timezone. Used to define day-start bookend gaps.
-fn day_midnight(ts: Timestamp) -> Timestamp {
-  let local_offset = calendar.local_offset()
-  let offset_secs = duration.to_seconds(local_offset) |> float_to_int_floor
-  // Get the local unix seconds and truncate to day boundary.
-  let unix_secs = timestamp.to_unix_seconds_and_nanoseconds(ts).0
-  let local_secs = unix_secs + offset_secs
-  let day_start_local = local_secs - local_secs % 86_400
-  timestamp.from_unix_seconds(day_start_local - offset_secs)
-}
-
-fn gleam_time_duration_hours(n: Int) -> duration.Duration {
-  duration.seconds(n * 3600)
-}
-
-fn float_to_int_floor(f: Float) -> Int {
-  case f >=. 0.0 {
-    True -> float_truncate(f)
-    False -> float_truncate(f) - 1
-  }
-}
-
-@external(erlang, "erlang", "trunc")
-fn float_truncate(f: Float) -> Int
 
 /// Format seconds as "N min", rounding to nearest minute.
 pub fn secs_to_min_text(secs: Int) -> String {
@@ -392,13 +162,15 @@ pub fn view_error(reason: String) -> Element(msg) {
 
 /// The main 7-day view. Shows events for today and the next 6 days.
 /// All columns share the same time window so timelines are aligned.
-/// `color_for` is a fn(calendar_name) -> css_color_string for per-cal coloring.
+/// `color_for` maps calendar_name → CSS color for event blocks.
+/// `color_for_event` maps an Event → person CSS color for travel strips.
 pub fn view_seven_days(
   events: List(Event),
   color_for: fn(String) -> String,
   travel_cache: Dict(String, TravelInfo),
   leg_cache: LegCache,
   home_address: String,
+  color_for_event: fn(Event) -> String,
 ) -> Element(msg) {
   let now = timestamp.system_time()
   let local_offset = calendar.local_offset()
@@ -464,6 +236,7 @@ pub fn view_seven_days(
             leg_cache,
             addr,
             travel.leg_cache_key,
+            color_for_event,
           )
       }
       view_day(
@@ -1084,68 +857,48 @@ fn view_timeline(
       }
     })
 
-  // Render travel blocks: semi-transparent strips showing drive time.
+  // Render travel blocks.
+  // DriveTo: arrival-aligned strip ending at event_start (home → event).
+  // DriveFrom: departure-aligned strip starting at event_end (event → home).
   let block_els =
     list.filter_map(travel_blocks, fn(b) {
-      // Arrival-aligned: block ends at gap_end (right before next event starts).
-      // Departure-aligned: block starts at gap_start (right after last event ends).
-      let #(block_start_min, block_end_min) = case b.arrival_aligned {
-        True -> {
-          let #(_, end_t) = timestamp.to_calendar(b.gap_end, local_offset)
-          let end_min = end_t.hours * 60 + end_t.minutes
-          #(end_min - b.travel_secs / 60, end_min)
-        }
-        False -> {
-          let #(_, start_t) = timestamp.to_calendar(b.gap_start, local_offset)
-          let start_min = start_t.hours * 60 + start_t.minutes
-          #(start_min, start_min + b.travel_secs / 60)
-        }
-      }
-      let clamped_start = int.max(block_start_min, window.start_min)
-      let clamped_end = int.min(block_end_min, window.end_min)
-      case clamped_end > clamped_start {
-        False -> Error(Nil)
-        True -> {
-          let top_pct = pct(clamped_start - window.start_min)
-          let h_pct = pct(clamped_end - clamped_start)
-          let label = case b.via_home, b.arrival_aligned {
-            True, True -> "🏠 via home · " <> b.travel_text
-            True, False -> "🏠 " <> b.travel_text <> " home"
-            False, True -> "🚗 " <> b.travel_text
-            False, False -> "🚗 " <> b.travel_text <> " home"
+      case b {
+        DriveTo(event_start:, travel_secs:, travel_text:, color:) -> {
+          let #(_, t) = timestamp.to_calendar(event_start, local_offset)
+          let anchor_min = t.hours * 60 + t.minutes
+          let travel_min = { travel_secs + 30 } / 60
+          let block_start = anchor_min - travel_min
+          let clamped_start = int.max(block_start, window.start_min)
+          let clamped_end = int.min(anchor_min, window.end_min)
+          case clamped_end > clamped_start {
+            False -> Error(Nil)
+            True ->
+              Ok(travel_strip(
+                pct(clamped_start - window.start_min),
+                pct(clamped_end - clamped_start),
+                travel_text,
+                color,
+              ))
           }
-          // Only show dwell time for loc→loc gaps with >10 min to spare.
-          let dwell_label = case b.dwell_secs > 600 {
-            False -> ""
-            True -> " · " <> secs_to_min_text(b.dwell_secs) <> " free"
+        }
+
+        DriveFrom(event_end:, travel_secs:, travel_text:, color:) -> {
+          let #(_, t) = timestamp.to_calendar(event_end, local_offset)
+          let anchor_min = t.hours * 60 + t.minutes
+          let travel_min = { travel_secs + 30 } / 60
+          let block_end = anchor_min + travel_min
+          let clamped_start = int.max(anchor_min, window.start_min)
+          let clamped_end = int.min(block_end, window.end_min)
+          case clamped_end > clamped_start {
+            False -> Error(Nil)
+            True ->
+              Ok(travel_strip(
+                pct(clamped_start - window.start_min),
+                pct(clamped_end - clamped_start),
+                travel_text <> " home",
+                color,
+              ))
           }
-          Ok(
-            html.div(
-              [
-                attribute.class(
-                  "absolute left-0 right-0 overflow-hidden select-none pointer-events-none",
-                ),
-                attribute.styles([
-                  #("top", top_pct),
-                  #("height", h_pct),
-                  #(
-                    "background",
-                    "repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(128,128,128,0.08) 3px, rgba(128,128,128,0.08) 6px)",
-                  ),
-                  #("border-top", "1px solid rgba(128,128,128,0.25)"),
-                ]),
-              ],
-              [
-                html.span(
-                  [
-                    attribute.class("text-text-faint leading-none pl-1"),
-                    attribute.style("font-size", "9px"),
-                  ],
-                  [html.text(label <> dwell_label)],
-                ),
-              ],
-            ),
-          )
         }
       }
     })
@@ -1153,6 +906,41 @@ fn view_timeline(
   html.div(
     [attribute.class("relative flex-1 min-h-0 overflow-hidden")],
     list.flatten([hour_lines, now_line, block_els, event_els]),
+  )
+}
+
+/// Render a single travel-time strip on the timeline.
+/// `top` and `height` are CSS percentage strings (already computed).
+/// `label` is the text to show. `color` is the person's CSS color.
+/// The strip uses a semi-transparent tint of the person's color.
+fn travel_strip(
+  top: String,
+  height: String,
+  label: String,
+  color: String,
+) -> Element(msg) {
+  html.div(
+    [
+      attribute.class(
+        "absolute left-0 right-0 overflow-hidden select-none pointer-events-none flex items-end pb-px",
+      ),
+      attribute.styles([
+        #("top", top),
+        #("height", height),
+        #("background-color", "hsl(from " <> color <> " h s var(--event-bg-l))"),
+        #("border-top", "1px solid hsl(from " <> color <> " h s 60% / 0.4)"),
+      ]),
+    ],
+    [
+      html.span(
+        [
+          attribute.class("leading-none pl-1 truncate"),
+          attribute.style("font-size", "9px"),
+          attribute.style("color", "hsl(from " <> color <> " h s 35%)"),
+        ],
+        [html.text(label)],
+      ),
+    ],
   )
 }
 

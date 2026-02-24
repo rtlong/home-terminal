@@ -113,6 +113,14 @@ pub fn start(
         <> " events from cache",
       )
       let cal_config = state.read_config(data_dir)
+      let travel_caches = state.read_travel_caches(data_dir)
+      log.println(
+        "[cal_server] loaded "
+        <> string.inspect(dict.size(travel_caches.travel_cache))
+        <> " travel_cache entries, "
+        <> string.inspect(dict.size(travel_caches.leg_cache))
+        <> " leg_cache entries from disk",
+      )
       let actor_state =
         State(
           self: self_subject,
@@ -123,8 +131,8 @@ pub fn start(
           calendar_names: [],
           cal_config: cal_config,
           fetched_at: 0,
-          travel_cache: dict.new(),
-          leg_cache: dict.new(),
+          travel_cache: travel_caches.travel_cache,
+          leg_cache: travel_caches.leg_cache,
         )
       actor.initialised(actor_state) |> actor.returning(self_subject) |> Ok
     })
@@ -391,6 +399,12 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
             }
             _, _ -> #(state.travel_cache, state.leg_cache)
           }
+
+          state.write_travel_caches(
+            state.data_dir,
+            new_travel_cache,
+            new_leg_cache,
+          )
 
           State(
             ..state,
