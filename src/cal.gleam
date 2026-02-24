@@ -59,7 +59,7 @@ pub type LegCache =
 ///   - DriveTo: home → event, arrival-aligned (strip ends at event_start)
 ///   - DriveFrom: event → home, departure-aligned (strip starts at event_end)
 ///
-/// `col` and `col_count` lay out same-anchor blocks side by side.
+/// `bar` identifies which vertical bar this block belongs to.
 pub type TravelBlock {
   /// Home → event. Strip is arrival-aligned: ends at `event_start`.
   DriveTo(
@@ -67,8 +67,7 @@ pub type TravelBlock {
     travel_secs: Int,
     travel_text: String,
     color: String,
-    col: Int,
-    col_count: Int,
+    bar: BarPos,
   )
   /// Event → home. Strip is departure-aligned: starts at `event_end`.
   DriveFrom(
@@ -76,8 +75,7 @@ pub type TravelBlock {
     travel_secs: Int,
     travel_text: String,
     color: String,
-    col: Int,
-    col_count: Int,
+    bar: BarPos,
   )
 }
 
@@ -87,99 +85,53 @@ pub type TravelBlock {
 ///
 /// For each located timed event, emits one DriveTo and one DriveFrom per
 /// person assigned to that event's calendar.
-/// `colors_for_event` returns all person colors for an event (one per person).
+/// `colors_for_event` returns one color per assigned person.
+/// `bar_for_event` maps each event to its bar position.
 pub fn compute_travel_blocks(
   events: List(Event),
   leg_cache: LegCache,
   home_key: String,
   leg_key: fn(String, String) -> String,
   colors_for_event: fn(Event) -> List(String),
+  bar_for_event: fn(Event) -> BarPos,
 ) -> List(TravelBlock) {
-  // Emit one block per person per event (without col info yet).
-  let raw =
-    list.flat_map(events, fn(e) {
-      case e.location, e.start, e.end {
-        loc, AtTime(start), AtTime(end) if loc != "" -> {
-          let colors = colors_for_event(e)
-          let to_secs = dict.get(leg_cache, leg_key(home_key, loc))
-          let from_secs = dict.get(leg_cache, leg_key(loc, home_key))
-          list.flat_map(colors, fn(color) {
-            let to_block = case to_secs {
-              Ok(secs) -> [
-                DriveTo(
-                  event_start: start,
-                  travel_secs: secs,
-                  travel_text: secs_to_min_text(secs),
-                  color:,
-                  col: 0,
-                  col_count: 1,
-                ),
-              ]
-              Error(_) -> []
-            }
-            let from_block = case from_secs {
-              Ok(secs) -> [
-                DriveFrom(
-                  event_end: end,
-                  travel_secs: secs,
-                  travel_text: secs_to_min_text(secs),
-                  color:,
-                  col: 0,
-                  col_count: 1,
-                ),
-              ]
-              Error(_) -> []
-            }
-            list.append(to_block, from_block)
-          })
-        }
-        _, _, _ -> []
+  list.flat_map(events, fn(e) {
+    case e.location, e.start, e.end {
+      loc, AtTime(start), AtTime(end) if loc != "" -> {
+        let colors = colors_for_event(e)
+        let bar = bar_for_event(e)
+        let to_secs = dict.get(leg_cache, leg_key(home_key, loc))
+        let from_secs = dict.get(leg_cache, leg_key(loc, home_key))
+        list.flat_map(colors, fn(color) {
+          let to_block = case to_secs {
+            Ok(secs) -> [
+              DriveTo(
+                event_start: start,
+                travel_secs: secs,
+                travel_text: secs_to_min_text(secs),
+                color:,
+                bar:,
+              ),
+            ]
+            Error(_) -> []
+          }
+          let from_block = case from_secs {
+            Ok(secs) -> [
+              DriveFrom(
+                event_end: end,
+                travel_secs: secs,
+                travel_text: secs_to_min_text(secs),
+                color:,
+                bar:,
+              ),
+            ]
+            Error(_) -> []
+          }
+          list.append(to_block, from_block)
+        })
       }
-    })
-
-  assign_block_columns(raw)
-}
-
-/// Group blocks by anchor timestamp, then assign col/col_count within each group.
-/// DriveTo blocks share an anchor = event_start; DriveFrom share anchor = event_end.
-fn assign_block_columns(blocks: List(TravelBlock)) -> List(TravelBlock) {
-  // Key = unix seconds of anchor timestamp.
-  let anchor_of = fn(b: TravelBlock) -> Int {
-    case b {
-      DriveTo(event_start:, ..) ->
-        timestamp.to_unix_seconds_and_nanoseconds(event_start).0
-      DriveFrom(event_end:, ..) ->
-        timestamp.to_unix_seconds_and_nanoseconds(event_end).0
+      _, _, _ -> []
     }
-  }
-
-  let grouped = list.group(blocks, anchor_of)
-
-  dict.values(grouped)
-  |> list.flat_map(fn(group) {
-    let n = list.length(group)
-    list.index_map(group, fn(b, i) {
-      case b {
-        DriveTo(event_start:, travel_secs:, travel_text:, color:, ..) ->
-          DriveTo(
-            event_start:,
-            travel_secs:,
-            travel_text:,
-            color:,
-            col: i,
-            col_count: n,
-          )
-        DriveFrom(event_end:, travel_secs:, travel_text:, color:, ..) ->
-          DriveFrom(
-            event_end:,
-            travel_secs:,
-            travel_text:,
-            color:,
-            col: i,
-            col_count: n,
-          )
-      }
-    })
   })
 }
 
@@ -196,10 +148,6 @@ const default_window_start_min = 420
 
 /// Default visible window: 9:00 pm.
 const default_window_end_min = 1260
-
-/// Minimum event block height as a fraction of the total window (0.0–1.0).
-/// Corresponds to ~15 minutes regardless of window size.
-const min_event_frac = 0.0173
 
 // VIEW ------------------------------------------------------------------------
 
@@ -221,6 +169,8 @@ pub fn view_error(reason: String) -> Element(msg) {
 /// All columns share the same time window so timelines are aligned.
 /// `color_for` maps calendar_name → CSS color for event blocks.
 /// `colors_for_event` returns all person colors for an event (one per assigned person).
+/// `people` is the ordered list of people: [0]=left bar, [1]=right bar.
+/// `bar_for_event` maps each event to its bar position.
 pub fn view_seven_days(
   events: List(Event),
   color_for: fn(String) -> String,
@@ -228,6 +178,8 @@ pub fn view_seven_days(
   leg_cache: LegCache,
   home_address: String,
   colors_for_event: fn(Event) -> List(String),
+  people: List(String),
+  bar_for_event: fn(Event) -> BarPos,
 ) -> Element(msg) {
   let now = timestamp.system_time()
   let local_offset = calendar.local_offset()
@@ -269,6 +221,7 @@ pub fn view_seven_days(
             addr,
             travel.leg_cache_key,
             colors_for_event,
+            bar_for_event,
           )
       }
       #(day_timed, day_blocks)
@@ -305,6 +258,8 @@ pub fn view_seven_days(
         color_for,
         travel_cache,
         day_blocks,
+        people,
+        bar_for_event,
       )
     }),
   )
@@ -516,6 +471,8 @@ fn view_day(
   color_for: fn(String) -> String,
   travel_cache: Dict(String, TravelInfo),
   day_blocks: List(TravelBlock),
+  people: List(String),
+  bar_for_event: fn(Event) -> BarPos,
 ) -> Element(msg) {
   html.div(
     [
@@ -542,6 +499,8 @@ fn view_day(
         color_for,
         travel_cache,
         day_blocks,
+        people,
+        bar_for_event,
       ),
     ],
   )
@@ -650,104 +609,34 @@ fn view_all_day_strip(
 
 // TIMELINE --------------------------------------------------------------------
 
-/// A timed event annotated with its overlap column index and total column count.
-type PositionedEvent {
-  PositionedEvent(event: Event, col: Int, col_count: Int)
+/// Which vertical bar an event or travel block belongs to.
+/// Left = first person, Right = second person, Center = unassigned.
+pub type BarPos {
+  BarLeft
+  BarRight
+  BarCenter
 }
 
-/// Assign column indices to timed events so overlapping events sit side by side.
-///
-/// Pass 1: greedy interval-graph colouring — sort by start, assign each event
-/// to the first column whose last occupant ends before this event starts.
-///
-/// Pass 2: for each event, col_count = 1 + max column index among all events
-/// that directly overlap with it. This means non-overlapping events stay
-/// full-width, and each overlap cluster only narrows its own members.
-fn assign_columns(
-  events: List(Event),
-  local_offset: duration.Duration,
-) -> List(PositionedEvent) {
-  let sorted = list.sort(events, fn(a, b) { compare_event_start(a, b) })
-
-  // Pass 1: assign column indices.
-  let positioned =
-    list.fold(sorted, #([], []), fn(acc, e) {
-      let #(placed, cols) = acc
-      let s = event_start_min(e, local_offset)
-      let en = event_end_min(e, local_offset)
-
-      let maybe_col =
-        list.index_map(cols, fn(col_end, idx) { #(idx, col_end) })
-        |> list.find(fn(pair) {
-          let #(_, col_end) = pair
-          col_end <= s
-        })
-
-      let col_idx = case maybe_col {
-        Ok(#(idx, _)) -> idx
-        Error(_) -> list.length(cols)
-      }
-
-      let new_cols = case col_idx >= list.length(cols) {
-        True -> list.append(cols, [en])
-        False ->
-          list.index_map(cols, fn(v, i) {
-            case i == col_idx {
-              True -> en
-              False -> v
-            }
-          })
-      }
-
-      #(
-        list.append(placed, [
-          PositionedEvent(event: e, col: col_idx, col_count: 0),
-        ]),
-        new_cols,
-      )
-    }).0
-
-  // Pass 2: for each event, find all events it overlaps with and take
-  // 1 + max(col_index) across that set as its col_count.
-  list.map(positioned, fn(pe) {
-    let s = event_start_min(pe.event, local_offset)
-    let en = event_end_min(pe.event, local_offset)
-    let max_col =
-      list.fold(positioned, pe.col, fn(acc, other) {
-        let os = event_start_min(other.event, local_offset)
-        let oe = event_end_min(other.event, local_offset)
-        case os < en && oe > s {
-          True -> int.max(acc, other.col)
-          False -> acc
-        }
-      })
-    PositionedEvent(..pe, col_count: max_col + 1)
-  })
-}
-
-fn event_start_min(e: Event, local_offset: duration.Duration) -> Int {
-  case e.start {
-    AtTime(ts) -> {
-      let #(_, t) = timestamp.to_calendar(ts, local_offset)
-      t.hours * 60 + t.minutes
-    }
-    AllDay(_) -> 0
-  }
-}
-
-fn event_end_min(e: Event, local_offset: duration.Duration) -> Int {
-  case e.end {
-    AtTime(ts) -> {
-      let #(_, t) = timestamp.to_calendar(ts, local_offset)
-      t.hours * 60 + t.minutes
-    }
-    AllDay(_) -> 1440
-  }
+/// A segment on a bar: a vertical span with a color and optional label.
+type BarSegment {
+  BarSegment(
+    /// Minutes from window start.
+    top_min: Int,
+    /// Duration in minutes.
+    dur_min: Int,
+    color: String,
+    /// Thickness: thick for events, thin for travel.
+    thick: Bool,
+    /// Label text shown next to this segment (summary + time, or travel text).
+    label: String,
+    /// Secondary label line (time range for events, blank for travel).
+    label2: String,
+  )
 }
 
 /// The time-positioned portion of a day column.
-/// All vertical positions are percentages of the container height so the
-/// timeline fills whatever space the viewport offers without fixed pixel math.
+/// Renders three vertical timeline bars (left/center/right) as thin lines
+/// that thicken for event and travel segments. Labels float into the center.
 fn view_timeline(
   events: List(Event),
   local_offset: duration.Duration,
@@ -756,6 +645,8 @@ fn view_timeline(
   color_for: fn(String) -> String,
   travel_cache: Dict(String, TravelInfo),
   travel_blocks: List(TravelBlock),
+  people: List(String),
+  bar_for_event: fn(Event) -> BarPos,
 ) -> Element(msg) {
   let total_min = window.end_min - window.start_min
   let total_f = int_to_float(total_min)
@@ -763,7 +654,9 @@ fn view_timeline(
   let pct = fn(min: Int) -> String {
     float_pct(int_to_float(min) /. total_f *. 100.0)
   }
+  let fpct = fn(f: Float) -> String { float_pct(f /. total_f *. 100.0) }
 
+  // ── Hour grid ──────────────────────────────────────────────────────────────
   let first_hour =
     window.start_min
     / 60
@@ -779,8 +672,6 @@ fn view_timeline(
   let hour_lines =
     list.flat_map(hours, fn(h) {
       let top_min = h * 60 - window.start_min
-      let show_half = h * 60 + 30 < window.end_min
-
       let hour_line =
         html.div(
           [
@@ -805,7 +696,7 @@ fn view_timeline(
             ),
           ],
         )
-
+      let show_half = h * 60 + 30 < window.end_min
       let half_line = case show_half {
         False -> []
         True -> [
@@ -820,10 +711,10 @@ fn view_timeline(
           ),
         ]
       }
-
       [hour_line, ..half_line]
     })
 
+  // ── Now line ───────────────────────────────────────────────────────────────
   let now_line = case is_today {
     False -> []
     True -> {
@@ -847,218 +738,275 @@ fn view_timeline(
     }
   }
 
-  // Assign overlap columns before rendering.
-  let positioned = assign_columns(events, local_offset)
+  // ── Determine which bars are active ────────────────────────────────────────
+  // Left bar = person[0], Right bar = person[1], Center = unassigned.
+  // Only render bars that are actually needed (have events or blocks).
+  let has_left = list.length(people) >= 1
+  let has_right = list.length(people) >= 2
 
-  let event_els =
-    list.filter_map(positioned, fn(pe) {
-      let e = pe.event
+  // ── Collect segments per bar ───────────────────────────────────────────────
+  // Events → segments
+  let event_segs =
+    list.filter_map(events, fn(e) {
       case e.start, e.end {
         AtTime(s), AtTime(en) -> {
           let #(_, st) = timestamp.to_calendar(s, local_offset)
           let #(_, et) = timestamp.to_calendar(en, local_offset)
           let start_min = st.hours * 60 + st.minutes
           let end_min = et.hours * 60 + et.minutes
-          let clamped_start = int.max(start_min, window.start_min)
-          let clamped_end = int.min(end_min, window.end_min)
-          let dur_min = int.max(clamped_end - clamped_start, 0)
-          let top_pct = pct(clamped_start - window.start_min)
-          let dur_frac = int_to_float(dur_min) /. total_f
-          let h_frac = case dur_frac <. min_event_frac {
-            True -> min_event_frac
-            False -> dur_frac
-          }
-          let h_pct = float_pct(h_frac *. 100.0)
+          let top_min = int.max(start_min, window.start_min) - window.start_min
+          let bot_min = int.min(end_min, window.end_min) - window.start_min
+          let dur_min = int.max(bot_min - top_min, 1)
           let color = color_for(e.calendar_name)
           let time_str =
             format_time(s, local_offset) <> "–" <> format_time(en, local_offset)
-
-          // Travel info line: "Boston • 12 min" if location resolves.
-          let travel_el = case e.location {
-            "" -> element.none()
+          let loc_suffix = case e.location {
+            "" -> ""
             loc ->
               case dict.get(travel_cache, loc) {
-                Error(_) -> element.none()
-                Ok(info) ->
-                  html.p(
-                    [
-                      attribute.class("leading-none text-text-faint truncate"),
-                      attribute.style("font-size", "9px"),
-                    ],
-                    [html.text(info.city <> " • " <> info.duration_text)],
-                  )
+                Ok(info) -> " · " <> info.city
+                Error(_) -> ""
               }
           }
-
-          // Horizontal layout: divide the post-gutter space into n equal slices,
-          // no gap between adjacent events in the same overlap group.
-          // left  = 2em + c/n * (100% - 2em)
-          // right = (n-c-1)/n * (100% - 2em)
-          let n = pe.col_count
-          let c = pe.col
-          let nf = int_to_float(n)
-          let cf = int_to_float(c)
-          let left_css = case n <= 1 {
-            True -> "0"
-            False -> "calc(" <> float_pct(cf /. nf *. 100.0) <> ")"
-          }
-          let right_css = case n <= 1 {
-            True -> "0"
-            False -> {
-              let rf = int_to_float(n - c - 1)
-              "calc(" <> float_pct(rf /. nf *. 100.0) <> ")"
-            }
-          }
-
-          Ok(
-            html.div(
-              [
-                attribute.class(
-                  "absolute overflow-hidden rounded-lg border-l-4 px-1 hover:brightness-125 cursor-default",
-                ),
-                attribute.styles([
-                  #("top", top_pct),
-                  #("height", h_pct),
-                  #("left", left_css),
-                  #("right", right_css),
-                  #("background-color", bgcolor(color)),
-                  #("border-left-color", color),
-                ]),
-              ],
-              [
-                html.p(
-                  [
-                    attribute.class(
-                      "text-xs leading-tight truncate text-text font-medium",
-                    ),
-                  ],
-                  [html.text(e.summary)],
-                ),
-                html.p(
-                  [
-                    attribute.class("leading-none text-text-muted"),
-                    attribute.style("font-size", "9px"),
-                  ],
-                  [html.text(time_str)],
-                ),
-                travel_el,
-              ],
+          let bar = bar_for_event(e)
+          Ok(#(
+            bar,
+            BarSegment(
+              top_min:,
+              dur_min:,
+              color:,
+              thick: True,
+              label: e.summary <> loc_suffix,
+              label2: time_str,
             ),
-          )
+          ))
         }
         _, _ -> Error(Nil)
       }
     })
 
-  // Render travel blocks.
-  // DriveTo: arrival-aligned strip ending at event_start (home → event).
-  // DriveFrom: departure-aligned strip starting at event_end (event → home).
-  // col/col_count lay out same-anchor blocks side by side.
-  let block_els =
+  // Travel blocks → segments (thin)
+  let travel_segs =
     list.filter_map(travel_blocks, fn(b) {
       case b {
-        DriveTo(
-          event_start:,
-          travel_secs:,
-          travel_text:,
-          color:,
-          col:,
-          col_count:,
-        ) -> {
+        DriveTo(event_start:, travel_secs:, travel_text:, color:, bar:) -> {
           let #(_, t) = timestamp.to_calendar(event_start, local_offset)
           let anchor_min = t.hours * 60 + t.minutes
           let travel_min = { travel_secs + 30 } / 60
-          let block_start = anchor_min - travel_min
-          let clamped_start = int.max(block_start, window.start_min)
-          let clamped_end = int.min(anchor_min, window.end_min)
-          case clamped_end > clamped_start {
+          let raw_start = anchor_min - travel_min
+          let top_min = int.max(raw_start, window.start_min) - window.start_min
+          let bot_min = int.min(anchor_min, window.end_min) - window.start_min
+          let dur_min = int.max(bot_min - top_min, 0)
+          case dur_min > 0 {
             False -> Error(Nil)
             True ->
-              Ok(travel_strip(
-                pct(clamped_start - window.start_min),
-                pct(clamped_end - clamped_start),
-                travel_text,
-                color,
-                col,
-                col_count,
+              Ok(#(
+                bar,
+                BarSegment(
+                  top_min:,
+                  dur_min:,
+                  color:,
+                  thick: False,
+                  label: travel_text,
+                  label2: "",
+                ),
               ))
           }
         }
-
-        DriveFrom(
-          event_end:,
-          travel_secs:,
-          travel_text:,
-          color:,
-          col:,
-          col_count:,
-        ) -> {
+        DriveFrom(event_end:, travel_secs:, travel_text:, color:, bar:) -> {
           let #(_, t) = timestamp.to_calendar(event_end, local_offset)
           let anchor_min = t.hours * 60 + t.minutes
           let travel_min = { travel_secs + 30 } / 60
-          let block_end = anchor_min + travel_min
-          let clamped_start = int.max(anchor_min, window.start_min)
-          let clamped_end = int.min(block_end, window.end_min)
-          case clamped_end > clamped_start {
+          let raw_end = anchor_min + travel_min
+          let top_min = int.max(anchor_min, window.start_min) - window.start_min
+          let bot_min = int.min(raw_end, window.end_min) - window.start_min
+          let dur_min = int.max(bot_min - top_min, 0)
+          case dur_min > 0 {
             False -> Error(Nil)
             True ->
-              Ok(travel_strip(
-                pct(clamped_start - window.start_min),
-                pct(clamped_end - clamped_start),
-                travel_text <> " home",
-                color,
-                col,
-                col_count,
+              Ok(#(
+                bar,
+                BarSegment(
+                  top_min:,
+                  dur_min:,
+                  color:,
+                  thick: False,
+                  label: travel_text <> " home",
+                  label2: "",
+                ),
               ))
           }
         }
       }
     })
 
+  let all_segs = list.append(event_segs, travel_segs)
+
+  let segs_for = fn(bar: BarPos) -> List(BarSegment) {
+    list.filter_map(all_segs, fn(pair) {
+      let #(b, seg) = pair
+      case b == bar {
+        True -> Ok(seg)
+        False -> Error(Nil)
+      }
+    })
+  }
+
+  let left_segs = segs_for(BarLeft)
+  let right_segs = segs_for(BarRight)
+  let center_segs = segs_for(BarCenter)
+
+  // ── Bar width constants ────────────────────────────────────────────────────
+  // Bar is 6px thin, 10px thick for events, 7px for travel. Labels float in.
+  let bar_w_thin = "6px"
+  let bar_w_thick = "10px"
+  let bar_w_travel = "7px"
+
+  // ── Render a bar + its labels ──────────────────────────────────────────────
+  // `side` is "left" or "right" or "center" for the bar position.
+  // `label_side` is "left" or "right" for the text-align / anchor of labels.
+  let render_bar = fn(
+    segs: List(BarSegment),
+    bar_left: String,
+    bar_right: String,
+    label_left: String,
+    label_right: String,
+    label_align: String,
+  ) -> List(Element(msg)) {
+    // Thin baseline bar spanning full height
+    let base_bar =
+      html.div(
+        [
+          attribute.class("absolute top-0 bottom-0 pointer-events-none"),
+          attribute.styles([
+            #("left", bar_left),
+            #("right", bar_right),
+            #("width", bar_w_thin),
+            #("background-color", "rgba(128,128,128,0.15)"),
+          ]),
+        ],
+        [],
+      )
+
+    // Segment elements (thick/thin strips on the bar)
+    let seg_els =
+      list.map(segs, fn(seg) {
+        let w = case seg.thick {
+          True -> bar_w_thick
+          False -> bar_w_travel
+        }
+        let opacity = case seg.thick {
+          True -> "0.85"
+          False -> "0.5"
+        }
+        html.div(
+          [
+            attribute.class("absolute pointer-events-none"),
+            attribute.styles([
+              #("left", bar_left),
+              #("right", bar_right),
+              #("top", pct(seg.top_min)),
+              #("height", fpct(int_to_float(seg.dur_min))),
+              #("width", w),
+              #("background-color", seg.color),
+              #("opacity", opacity),
+            ]),
+          ],
+          [],
+        )
+      })
+
+    // Label deconfliction: sort by top_min, nudge downward to avoid overlaps.
+    // Minimum gap = 10 minutes in window-space (≈ one label height at typical zoom).
+    let min_gap_min = 10
+    let sorted_segs =
+      list.sort(segs, fn(a, b) { int.compare(a.top_min, b.top_min) })
+
+    let nudged_labels =
+      list.fold(sorted_segs, #([], -999), fn(acc, seg) {
+        let #(placed, last_top) = acc
+        let ideal = seg.top_min + seg.dur_min / 2
+        let actual = int.max(ideal, last_top + min_gap_min)
+        #(list.append(placed, [#(actual, seg)]), actual)
+      })
+      |> fn(p) { p.0 }
+
+    let label_els =
+      list.flat_map(nudged_labels, fn(pair) {
+        let #(label_top, seg) = pair
+        case seg.label {
+          "" -> []
+          _ -> [
+            html.div(
+              [
+                attribute.class("absolute select-none pointer-events-none"),
+                attribute.styles([
+                  #("top", pct(label_top)),
+                  #("left", label_left),
+                  #("right", label_right),
+                  #("text-align", label_align),
+                ]),
+              ],
+              [
+                html.span(
+                  [
+                    attribute.class("leading-none font-medium"),
+                    attribute.style("font-size", "9px"),
+                    attribute.style(
+                      "color",
+                      "hsl(from " <> seg.color <> " h s 35%)",
+                    ),
+                  ],
+                  [html.text(seg.label)],
+                ),
+                case seg.label2 {
+                  "" -> element.none()
+                  t ->
+                    html.span(
+                      [
+                        attribute.class("leading-none block"),
+                        attribute.style("font-size", "9px"),
+                        attribute.style("color", "rgba(128,128,128,0.7)"),
+                      ],
+                      [html.text(t)],
+                    )
+                },
+              ],
+            ),
+          ]
+        }
+      })
+
+    [base_bar, ..list.append(seg_els, label_els)]
+  }
+
+  // ── Render the three bars ──────────────────────────────────────────────────
+  // Left bar: flush left, labels go right into left half of center
+  // Right bar: flush right, labels go left into right half of center
+  // Center bar: centered, labels centered below segment midpoint
+  let left_els = case has_left {
+    False -> []
+    True -> render_bar(left_segs, "0", "auto", bar_w_thick, "50%", "left")
+  }
+  let right_els = case has_right {
+    False -> []
+    True -> render_bar(right_segs, "auto", "0", "50%", bar_w_thick, "right")
+  }
+  let center_els = case left_els == [] && right_els == [] {
+    // Only show center bar when there are no person bars, or when center has segs
+    True ->
+      render_bar(center_segs, "calc(50% - 3px)", "auto", "0", "0", "center")
+    False ->
+      case center_segs {
+        [] -> []
+        _ ->
+          render_bar(center_segs, "calc(50% - 3px)", "auto", "0", "0", "center")
+      }
+  }
+
   html.div(
     [attribute.class("relative flex-1 min-h-0 overflow-hidden")],
-    list.flatten([hour_lines, now_line, block_els, event_els]),
-  )
-}
-
-/// Render a single travel-time strip on the timeline.
-/// `col`/`col_count` divide the column width for side-by-side person strips.
-fn travel_strip(
-  top: String,
-  height: String,
-  label: String,
-  color: String,
-  col: Int,
-  col_count: Int,
-) -> Element(msg) {
-  let nf = int_to_float(col_count)
-  let cf = int_to_float(col)
-  let left_css = float_pct(cf /. nf *. 100.0)
-  let right_css = float_pct(int_to_float(col_count - col - 1) /. nf *. 100.0)
-  html.div(
-    [
-      attribute.class(
-        "absolute overflow-hidden select-none pointer-events-none flex items-end pb-px",
-      ),
-      attribute.styles([
-        #("top", top),
-        #("height", height),
-        #("left", left_css),
-        #("right", right_css),
-        #("background-color", "hsl(from " <> color <> " h s var(--event-bg-l))"),
-        #("border-top", "1px solid hsl(from " <> color <> " h s 60% / 0.4)"),
-      ]),
-    ],
-    [
-      html.span(
-        [
-          attribute.class("leading-none pl-1 truncate"),
-          attribute.style("font-size", "9px"),
-          attribute.style("color", "hsl(from " <> color <> " h s 35%)"),
-        ],
-        [html.text(label)],
-      ),
-    ],
+    list.flatten([hour_lines, now_line, left_els, right_els, center_els]),
   )
 }
 
@@ -1070,15 +1018,6 @@ fn all_day_spans_date(e: Event, date: Date) -> Bool {
   case e.start, e.end {
     AllDay(s), AllDay(en) -> date_lte(s, date) && date_lt(date, en)
     _, _ -> False
-  }
-}
-
-fn compare_event_start(a: Event, b: Event) -> order.Order {
-  case a.start, b.start {
-    AtTime(ta), AtTime(tb) -> timestamp.compare(ta, tb)
-    AllDay(da), AllDay(db) -> calendar.naive_date_compare(da, db)
-    AtTime(_), AllDay(_) -> order.Lt
-    AllDay(_), AtTime(_) -> order.Gt
   }
 }
 

@@ -295,6 +295,20 @@ fn view_active_tab(model: Model) -> Element(Msg) {
             list.filter(events, fn(e) {
               state.get_calendar_config(cfg, e.calendar_name).visible
             })
+          // Map each event to a bar position based on the first assigned person.
+          // people[0] → BarLeft, people[1] → BarRight, unassigned → BarCenter.
+          let people = cfg.people
+          let bar_for_event = fn(e: cal.Event) -> cal.BarPos {
+            let assigned =
+              dict.get(cfg.calendar_people, e.calendar_name)
+              |> result.unwrap([])
+            case assigned, people {
+              [], _ -> cal.BarCenter
+              [person, ..], [p0, ..] if person == p0 -> cal.BarLeft
+              [person, ..], [_, p1, ..] if person == p1 -> cal.BarRight
+              _, _ -> cal.BarCenter
+            }
+          }
           html.div(
             [attribute.class("flex flex-col flex-1 min-h-0 overflow-hidden")],
             [
@@ -306,6 +320,8 @@ fn view_active_tab(model: Model) -> Element(Msg) {
                 model.calendar_data.leg_cache,
                 model.calendar_data.cal_config.home_address,
                 colors_for_event,
+                people,
+                bar_for_event,
               ),
             ],
           )
