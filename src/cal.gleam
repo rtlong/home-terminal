@@ -260,7 +260,12 @@ pub fn view_gantt(
     _ -> window.start_min / 60 + 1
   }
   let last_hour = window.end_min / 60
-  // Quarter-hour lines (15, 30, 45 min offsets within each hour) — very faint.
+  // Gridline colors use explicit black-with-opacity so they're visible on both
+  // light and dark backgrounds regardless of the --color-border theme value.
+  let qline_color = "oklch(0 0 0 / 8%)"
+  let hline_color = "oklch(0 0 0 / 35%)"
+
+  // Quarter-hour lines (15, 30, 45 min offsets within each hour) — faint.
   let quarter_lines =
     list.flat_map(int_range(first_hour, last_hour - 1), fn(h) {
       list.filter_map([15, 30, 45], fn(q) {
@@ -271,10 +276,9 @@ pub fn view_gantt(
             Ok(
               html.div(
                 [
-                  attribute.class(
-                    "absolute top-0 bottom-0 border-l border-border/20 pointer-events-none",
-                  ),
+                  attribute.class("absolute top-0 bottom-0 pointer-events-none"),
                   attribute.style("left", xpct(min)),
+                  attribute.style("border-left", "1px solid " <> qline_color),
                 ],
                 [],
               ),
@@ -282,7 +286,7 @@ pub fn view_gantt(
         }
       })
     })
-  // Hour lines — slightly stronger than quarter lines.
+  // Hour lines — clearly stronger than quarter lines.
   let hour_lines =
     list.filter_map(int_range(first_hour, last_hour), fn(h) {
       let min = h * 60 - window.start_min
@@ -292,10 +296,9 @@ pub fn view_gantt(
           Ok(
             html.div(
               [
-                attribute.class(
-                  "absolute top-0 bottom-0 border-l border-border/50 pointer-events-none",
-                ),
+                attribute.class("absolute top-0 bottom-0 pointer-events-none"),
                 attribute.style("left", xpct(min)),
+                attribute.style("border-left", "2px solid " <> hline_color),
               ],
               [],
             ),
@@ -583,149 +586,171 @@ pub fn view_gantt(
       list.append(event_assigned, travel_assigned)
     }
 
-    // Fixed pixel height for every bar (thick or thin).
+    // Fixed pixel height for every bar lane (thick or thin).
     let bar_px = 20
 
-    // Render one sub-row (by BarPos) as stacked lanes.
-    // Returns element.none() when there are no bars so empty rows are invisible.
-    let view_sub_row = fn(pos: BarPos, row_label: String) -> Element(msg) {
-      let bars = list.filter(all_bars, fn(t) { t.0 == pos })
-      case bars {
-        [] -> element.none()
-        _ -> {
-          let assigned = assign_lanes(bars)
-          let lane_count =
-            list.fold(assigned, 0, fn(mx, p) { int.max(mx, p.0 + 1) })
-          let row_height_px = lane_count * bar_px
-
-          // Build one absolutely-positioned bar element per assigned bar.
-          let bar_els =
-            list.map(assigned, fn(pair) {
-              let #(
-                lane,
-                #(_, left_min, width_min, color, thick, is_free, label, label2),
-              ) = pair
-              let top_px = lane * bar_px
-              // Vertical padding inside the lane height.
-              let pad_px = case thick {
-                True -> 2
-                False -> 5
-              }
-              let bar_top_px = top_px + pad_px
-              let bar_height_px = bar_px - pad_px * 2
-              let opacity = case thick {
-                True -> "0.85"
-                False -> "0.55"
-              }
-              let clamped_width = int.min(width_min, total_min - left_min)
-              // Detect cross-midnight: original bar extends past the window.
-              let cross_midnight = width_min > total_min - left_min
-              // Suppress labels on very narrow bars.
-              // Travel bars (thin): suppress if < 20 min.
-              // Event bars (thick): always show summary; time/loc shown conditionally.
-              let too_narrow = !thick && clamped_width < 20
-              // Thresholds for showing secondary info on event bars.
-              // Show time annotation only if bar is wide enough (~35 min).
-              let show_time = thick && clamped_width >= 35
-              // Label: primary (event name) always shown; secondary (time) shown when wide enough.
-              let label_content = case label, too_narrow {
-                _, True -> []
-                "", False -> []
-                _, False -> [
-                  html.span(
-                    [
-                      // Summary always visible, never shrinks away — takes minimum width needed,
-                      // then truncates if even that doesn't fit.
-                      attribute.class(
-                        "shrink-0 max-w-full truncate font-medium leading-none",
-                      ),
-                      attribute.style("font-size", "9px"),
-                    ],
-                    [html.text(label)],
-                  ),
-                  case label2, show_time {
-                    _, False -> element.none()
-                    "", _ -> element.none()
-                    t, True ->
-                      html.span(
-                        [
-                          // Secondary info: shown only if bar is wide enough, and itself truncates.
-                          attribute.class(
-                            "shrink truncate min-w-0 leading-none opacity-70",
-                          ),
-                          attribute.style("font-size", "8px"),
-                        ],
-                        [html.text(" " <> t)],
-                      )
-                  },
-                ]
-              }
-              // Free (transparent) events: outlined bar with colored border, no fill.
-              // Cross-midnight busy events: fade-out on right edge.
-              let extra_style = case is_free, cross_midnight {
-                True, _ -> [
-                  attribute.style("background-color", "transparent"),
-                  attribute.style("border", "1.5px solid " <> color),
-                  attribute.style("opacity", "0.7"),
-                  attribute.style("color", color),
-                ]
-                False, True -> [
-                  attribute.style(
-                    "mask-image",
-                    "linear-gradient(to right, black 70%, transparent 100%)",
-                  ),
-                ]
-                False, False -> []
-              }
-              html.div(
-                list.flatten([
-                  [
-                    attribute.class(
-                      "absolute overflow-hidden flex items-center gap-0.5 px-1 pointer-events-none select-none rounded-sm",
-                    ),
-                    attribute.style("left", xpct(left_min)),
-                    attribute.style("width", xfpct(int_to_float(clamped_width))),
-                    attribute.style("top", int.to_string(bar_top_px) <> "px"),
-                    attribute.style(
-                      "height",
-                      int.to_string(bar_height_px) <> "px",
-                    ),
-                    attribute.style("background-color", color),
-                    attribute.style("opacity", opacity),
-                    attribute.style("color", "white"),
-                  ],
-                  extra_style,
-                ]),
-                label_content,
-              )
-            })
-
-          // Row label (person name) overlaid at top-left.
-          let label_el = case row_label {
-            "" -> element.none()
-            name ->
+    // Hour tick labels overlaid at the top of the time grid.
+    // These float above the sub-rows in the same coordinate space — always aligned.
+    let hour_ticks =
+      list.filter_map(int_range(first_hour, last_hour), fn(h) {
+        let min = h * 60 - window.start_min
+        case min >= 0 && min <= total_min {
+          False -> Error(Nil)
+          True ->
+            Ok(
               html.span(
                 [
                   attribute.class(
-                    "absolute top-0.5 left-0.5 text-text-faint leading-none pointer-events-none select-none z-10",
+                    "absolute top-0 text-text-muted select-none leading-none z-30 pointer-events-none",
                   ),
-                  attribute.style("font-size", "7px"),
+                  attribute.style("left", xpct(min)),
+                  attribute.style("font-size", "8px"),
+                  attribute.style("line-height", "1"),
+                  attribute.style("padding", "1px 1px 0"),
+                  attribute.style("transform", case min {
+                    0 -> "translateX(1px)"
+                    _ if min >= total_min -> "translateX(calc(-100% - 1px))"
+                    _ -> "translateX(-50%)"
+                  }),
                 ],
-                [html.text(name)],
-              )
-          }
-
-          html.div(
-            [
-              attribute.class(
-                "relative border-b border-border/15 overflow-hidden",
+                [html.text(format_hour(h))],
               ),
-              attribute.style("height", int.to_string(row_height_px) <> "px"),
-            ],
-            list.flatten([all_grid_lines, bar_els, [label_el]]),
-          )
+            )
         }
-      }
+      })
+
+    // Render one sub-row (by BarPos).
+    // Always rendered (even when empty) so rows fill space equally.
+    // min-height ensures bars always fit; flex-1 distributes remaining space.
+    let view_sub_row = fn(pos: BarPos) -> Element(msg) {
+      let bars = list.filter(all_bars, fn(t) { t.0 == pos })
+      let assigned = assign_lanes(bars)
+      let lane_count =
+        list.fold(assigned, 0, fn(mx, p) { int.max(mx, p.0 + 1) })
+      let min_height_px = int.max(lane_count * bar_px, bar_px)
+
+      // Build one absolutely-positioned bar element per assigned bar.
+      let bar_els =
+        list.map(assigned, fn(pair) {
+          let #(
+            lane,
+            #(_, left_min, width_min, color, thick, is_free, label, label2),
+          ) = pair
+          let top_px = lane * bar_px
+          // Vertical padding inside the lane height.
+          let pad_px = case thick {
+            True -> 2
+            False -> 5
+          }
+          let bar_top_px = top_px + pad_px
+          let bar_height_px = bar_px - pad_px * 2
+          let opacity = case thick {
+            True -> "0.85"
+            False -> "0.55"
+          }
+          let clamped_width = int.min(width_min, total_min - left_min)
+          // Suppress labels on very narrow travel bars.
+          let too_narrow = !thick && clamped_width < 20
+          // Show secondary time info only if bar is wide enough.
+          let show_time = thick && clamped_width >= 35
+          // Label content.
+          let label_content = case label, too_narrow {
+            _, True -> []
+            "", False -> []
+            _, False -> [
+              html.span(
+                [
+                  attribute.class(
+                    "shrink-0 max-w-full truncate font-medium leading-none",
+                  ),
+                  attribute.style("font-size", "9px"),
+                ],
+                [html.text(label)],
+              ),
+              case label2, show_time {
+                _, False -> element.none()
+                "", _ -> element.none()
+                t, True ->
+                  html.span(
+                    [
+                      attribute.class(
+                        "shrink truncate min-w-0 leading-none opacity-70",
+                      ),
+                      attribute.style("font-size", "8px"),
+                    ],
+                    [html.text(" " <> t)],
+                  )
+              },
+            ]
+          }
+          // Visual style variants:
+          //   free events → outlined (transparent bg, colored border)
+          //   start-day cross-midnight → fade out on right edge
+          //   end-day cross-midnight → fade in from left edge (came from previous day)
+          //   normal → solid fill
+          // cross_midnight here means the bar was constructed as a start-day bar
+          // (width_min == total_min - left_min, left_min > 0) or end-day bar
+          // (left_min == 0, width_min < total_min).
+          // We detect by checking if left_min == 0 (end-day) or right edge == window end (start-day).
+          let is_start_day_xm =
+            !is_free && left_min > 0 && left_min + clamped_width >= total_min
+          let is_end_day_xm =
+            !is_free
+            && left_min == 0
+            && clamped_width < total_min
+            && width_min == clamped_width
+          let extra_style = case is_free, is_start_day_xm, is_end_day_xm {
+            True, _, _ -> [
+              attribute.style("background-color", "transparent"),
+              attribute.style("border", "1.5px solid " <> color),
+              attribute.style("opacity", "0.7"),
+              attribute.style("color", color),
+            ]
+            False, True, _ -> [
+              attribute.style(
+                "mask-image",
+                "linear-gradient(to right, black 60%, transparent 100%)",
+              ),
+            ]
+            False, False, True -> [
+              attribute.style(
+                "mask-image",
+                "linear-gradient(to left, black 60%, transparent 100%)",
+              ),
+            ]
+            False, False, False -> []
+          }
+          html.div(
+            list.flatten([
+              [
+                attribute.class(
+                  "absolute overflow-hidden flex items-center gap-0.5 px-1 pointer-events-none select-none rounded-sm",
+                ),
+                attribute.style("left", xpct(left_min)),
+                attribute.style("width", xfpct(int_to_float(clamped_width))),
+                attribute.style("top", int.to_string(bar_top_px) <> "px"),
+                attribute.style("height", int.to_string(bar_height_px) <> "px"),
+                attribute.style("background-color", color),
+                attribute.style("opacity", opacity),
+                attribute.style("color", "white"),
+              ],
+              extra_style,
+            ]),
+            label_content,
+          )
+        })
+
+      html.div(
+        [
+          // flex-1 fills equal share; min-height ensures all lanes fit.
+          // No overflow-hidden: bars in deep lanes can visually extend into
+          // adjacent sub-row space rather than being clipped.
+          attribute.class("relative flex-1"),
+          attribute.style("min-height", int.to_string(min_height_px) <> "px"),
+          attribute.style("border-bottom", "1px solid oklch(0 0 0 / 8%)"),
+        ],
+        bar_els,
+      )
     }
 
     // Now indicator: vertical line spanning all sub-rows, positioned inside time_grid.
@@ -760,98 +785,104 @@ pub fn view_gantt(
         )
       })
 
-    // Top strip: date + all-day chips on one line.
-    let day_header =
+    // Date label + all-day chips (left gutter, 4rem wide).
+    let date_label =
+      html.span(
+        [
+          attribute.class(case is_today {
+            True -> "font-bold text-accent-border leading-tight"
+            False -> "font-medium text-text-muted leading-tight"
+          }),
+          attribute.style("font-size", "10px"),
+        ],
+        [html.text(weekday_name(day) <> " " <> format_date(day))],
+      )
+
+    // Left gutter: date + all-day chips, then person labels vertically centered.
+    // Person labels are text-only with no overlap on the event bars.
+    let left_gutter =
       html.div(
         [
           attribute.class(
-            "shrink-0 flex flex-row flex-wrap items-baseline gap-x-1 gap-y-0.5 px-0.5 py-0.5 select-none",
+            "shrink-0 flex flex-col gap-0.5 pt-0.5 pb-0.5 pr-1 select-none overflow-hidden",
           ),
+          attribute.style("width", "4rem"),
         ],
-        [
-          html.span(
-            [
-              attribute.class(case is_today {
-                True -> "font-bold text-accent-border leading-tight shrink-0"
-                False -> "font-medium text-text-muted leading-tight shrink-0"
-              }),
-              attribute.style("font-size", "10px"),
-            ],
-            [html.text(weekday_name(day) <> " " <> format_date(day))],
-          ),
-          ..all_day_chips
-        ],
+        list.flatten([
+          [date_label],
+          all_day_chips,
+          [
+            html.div([attribute.class("flex-1")], []),
+            // Person labels vertically centered in the remaining space.
+            case person0 {
+              "" -> element.none()
+              n ->
+                html.span(
+                  [
+                    attribute.class("text-text-faint leading-none"),
+                    attribute.style("font-size", "7px"),
+                  ],
+                  [html.text(n)],
+                )
+            },
+            html.div([attribute.class("flex-1")], []),
+            case person1 {
+              "" -> element.none()
+              n ->
+                html.span(
+                  [
+                    attribute.class("text-text-faint leading-none"),
+                    attribute.style("font-size", "7px"),
+                  ],
+                  [html.text(n)],
+                )
+            },
+            html.div([attribute.class("flex-1")], []),
+          ],
+        ]),
       )
 
-    // Time grid: sub-rows stacked, sized to their lane content.
-    // The now-line spans the full height via absolute positioning.
+    // Time grid: sub-rows fill vertical space equally via flex-1.
+    // Hour ticks and now-indicator are absolute overlays inside time_grid.
     let time_grid =
       html.div(
         [
           attribute.class(
-            "relative flex-1 flex flex-col min-w-0 border-l border-border/30 overflow-hidden",
+            "relative flex-1 flex flex-col min-w-0 overflow-hidden",
           ),
+          attribute.style("border-left", "1px solid oklch(0 0 0 / 20%)"),
         ],
-        [
-          now_el,
-          view_sub_row(BarLeft, person0),
-          view_sub_row(BarCenter, ""),
-          view_sub_row(BarRight, person1),
-        ],
+        list.flatten([
+          // Gridlines first — absolute, span full time_grid height (top-0 bottom-0).
+          all_grid_lines,
+          // Now indicator — absolute, spans full height.
+          [now_el],
+          // Hour tick labels — absolute, sit at top of time grid.
+          hour_ticks,
+          // Sub-rows — normal flow, fill available vertical space equally.
+          [
+            view_sub_row(BarLeft),
+            view_sub_row(BarCenter),
+            view_sub_row(BarRight),
+          ],
+        ]),
       )
 
     html.div(
       [
-        attribute.class("flex flex-col flex-1 border-b border-border"),
+        attribute.class("flex flex-row flex-1"),
+        attribute.style("border-bottom", case is_today {
+          True -> "2px solid oklch(0 0 0 / 40%)"
+          False -> "1px solid oklch(0 0 0 / 30%)"
+        }),
         attribute.class(case is_today {
           True -> "bg-surface-2/20"
           False -> ""
         }),
       ],
-      [day_header, time_grid],
+      [left_gutter, time_grid],
     )
   }
-
-  // Hour label header row — shows time ticks above the day rows.
-  let hour_header =
-    html.div([attribute.class("flex flex-row shrink-0 gap-1")], [
-      // Spacer matching the date column width.
-      html.div(
-        [attribute.class("shrink-0"), attribute.style("width", "4rem")],
-        [],
-      ),
-      html.div(
-        [
-          attribute.class(
-            "relative flex-1 border-l border-border/30 overflow-hidden",
-          ),
-          attribute.style("height", "1rem"),
-        ],
-        list.filter_map(int_range(first_hour, last_hour), fn(h) {
-          let min = h * 60 - window.start_min
-          case min >= 0 && min <= total_min {
-            False -> Error(Nil)
-            True ->
-              Ok(html.span(
-                [
-                  attribute.class(
-                    "absolute text-text-faint select-none leading-none",
-                  ),
-                  attribute.style("left", xpct(min)),
-                  attribute.style("font-size", "8px"),
-                  // Center the label on the gridline; pin left/right at extremes to avoid clipping.
-                  attribute.style("transform", case min {
-                    0 -> "translateX(0%)"
-                    _ if min >= total_min -> "translateX(-100%)"
-                    _ -> "translateX(-50%)"
-                  }),
-                ],
-                [html.text(format_hour(h))],
-              ))
-          }
-        }),
-      ),
-    ])
 
   // Outer container: flex column, fills available space.
   html.div(
@@ -861,9 +892,8 @@ pub fn view_gantt(
       ),
     ],
     [
-      hour_header,
       html.div(
-        [attribute.class("flex-1 min-h-0 flex flex-col gap-px")],
+        [attribute.class("flex-1 min-h-0 flex flex-col")],
         list.map(list.zip(days, day_timed_and_blocks), fn(pair) {
           let #(day, #(day_timed, day_blocks)) = pair
           let all_day =
