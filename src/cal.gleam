@@ -279,7 +279,8 @@ pub fn view_gantt(
               Ok(
                 html.div(
                   [
-                    attribute.class("pointer-events-none h-full"),
+                    attribute.class("pointer-events-none"),
+                    attribute.style("height", "100%"),
                     attribute.style("grid-column", int.to_string(min + 1)),
                     attribute.style("border-left", "1px solid " <> qline_color),
                   ],
@@ -297,7 +298,8 @@ pub fn view_gantt(
             Ok(
               html.div(
                 [
-                  attribute.class("pointer-events-none h-full"),
+                  attribute.class("pointer-events-none"),
+                  attribute.style("height", "100%"),
                   attribute.style("grid-column", int.to_string(min + 1)),
                   attribute.style("border-left", "2px solid " <> hline_color),
                 ],
@@ -316,7 +318,8 @@ pub fn view_gantt(
         attribute.class("absolute inset-0 pointer-events-none"),
         attribute.style("display", "grid"),
         attribute.style("grid-template-columns", grid_cols_str),
-        attribute.style("grid-template-rows", "1fr"),
+        attribute.style("grid-template-rows", "100%"),
+        attribute.style("align-items", "stretch"),
       ],
       grid_line_items,
     )
@@ -597,79 +600,177 @@ pub fn view_gantt(
       let clamped_width = int.min(width_min, total_min - left_min)
       let right_min = left_min + clamped_width
       let show_time = clamped_width >= 35
-      let label_content = case label {
-        "" -> []
-        _ -> [
-          html.span(
-            [
-              attribute.class(
-                "shrink-0 max-w-full truncate font-medium leading-none",
-              ),
-              attribute.style("font-size", "9px"),
-            ],
-            [html.text(label)],
-          ),
-          case label2, show_time {
-            _, False -> element.none()
-            "", _ -> element.none()
-            t, True ->
+      case is_free {
+        // Free events: number-line style — a thin horizontal axis with arrowhead
+        // caps at each end and the label floating above the line in the center.
+        True -> {
+          // Left-pointing arrowhead (open end of span — start of free time)
+          let arrow_left =
+            html.div(
+              [
+                attribute.style("width", "0"),
+                attribute.style("height", "0"),
+                attribute.style("border-top", "3px solid transparent"),
+                attribute.style("border-bottom", "3px solid transparent"),
+                attribute.style("border-right", "5px solid " <> color),
+                attribute.style("flex-shrink", "0"),
+              ],
+              [],
+            )
+          // Right-pointing arrowhead (open end of span — end of free time)
+          let arrow_right =
+            html.div(
+              [
+                attribute.style("width", "0"),
+                attribute.style("height", "0"),
+                attribute.style("border-top", "3px solid transparent"),
+                attribute.style("border-bottom", "3px solid transparent"),
+                attribute.style("border-left", "5px solid " <> color),
+                attribute.style("flex-shrink", "0"),
+              ],
+              [],
+            )
+          // Label text (name + optional time), sitting above the axis line
+          let label_el = case label {
+            "" -> element.none()
+            _ ->
               html.span(
                 [
                   attribute.class(
-                    "shrink truncate min-w-0 leading-none opacity-70",
+                    "relative truncate pointer-events-none select-none",
                   ),
                   attribute.style("font-size", "8px"),
+                  attribute.style("color", color),
+                  attribute.style("opacity", "0.8"),
+                  attribute.style("line-height", "1"),
+                  attribute.style("white-space", "nowrap"),
+                  attribute.style("overflow", "hidden"),
+                  attribute.style("text-overflow", case show_time {
+                    True -> "ellipsis"
+                    False -> "clip"
+                  }),
                 ],
-                [html.text(" " <> t)],
+                [
+                  html.text(case label2, show_time {
+                    t, True if t != "" -> label <> " " <> t
+                    _, _ -> label
+                  }),
+                ],
               )
-          },
-        ]
+          }
+          // The axis line runs full-width; arrowheads and label are vertically centered.
+          html.div(
+            [
+              attribute.class(
+                "relative overflow-hidden pointer-events-none select-none",
+              ),
+              attribute.style("flex", int.to_string(flex_val) <> " 0 0"),
+              attribute.style("min-width", "0"),
+              attribute.style("display", "flex"),
+              attribute.style("flex-direction", "column"),
+              attribute.style("justify-content", "center"),
+              attribute.style("align-items", "stretch"),
+            ],
+            [
+              // Label row above the line
+              html.div(
+                [
+                  attribute.style("display", "flex"),
+                  attribute.style("justify-content", "center"),
+                  attribute.style("padding-bottom", "1px"),
+                ],
+                [label_el],
+              ),
+              // Axis row: left arrow + line + right arrow
+              html.div(
+                [
+                  attribute.style("display", "flex"),
+                  attribute.style("align-items", "center"),
+                  attribute.style("min-width", "0"),
+                ],
+                [
+                  arrow_left,
+                  html.div(
+                    [
+                      attribute.style("flex", "1 0 0"),
+                      attribute.style("height", "0"),
+                      attribute.style("border-top", "1.5px solid " <> color),
+                      attribute.style("opacity", "0.7"),
+                    ],
+                    [],
+                  ),
+                  arrow_right,
+                ],
+              ),
+            ],
+          )
+        }
+        // Normal (busy) events: solid filled bar with label.
+        False -> {
+          let is_start_day_xm = left_min > 0 && right_min >= total_min
+          let is_end_day_xm =
+            left_min == 0 && right_min < total_min && width_min == clamped_width
+          let extra_style = case is_start_day_xm, is_end_day_xm {
+            True, _ -> [
+              attribute.style(
+                "mask-image",
+                "linear-gradient(to right, black 60%, transparent 100%)",
+              ),
+            ]
+            False, True -> [
+              attribute.style(
+                "mask-image",
+                "linear-gradient(to left, black 60%, transparent 100%)",
+              ),
+            ]
+            False, False -> []
+          }
+          let label_content = case label {
+            "" -> []
+            _ -> [
+              html.span(
+                [
+                  attribute.class(
+                    "shrink-0 max-w-full truncate font-medium leading-none",
+                  ),
+                  attribute.style("font-size", "9px"),
+                ],
+                [html.text(label)],
+              ),
+              case label2, show_time {
+                _, False -> element.none()
+                "", _ -> element.none()
+                t, True ->
+                  html.span(
+                    [
+                      attribute.class(
+                        "shrink truncate min-w-0 leading-none opacity-70",
+                      ),
+                      attribute.style("font-size", "8px"),
+                    ],
+                    [html.text(" " <> t)],
+                  )
+              },
+            ]
+          }
+          html.div(
+            list.flatten([
+              [
+                attribute.class(
+                  "overflow-hidden flex items-center gap-0.5 px-1 pointer-events-none select-none rounded-sm",
+                ),
+                attribute.style("flex", int.to_string(flex_val) <> " 0 0"),
+                attribute.style("min-width", "0"),
+                attribute.style("background-color", color),
+                attribute.style("opacity", "0.85"),
+                attribute.style("color", "white"),
+              ],
+              extra_style,
+            ]),
+            label_content,
+          )
+        }
       }
-      let is_start_day_xm = !is_free && left_min > 0 && right_min >= total_min
-      let is_end_day_xm =
-        !is_free
-        && left_min == 0
-        && right_min < total_min
-        && width_min == clamped_width
-      let extra_style = case is_free, is_start_day_xm, is_end_day_xm {
-        True, _, _ -> [
-          attribute.style("background-color", "transparent"),
-          attribute.style("border", "1.5px solid " <> color),
-          attribute.style("opacity", "0.7"),
-          attribute.style("color", color),
-        ]
-        False, True, _ -> [
-          attribute.style(
-            "mask-image",
-            "linear-gradient(to right, black 60%, transparent 100%)",
-          ),
-        ]
-        False, False, True -> [
-          attribute.style(
-            "mask-image",
-            "linear-gradient(to left, black 60%, transparent 100%)",
-          ),
-        ]
-        False, False, False -> []
-      }
-      html.div(
-        list.flatten([
-          [
-            attribute.class(
-              "overflow-hidden flex items-center gap-0.5 px-1 pointer-events-none select-none rounded-sm",
-            ),
-            attribute.style("flex", int.to_string(flex_val) <> " 0 0"),
-            attribute.style("min-width", "0"),
-            attribute.style("margin-top", "2px"),
-            attribute.style("margin-bottom", "2px"),
-            attribute.style("background-color", color),
-            attribute.style("opacity", "0.85"),
-            attribute.style("color", "white"),
-          ],
-          extra_style,
-        ]),
-        label_content,
-      )
     }
 
     // Render one group: event bar optionally wrapped in a travel-time border.
@@ -738,20 +839,16 @@ pub fn view_gantt(
             ])
           html.div(
             [
-              attribute.class(
-                "flex flex-row pointer-events-none select-none rounded-sm",
-              ),
+              attribute.class("flex flex-row pointer-events-none select-none"),
               attribute.style("grid-column", col_start <> " / " <> col_end),
               attribute.style("border", "1.5px solid " <> color),
-              attribute.style("margin-top", "1px"),
-              attribute.style("margin-bottom", "1px"),
               attribute.style("min-width", "0"),
               attribute.style("overflow", "hidden"),
             ],
             inner_els,
           )
         }
-        // No travel: just the event bar directly.
+        // No travel: just the event bar directly, with vertical breathing room.
         _, [ev, ..] -> {
           let ev_w = int.min(ev.2, total_min - ev.1)
           html.div(
@@ -759,6 +856,8 @@ pub fn view_gantt(
               attribute.class("flex flex-row"),
               attribute.style("grid-column", col_start <> " / " <> col_end),
               attribute.style("min-width", "0"),
+              attribute.style("margin-top", "2px"),
+              attribute.style("margin-bottom", "2px"),
             ],
             [render_event_bar(ev, ev_w)],
           )
