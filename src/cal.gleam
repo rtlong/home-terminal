@@ -363,6 +363,9 @@ pub fn view_gantt(
       }
     })
 
+  // A type alias for gantt bar tuples: (bar, left_min, width_min, color, thick, label, label2)
+  // We use a record-less 7-tuple throughout.
+
   // Render one day row.
   let view_gantt_day = fn(
     day: Date,
@@ -371,8 +374,7 @@ pub fn view_gantt(
     day_blocks: List(TravelBlock),
     all_day_events: List(Event),
   ) -> Element(msg) {
-    // Build horizontal bar segments for timed events.
-    // left_min = start offset from window start; width_min = duration.
+    // Build horizontal segments for timed events.
     let event_bars =
       list.flat_map(day_timed, fn(e) {
         case e.start, e.end {
@@ -420,7 +422,7 @@ pub fn view_gantt(
         }
       })
 
-    // Travel block bars (thin, low opacity).
+    // Travel block segments.
     let travel_bars =
       list.filter_map(day_blocks, fn(b) {
         case b {
@@ -466,37 +468,51 @@ pub fn view_gantt(
 
     let all_bars = list.append(event_bars, travel_bars)
 
-    // Filter bars to a specific sub-row (BarPos).
-    let bars_for = fn(pos: BarPos) {
-      list.filter(all_bars, fn(t) { t.0 == pos })
-    }
+    // Render a single sub-row.
+    // Bars are sorted left→right. Each bar's label runs from bar_right to the
+    // next bar's left (or end of row), so labels never overlap.
+    let view_sub_row = fn(pos: BarPos) -> Element(msg) {
+      let bars =
+        list.filter(all_bars, fn(t) { t.0 == pos })
+        |> list.sort(fn(a, b) { int.compare(a.1, b.1) })
 
-    // Render a single sub-row of bars.
-    let view_sub_row = fn(pos: BarPos, row_label: String) -> Element(msg) {
-      let bars = bars_for(pos)
-      let bar_els =
-        list.flat_map(bars, fn(b) {
-          let #(_, left_min, width_min, color, thick, label, label2) = b
+      // Compute label right boundaries: for bar[i], right = bar[i+1].left, or total_min.
+      let bars_with_label_rights =
+        list.index_map(bars, fn(b, i) {
+          let next_left = case list.drop(bars, i + 1) {
+            [next, ..] -> next.1
+            [] -> total_min
+          }
+          #(b, next_left)
+        })
+
+      let els =
+        list.flat_map(bars_with_label_rights, fn(pair) {
+          let #(
+            #(_, left_min, width_min, color, thick, label, label2),
+            label_right_min,
+          ) = pair
           let bar_h = case thick {
-            True -> "70%"
-            False -> "40%"
+            True -> "60%"
+            False -> "30%"
           }
           let bar_top = case thick {
-            True -> "15%"
-            False -> "30%"
+            True -> "20%"
+            False -> "35%"
           }
           let opacity = case thick {
             True -> "0.85"
             False -> "0.55"
           }
-          let bar_right = left_min + width_min
-          // The bar strip itself.
+          let bar_right_min = left_min + width_min
+          // Clamp bar width to window so it doesn't extend past the right edge.
+          let clamped_width_min = int.min(width_min, total_min - left_min)
           let strip =
             html.div(
               [
                 attribute.class("absolute rounded-sm pointer-events-none"),
                 attribute.style("left", xpct(left_min)),
-                attribute.style("width", xfpct(int_to_float(width_min))),
+                attribute.style("width", xfpct(int_to_float(clamped_width_min))),
                 attribute.style("top", bar_top),
                 attribute.style("height", bar_h),
                 attribute.style("background-color", color),
@@ -504,17 +520,19 @@ pub fn view_gantt(
               ],
               [],
             )
-          // Label floats right of the bar, within the time slot to end of row.
-          let label_el = case label {
-            "" -> element.none()
-            _ ->
+          // Only show label if there is room to the right of the bar.
+          let label_el = case label, bar_right_min >= total_min {
+            _, True -> element.none()
+            "", _ -> element.none()
+            _, _ ->
               html.div(
                 [
                   attribute.class(
                     "absolute top-0 bottom-0 flex flex-col justify-center overflow-hidden pointer-events-none select-none",
                   ),
-                  attribute.style("left", xpct(bar_right)),
-                  attribute.style("right", "0"),
+                  attribute.style("left", xpct(bar_right_min)),
+                  // Clip label at the next bar's left edge so labels never overlap.
+                  attribute.style("right", xpct(total_min - label_right_min)),
                 ],
                 [
                   html.p(
@@ -545,63 +563,34 @@ pub fn view_gantt(
           }
           [strip, label_el]
         })
-      // Sub-row label (person name) on the left — zero-width, doesn't affect layout.
-      let row_name_el = case row_label {
-        "" -> element.none()
-        name ->
-          html.div(
-            [
-              attribute.class(
-                "absolute left-0 top-0 bottom-0 flex items-center pointer-events-none select-none z-10",
-              ),
-              attribute.style("transform", "translateX(-100%)"),
-            ],
-            [
-              html.span(
-                [
-                  attribute.class("text-text-faint pr-1"),
-                  attribute.style("font-size", "8px"),
-                ],
-                [html.text(name)],
-              ),
-            ],
-          )
-      }
+
       html.div(
         [
-          attribute.class("relative flex-1 min-h-0"),
-          ..case pos {
-            BarLeft -> [attribute.class("border-b border-border/20")]
-            BarCenter -> [attribute.class("border-b border-border/20")]
-            BarRight -> []
-          }
+          attribute.class(
+            "relative flex-1 min-h-0 border-b border-border/15 overflow-hidden",
+          ),
         ],
-        list.flatten([[row_name_el], hour_lines, bar_els]),
+        list.flatten([hour_lines, els]),
       )
     }
 
-    // Now indicator — vertical line at current time, only for today.
-    let now_el = case is_today {
+    // Now indicator: vertical line across all sub-rows.
+    let now_offset = now_min - window.start_min
+    let now_el = case is_today && now_offset >= 0 && now_offset <= total_min {
       False -> element.none()
-      True -> {
-        let now_offset = now_min - window.start_min
-        case now_offset >= 0 && now_offset <= total_min {
-          False -> element.none()
-          True ->
-            html.div(
-              [
-                attribute.class(
-                  "absolute top-0 bottom-0 w-px bg-accent-border z-20 pointer-events-none",
-                ),
-                attribute.style("left", xpct(now_offset)),
-              ],
-              [],
-            )
-        }
-      }
+      True ->
+        html.div(
+          [
+            attribute.class(
+              "absolute top-0 bottom-0 w-px bg-accent-border/70 z-20 pointer-events-none",
+            ),
+            attribute.style("left", xpct(now_offset)),
+          ],
+          [],
+        )
     }
 
-    // All-day chips in the day header section.
+    // All-day chips.
     let all_day_chips =
       list.map(all_day_events, fn(e) {
         let color = color_for(e.calendar_name)
@@ -617,51 +606,74 @@ pub fn view_gantt(
         )
       })
 
+    // Date header column: date, person row labels, all-day chips.
     let date_label =
       html.div(
         [
-          attribute.class(
-            "flex flex-col items-start gap-0.5 shrink-0 pr-2 select-none",
-          ),
-          attribute.style("width", "3.5rem"),
+          attribute.class("shrink-0 select-none"),
+          attribute.style("width", "4rem"),
         ],
         [
           html.div(
             [
               attribute.class(case is_today {
-                True -> "font-bold text-accent-border text-xs leading-tight"
-                False -> "font-medium text-text-muted text-xs leading-tight"
+                True -> "font-bold text-accent-border leading-tight"
+                False -> "font-medium text-text-muted leading-tight"
               }),
+              attribute.style("font-size", "10px"),
             ],
             [html.text(weekday_name(day) <> " " <> format_date(day))],
           ),
-          ..all_day_chips
+          html.div(
+            [attribute.class("flex flex-col justify-around h-full pt-0.5")],
+            [
+              html.span(
+                [
+                  attribute.class("text-text-faint leading-none"),
+                  attribute.style("font-size", "8px"),
+                ],
+                [html.text(person0)],
+              ),
+              html.span([attribute.style("font-size", "8px")], []),
+              html.span(
+                [
+                  attribute.class("text-text-faint leading-none"),
+                  attribute.style("font-size", "8px"),
+                ],
+                [html.text(person1)],
+              ),
+            ],
+          ),
+          html.div(
+            [attribute.class("flex flex-wrap gap-0.5 mt-0.5")],
+            all_day_chips,
+          ),
         ],
       )
 
-    // The time grid: relative container for hour lines, now line, and sub-rows.
+    // Time grid: relative, contains now-line and three sub-rows.
     let time_grid =
       html.div(
         [
           attribute.class(
-            "relative flex-1 flex flex-col min-w-0 border-l border-border/30",
+            "relative flex-1 flex flex-col min-w-0 min-h-0 border-l border-border/30 overflow-hidden",
           ),
         ],
         [
           now_el,
-          view_sub_row(BarLeft, person0),
-          view_sub_row(BarCenter, ""),
-          view_sub_row(BarRight, person1),
+          view_sub_row(BarLeft),
+          view_sub_row(BarCenter),
+          view_sub_row(BarRight),
         ],
       )
 
     html.div(
       [
         attribute.class(
-          "flex flex-row items-stretch px-1 border-b border-border/40",
+          "flex flex-row min-h-0 flex-1 border-b border-border/30 gap-1",
         ),
         attribute.class(case is_today {
-          True -> "bg-surface-2/30"
+          True -> "bg-surface-2/20"
           False -> ""
         }),
       ],
@@ -669,14 +681,65 @@ pub fn view_gantt(
     )
   }
 
-  // Render all 7 day rows.
+  // Hour label header row — shows time ticks above the day rows.
+  let hour_header =
+    html.div([attribute.class("flex flex-row shrink-0 gap-1")], [
+      // Spacer matching the date column width.
+      html.div(
+        [attribute.class("shrink-0"), attribute.style("width", "4rem")],
+        [],
+      ),
+      html.div(
+        [
+          attribute.class(
+            "relative flex-1 border-l border-border/30 overflow-hidden",
+          ),
+          attribute.style("height", "1rem"),
+        ],
+        list.filter_map(list.range(first_hour, last_hour), fn(h) {
+          let min = h * 60 - window.start_min
+          case min >= 0 && min <= total_min {
+            False -> Error(Nil)
+            True ->
+              Ok(html.span(
+                [
+                  attribute.class(
+                    "absolute text-text-faint select-none leading-none",
+                  ),
+                  attribute.style("left", xpct(min)),
+                  attribute.style("font-size", "8px"),
+                  // First tick: don't shift left (would clip out of container).
+                  attribute.style("transform", case min {
+                    0 -> "translateX(0%)"
+                    _ -> "translateX(-50%)"
+                  }),
+                ],
+                [html.text(format_hour(h))],
+              ))
+          }
+        }),
+      ),
+    ])
+
+  // Outer container: flex column, fills available space.
   html.div(
-    [attribute.class("flex-1 min-h-0 flex flex-col overflow-hidden p-2 gap-px")],
-    list.map(list.zip(days, day_timed_and_blocks), fn(pair) {
-      let #(day, #(day_timed, day_blocks)) = pair
-      let all_day = list.filter(events, fn(e) { all_day_spans_date(e, day) })
-      view_gantt_day(day, day == today_date, day_timed, day_blocks, all_day)
-    }),
+    [
+      attribute.class(
+        "flex-1 min-h-0 flex flex-col overflow-hidden px-2 pt-1 pb-2",
+      ),
+    ],
+    [
+      hour_header,
+      html.div(
+        [attribute.class("flex-1 min-h-0 flex flex-col gap-px")],
+        list.map(list.zip(days, day_timed_and_blocks), fn(pair) {
+          let #(day, #(day_timed, day_blocks)) = pair
+          let all_day =
+            list.filter(events, fn(e) { all_day_spans_date(e, day) })
+          view_gantt_day(day, day == today_date, day_timed, day_blocks, all_day)
+        }),
+      ),
+    ],
   )
 }
 
