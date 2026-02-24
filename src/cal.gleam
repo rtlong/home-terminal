@@ -482,18 +482,28 @@ pub fn view_gantt(
     let all_bars = list.append(event_bars, travel_bars)
 
     // --- Lane assignment ---
-    // Each sub-row gets bars packed into the fewest non-overlapping lanes.
     // Bar tuple: #(BarPos, Int, Int, String, Bool, Bool, String, String)
     //             pos  left width color thick free  label label2
-    // Two bars overlap if one starts before the other ends.
-    // Returns List(#(lane_index, bar_tuple)).
+    //
+    // Two-phase: event bars (thick=True) get lanes greedily; travel bars
+    // (thick=False) are pinned to the same lane as their adjacent event bar
+    // (DriveTo ends where the event starts; DriveFrom starts where event ends).
+    // This keeps e.g. "4 min home" in the same lane as Trivia, not bumped up.
     let assign_lanes = fn(
       bars: List(#(BarPos, Int, Int, String, Bool, Bool, String, String)),
     ) -> List(#(Int, #(BarPos, Int, Int, String, Bool, Bool, String, String))) {
-      // Sort by left_min ascending.
-      let sorted =
+      let type_of = fn(
+        bar: #(BarPos, Int, Int, String, Bool, Bool, String, String),
+      ) {
+        bar.4
+      }
+      let event_bars_only = list.filter(bars, type_of)
+      let travel_bars_only = list.filter(bars, fn(b) { !type_of(b) })
+
+      // Phase 1: greedy lane assignment for event bars only.
+      let sorted_events =
         list.sort(
-          bars,
+          event_bars_only,
           fn(
             a: #(BarPos, Int, Int, String, Bool, Bool, String, String),
             b: #(BarPos, Int, Int, String, Bool, Bool, String, String),
@@ -501,42 +511,78 @@ pub fn view_gantt(
             int.compare(a.1, b.1)
           },
         )
-      // lane_ends: List(Int) — the right_min of the last bar in each lane.
-      // Fold carries #(assignments, lane_ends).
       let init: #(
         List(#(Int, #(BarPos, Int, Int, String, Bool, Bool, String, String))),
         List(Int),
       ) = #([], [])
-      list.fold(
-        sorted,
-        init,
-        fn(acc, bar: #(BarPos, Int, Int, String, Bool, Bool, String, String)) {
-          let #(assignments, lane_ends) = acc
-          let bar_left = bar.1
-          let bar_right = bar.1 + bar.2
-          // Find first lane whose last bar ended at or before this bar starts.
-          let found =
-            list.index_map(lane_ends, fn(end_min, idx) { #(idx, end_min) })
-            |> list.find(fn(p: #(Int, Int)) { p.1 <= bar_left })
-          case found {
-            Ok(#(lane_idx, _)) -> {
-              let new_ends =
-                list.index_map(lane_ends, fn(e, i) {
-                  case i == lane_idx {
-                    True -> bar_right
-                    False -> e
-                  }
-                })
-              #(list.append(assignments, [#(lane_idx, bar)]), new_ends)
+      let #(event_assigned, _lane_ends) =
+        list.fold(
+          sorted_events,
+          init,
+          fn(acc, bar: #(BarPos, Int, Int, String, Bool, Bool, String, String)) {
+            let #(assignments, lane_ends) = acc
+            let bar_left = bar.1
+            let bar_right = bar.1 + bar.2
+            let found =
+              list.index_map(lane_ends, fn(end_min, idx) { #(idx, end_min) })
+              |> list.find(fn(p: #(Int, Int)) { p.1 <= bar_left })
+            case found {
+              Ok(#(lane_idx, _)) -> {
+                let new_ends =
+                  list.index_map(lane_ends, fn(e, i) {
+                    case i == lane_idx {
+                      True -> bar_right
+                      False -> e
+                    }
+                  })
+                #(list.append(assignments, [#(lane_idx, bar)]), new_ends)
+              }
+              Error(Nil) -> {
+                let lane_idx = list.length(lane_ends)
+                let new_ends = list.append(lane_ends, [bar_right])
+                #(list.append(assignments, [#(lane_idx, bar)]), new_ends)
+              }
             }
-            Error(Nil) -> {
-              let lane_idx = list.length(lane_ends)
-              let new_ends = list.append(lane_ends, [bar_right])
-              #(list.append(assignments, [#(lane_idx, bar)]), new_ends)
+          },
+        )
+
+      // Phase 2: pin each travel bar to its adjacent event bar's lane.
+      // DriveTo ends where event starts: travel.left + travel.width == event.left
+      // DriveFrom starts where event ends: travel.left == event.left + event.width
+      let travel_assigned =
+        list.map(
+          travel_bars_only,
+          fn(bar: #(BarPos, Int, Int, String, Bool, Bool, String, String)) {
+            let travel_left = bar.1
+            let travel_right = bar.1 + bar.2
+            let lane = case
+              list.find(
+                event_assigned,
+                fn(
+                  p: #(
+                    Int,
+                    #(BarPos, Int, Int, String, Bool, Bool, String, String),
+                  ),
+                ) {
+                  let ev = p.1
+                  let ev_left = ev.1
+                  let ev_right = ev_left + ev.2
+                  // DriveTo: travel_right touches event start
+                  travel_right == ev_left
+                  // DriveFrom: travel_left touches event end
+                  || travel_left == ev_right
+                },
+              )
+            {
+              Ok(#(lane_idx, _)) -> lane_idx
+              // No adjacent event found — open a new lane (shouldn't happen normally).
+              Error(Nil) -> list.length(event_assigned)
             }
-          }
-        },
-      ).0
+            #(lane, bar)
+          },
+        )
+
+      list.append(event_assigned, travel_assigned)
     }
 
     // Fixed pixel height for every bar (thick or thin).
