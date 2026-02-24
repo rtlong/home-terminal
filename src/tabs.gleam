@@ -96,6 +96,8 @@ pub opaque type Msg {
   UserToggledCalendar(name: String, visible: Bool)
   UserChangedColor(name: String, color: String)
   UserToggledCalendarPerson(cal_name: String, person: String, assigned: Bool)
+  UserChangedPeopleList(raw: String)
+  UserChangedPersonColor(person: String, color: String)
   Tick
 }
 
@@ -145,6 +147,21 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         False -> list.filter(current_people, fn(p) { p != person })
       }
       cal_server.update_calendar_people(model.server, cal_name, new_people)
+      #(model, effect.none())
+    }
+
+    UserChangedPeopleList(raw:) -> {
+      // Parse comma-separated names, trim whitespace, drop empties.
+      let people =
+        string.split(raw, ",")
+        |> list.map(string.trim)
+        |> list.filter(fn(s) { s != "" })
+      cal_server.update_people(model.server, people)
+      #(model, effect.none())
+    }
+
+    UserChangedPersonColor(person:, color:) -> {
+      cal_server.update_person_color(model.server, person, color)
       #(model, effect.none())
     }
 
@@ -335,11 +352,12 @@ fn view_fetch_stamp(fetched_at: Int) -> Element(Msg) {
 // SETTINGS VIEW ---------------------------------------------------------------
 
 fn view_settings(model: Model) -> Element(Msg) {
+  let cfg = model.calendar_data.cal_config
+  let people = cfg.people
+
   // Use the full list of discovered calendar names from the server.
-  // Falls back to names inferred from events if the fetch hasn't run yet.
   let cal_names = case model.calendar_data.calendar_names {
     [] ->
-      // Pre-fetch: derive names from any cached events we have
       case model.calendar_data.events {
         Error(_) -> []
         Ok(events) ->
@@ -351,22 +369,79 @@ fn view_settings(model: Model) -> Element(Msg) {
     names -> list.sort(names, string.compare)
   }
 
-  let cfg = model.calendar_data.cal_config
-  let people = cfg.people
+  html.div([attribute.class("p-6 overflow-y-auto h-full flex flex-col gap-8")], [
+    view_people_settings(cfg),
+    html.div([], [
+      html.h2(
+        [
+          attribute.class(
+            "text-sm font-semibold uppercase tracking-wide text-text-muted mb-4",
+          ),
+        ],
+        [html.text("Calendars")],
+      ),
+      html.ul(
+        [attribute.class("flex flex-col gap-2")],
+        list.map(cal_names, fn(name) { view_calendar_row(name, cfg, people) }),
+      ),
+    ]),
+  ])
+}
 
-  html.div([attribute.class("p-6 overflow-y-auto h-full")], [
+fn view_people_settings(cfg: state.Config) -> Element(Msg) {
+  let people = cfg.people
+  let people_str = string.join(people, ", ")
+
+  html.div([], [
     html.h2(
       [
         attribute.class(
           "text-sm font-semibold uppercase tracking-wide text-text-muted mb-4",
         ),
       ],
-      [html.text("Calendars")],
+      [html.text("People")],
     ),
-    html.ul(
-      [attribute.class("flex flex-col gap-2")],
-      list.map(cal_names, fn(name) { view_calendar_row(name, cfg, people) }),
-    ),
+    // Name list input
+    html.div([attribute.class("flex flex-col gap-1 mb-4")], [
+      html.label([attribute.class("text-xs text-text-muted")], [
+        html.text("Names (comma-separated)"),
+      ]),
+      html.input([
+        attribute.type_("text"),
+        attribute.value(people_str),
+        attribute.placeholder("Ryan, Alex"),
+        attribute.class(
+          "px-3 py-1.5 rounded-lg border border-border bg-surface text-sm text-text focus:outline-none focus:border-accent-border",
+        ),
+        on_people_input_change(),
+      ]),
+    ]),
+    // Per-person color pickers
+    case people {
+      [] -> element.none()
+      _ ->
+        html.div(
+          [attribute.class("flex flex-col gap-2")],
+          list.map(people, fn(person) {
+            let color =
+              dict.get(cfg.people_colors, person)
+              |> result.unwrap("#888888")
+            html.div([attribute.class("flex items-center gap-3")], [
+              html.input([
+                attribute.type_("color"),
+                attribute.value(color),
+                attribute.class(
+                  "w-7 h-7 rounded cursor-pointer border-0 bg-transparent p-0",
+                ),
+                on_person_color_change(person),
+              ]),
+              html.span([attribute.class("text-sm text-text")], [
+                html.text(person),
+              ]),
+            ])
+          }),
+        )
+    },
   ])
 }
 
@@ -477,5 +552,21 @@ fn on_person_toggle_change(
   event.on("change", {
     use assigned <- decode.subfield(["target", "checked"], decode.bool)
     decode.success(UserToggledCalendarPerson(cal_name:, person:, assigned:))
+  })
+}
+
+/// Decode a text input change/blur event → UserChangedPeopleList.
+fn on_people_input_change() -> attribute.Attribute(Msg) {
+  event.on("change", {
+    use raw <- decode.subfield(["target", "value"], decode.string)
+    decode.success(UserChangedPeopleList(raw:))
+  })
+}
+
+/// Decode an input[type=color] change event → UserChangedPersonColor.
+fn on_person_color_change(person: String) -> attribute.Attribute(Msg) {
+  event.on("change", {
+    use color <- decode.subfield(["target", "value"], decode.string)
+    decode.success(UserChangedPersonColor(person:, color:))
   })
 }
