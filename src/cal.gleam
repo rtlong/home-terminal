@@ -484,6 +484,7 @@ fn view_day(
         all_day_row_count,
         color_for,
         travel_cache,
+        bars_for_event,
       ),
       view_timeline(
         timed_events,
@@ -543,6 +544,7 @@ fn view_all_day_strip(
   row_count: Int,
   color_for: fn(String) -> String,
   travel_cache: Dict(String, TravelInfo),
+  bars_for_event: fn(Event) -> List(#(BarPos, String)),
 ) -> Element(msg) {
   let row_em = 1.4
   let strip_h = float_em(int_to_float(row_count) *. row_em)
@@ -555,7 +557,6 @@ fn view_all_day_strip(
           let color = color_for(e.calendar_name)
           let top_em = float_em(int_to_float(row) *. row_em)
           let h_em = float_em(row_em -. 0.1)
-          // Show city suffix for all-day events with a resolved location.
           let city_suffix = case e.location {
             "" -> ""
             loc ->
@@ -564,13 +565,28 @@ fn view_all_day_strip(
                 Error(_) -> ""
               }
           }
+          // Determine horizontal extent from bar position (same rules as timed events).
+          let bar = case bars_for_event(e) {
+            [#(b, _), ..] -> b
+            [] -> BarCenter
+          }
+          let #(chip_left, chip_right) = case bar {
+            BarLeft -> #("0", "50%")
+            BarRight -> #("50%", "0")
+            BarCenter -> #("0", "0")
+          }
           Ok(
             html.div(
               [
                 attribute.class(
-                  "absolute left-0 right-0 flex items-center px-1 overflow-hidden",
+                  "absolute flex items-center px-1 overflow-hidden",
                 ),
-                attribute.styles([#("top", top_em), #("height", h_em)]),
+                attribute.styles([
+                  #("top", top_em),
+                  #("height", h_em),
+                  #("left", chip_left),
+                  #("right", chip_right),
+                ]),
               ],
               [
                 html.div(
