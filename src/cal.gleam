@@ -182,23 +182,28 @@ pub fn view_seven_days(
   let days = next_n_dates(today_date, 7)
 
   // Collect per-day timed event lists (for window computation).
+  // An event belongs to a day if any part of its span falls on that day:
+  //   start_date <= day < end_date  (or start_date == day for same-day events).
   let day_timed_lists =
     list.map(days, fn(day) {
       list.filter(events, fn(e) {
-        case e.start {
-          AtTime(_) ->
-            calendar.naive_date_compare(
-              timestamp.to_calendar(
-                case e.start {
-                  AtTime(ts) -> ts
-                  AllDay(_) -> timestamp.system_time()
-                },
-                local_offset,
-              ).0,
-              day,
-            )
-            == order.Eq
-          AllDay(_) -> False
+        case e.start, e.end {
+          AtTime(s), AtTime(en) -> {
+            let start_date = timestamp.to_calendar(s, local_offset).0
+            let end_date = timestamp.to_calendar(en, local_offset).0
+            // Event overlaps `day` if it starts on or before `day` and ends after `day`
+            // (exclusive end: an event ending exactly at midnight doesn't show next day).
+            date_lte(start_date, day)
+            && {
+              // If end is strictly after midnight of `day`, it overlaps.
+              calendar.naive_date_compare(end_date, day) == order.Gt
+              || {
+                // Or start is on `day` (same-day event, end_date == day is fine).
+                calendar.naive_date_compare(start_date, day) == order.Eq
+              }
+            }
+          }
+          _, _ -> False
         }
       })
     })
@@ -488,6 +493,7 @@ fn view_day(
       ),
       view_timeline(
         timed_events,
+        date,
         local_offset,
         window,
         is_today,
@@ -654,6 +660,7 @@ type BarSegment {
 /// `bars_for_event` returns one (BarPos, color) pair per assigned person.
 fn view_timeline(
   events: List(Event),
+  day: Date,
   local_offset: duration.Duration,
   window: Window,
   is_today: Bool,
@@ -758,10 +765,20 @@ fn view_timeline(
     list.flat_map(events, fn(e) {
       case e.start, e.end {
         AtTime(s), AtTime(en) -> {
-          let #(_, st) = timestamp.to_calendar(s, local_offset)
-          let #(_, et) = timestamp.to_calendar(en, local_offset)
-          let start_min = st.hours * 60 + st.minutes
-          let end_min = et.hours * 60 + et.minutes
+          let #(start_date, st) = timestamp.to_calendar(s, local_offset)
+          let #(end_date, et) = timestamp.to_calendar(en, local_offset)
+          // Clamp start to day boundary: if the event started on a previous day,
+          // its start on this day is 0 (midnight / window start).
+          let start_min = case calendar.naive_date_compare(start_date, day) {
+            order.Eq -> st.hours * 60 + st.minutes
+            _ -> 0
+          }
+          // Clamp end to day boundary: if the event ends on a later day,
+          // its end on this day is 1440 (midnight of next day).
+          let end_min = case calendar.naive_date_compare(end_date, day) {
+            order.Eq -> et.hours * 60 + et.minutes
+            _ -> 1440
+          }
           let top_min = int.max(start_min, window.start_min) - window.start_min
           let bot_min = int.min(end_min, window.end_min) - window.start_min
           let dur_min = int.max(bot_min - top_min, 1)
