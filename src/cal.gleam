@@ -265,11 +265,24 @@ pub fn view_gantt(
   let qline_color = "oklch(0 0 0 / 8%)"
   let hline_color = "oklch(0 0 0 / 35%)"
 
-  // Gridlines — placed in a full-height overlay grid that shares the same
-  // column template as event sub-rows, so lines align exactly with bar edges.
-  // Quarter lines: faint, 1px. Hour lines: stronger, 2px.
+  let grid_cols_str =
+    "repeat(" <> int.to_string(total_min) <> ", minmax(0, 1fr))"
+
+  // Single overlay grid that combines gridlines and hour tick labels.
+  // Using ONE grid element for both means labels and lines share the exact
+  // same column pixel widths — no rounding drift between separate grids.
+  //
+  // Grid layout:
+  //   columns: repeat(total_min, 1fr)  — one column per minute
+  //   rows:    tick_header_px  1fr     — row 1 = label strip, row 2 = body
+  //
+  // Gridlines span rows 1/3 (both rows) so they cover the full height.
+  // Tick labels go in row 1 with align-self:end (sit at bottom of label row).
+  // Quarter lines: faint 1px. Hour lines: stronger 2px.
+  let tick_row = "1"
   let grid_line_items =
     list.flatten([
+      // Quarter-hour lines (span full height, both rows)
       list.flat_map(int_range(first_hour, last_hour - 1), fn(h) {
         list.filter_map([15, 30, 45], fn(q) {
           let min = h * 60 + q - window.start_min
@@ -281,7 +294,8 @@ pub fn view_gantt(
                   [
                     attribute.class("pointer-events-none"),
                     attribute.style("grid-column", int.to_string(min + 1)),
-                    attribute.style("grid-row", "1"),
+                    attribute.style("grid-row", "1 / 3"),
+                    attribute.style("align-self", "stretch"),
                     attribute.style("border-left", "1px solid " <> qline_color),
                   ],
                   [],
@@ -290,39 +304,69 @@ pub fn view_gantt(
           }
         })
       }),
-      list.filter_map(int_range(first_hour, last_hour), fn(h) {
+      // Hour lines (span full height) + tick labels (row 1 only)
+      list.flat_map(int_range(first_hour, last_hour), fn(h) {
         let min = h * 60 - window.start_min
         case min > 0 && min < total_min {
-          False -> Error(Nil)
-          True ->
-            Ok(
-              html.div(
-                [
-                  attribute.class("pointer-events-none"),
-                  attribute.style("grid-column", int.to_string(min + 1)),
-                  attribute.style("grid-row", "1"),
-                  attribute.style("border-left", "2px solid " <> hline_color),
-                ],
-                [],
-              ),
-            )
+          False -> []
+          True -> [
+            // Hour gridline — spans both rows
+            html.div(
+              [
+                attribute.class("pointer-events-none"),
+                attribute.style("grid-column", int.to_string(min + 1)),
+                attribute.style("grid-row", "1 / 3"),
+                attribute.style("align-self", "stretch"),
+                attribute.style("border-left", "2px solid " <> hline_color),
+              ],
+              [],
+            ),
+            // Tick label — row 1 only, sits at bottom of the tick strip
+            html.span(
+              [
+                attribute.class(
+                  "text-text-muted leading-none pointer-events-none select-none",
+                ),
+                attribute.style("grid-column", int.to_string(min + 1)),
+                attribute.style("grid-row", tick_row),
+                attribute.style("align-self", "end"),
+                attribute.style("font-size", "8px"),
+                attribute.style("padding-left", "2px"),
+                attribute.style("padding-bottom", "1px"),
+                attribute.style("white-space", "nowrap"),
+                attribute.style("z-index", "1"),
+              ],
+              [html.text(format_hour(h))],
+            ),
+          ]
         }
       }),
+      // First-hour label (min == 0, special case — render label but no line)
+      case window.start_min % 60 {
+        0 -> {
+          let h = window.start_min / 60
+          [
+            html.span(
+              [
+                attribute.class(
+                  "text-text-muted leading-none pointer-events-none select-none",
+                ),
+                attribute.style("grid-column", "1"),
+                attribute.style("grid-row", tick_row),
+                attribute.style("align-self", "end"),
+                attribute.style("font-size", "8px"),
+                attribute.style("padding-left", "2px"),
+                attribute.style("padding-bottom", "1px"),
+                attribute.style("white-space", "nowrap"),
+                attribute.style("z-index", "1"),
+              ],
+              [html.text(format_hour(h))],
+            ),
+          ]
+        }
+        _ -> []
+      },
     ])
-  // The gridline overlay: a full-height absolute grid that sits behind events.
-  let grid_cols_str =
-    "repeat(" <> int.to_string(total_min) <> ", minmax(0, 1fr))"
-  let grid_line_overlay =
-    html.div(
-      [
-        attribute.class("absolute inset-0 pointer-events-none"),
-        attribute.style("display", "grid"),
-        attribute.style("grid-template-columns", grid_cols_str),
-        attribute.style("grid-template-rows", "100%"),
-        attribute.style("align-items", "stretch"),
-      ],
-      grid_line_items,
-    )
 
   // A type alias for gantt bar tuples: (bar, left_min, width_min, color, thick, label, label2)
   // We use a record-less 7-tuple throughout.
@@ -505,40 +549,6 @@ pub fn view_gantt(
 
     // Fixed pixel height for every bar lane.
     let bar_px = 20
-
-    // Hour tick labels — placed in the same grid as event bars so they align
-    // exactly with gridlines. Labels sit to the right of the hour boundary
-    // (translateX(2px)) rather than centred on it, avoiding overlap with the
-    // gridline itself and making them readable.
-    let hour_tick_strip =
-      html.div(
-        [
-          attribute.class("relative shrink-0 select-none pointer-events-none"),
-          attribute.style("display", "grid"),
-          attribute.style("grid-template-columns", grid_cols_str),
-          attribute.style("height", int.to_string(tick_header_px) <> "px"),
-        ],
-        list.filter_map(int_range(first_hour, last_hour), fn(h) {
-          let min = h * 60 - window.start_min
-          case min >= 0 && min <= total_min {
-            False -> Error(Nil)
-            True ->
-              Ok(
-                html.span(
-                  [
-                    attribute.class("text-text-muted leading-none self-end"),
-                    attribute.style("grid-column", int.to_string(min + 1)),
-                    attribute.style("font-size", "8px"),
-                    attribute.style("padding-left", "2px"),
-                    attribute.style("padding-bottom", "1px"),
-                    attribute.style("white-space", "nowrap"),
-                  ],
-                  [html.text(format_hour(h))],
-                ),
-              )
-          }
-        }),
-      )
 
     // CSS grid column template — reuse the one built in the outer scope.
     let grid_cols = grid_cols_str
@@ -986,6 +996,24 @@ pub fn view_gantt(
         list.flatten([[date_label], all_day_chips]),
       )
 
+    // Combined overlay: gridlines + tick labels in a single absolute grid.
+    // Row 1 = tick_header_px tall (labels live here).
+    // Row 2 = 1fr (fills remaining height, gridlines cover both rows via 1/3).
+    // Everything is in one grid → one set of column widths → perfect alignment.
+    let grid_line_overlay =
+      html.div(
+        [
+          attribute.class("absolute inset-0 pointer-events-none"),
+          attribute.style("display", "grid"),
+          attribute.style("grid-template-columns", grid_cols_str),
+          attribute.style(
+            "grid-template-rows",
+            int.to_string(tick_header_px) <> "px 1fr",
+          ),
+        ],
+        grid_line_items,
+      )
+
     // Time grid: sub-rows fill vertical space equally via flex-1.
     // Hour ticks and now-indicator are absolute overlays inside time_grid.
     let time_grid =
@@ -997,17 +1025,36 @@ pub fn view_gantt(
           attribute.style("border-left", "1px solid oklch(0 0 0 / 20%)"),
         ],
         list.flatten([
-          // Gridline overlay — absolute, same column grid as event bars.
-          [grid_line_overlay],
           // Now indicator — absolute, spans full height.
           [now_el],
-          // Hour tick header strip — flow element, sits at top of time grid.
-          [hour_tick_strip],
-          // Sub-rows — normal flow, fill available vertical space equally.
+          // Content wrapper: overlay (gridlines+labels) is absolute inside here.
+          // A flow spacer reserves the tick label row height at the top so
+          // sub-rows start below the label strip without a separate tick element.
           [
-            view_sub_row(BarLeft),
-            view_sub_row(BarCenter),
-            view_sub_row(BarRight),
+            html.div(
+              [attribute.class("relative flex-1 flex flex-col min-w-0")],
+              list.flatten([
+                [grid_line_overlay],
+                // Spacer that holds the tick label row height in flow.
+                [
+                  html.div(
+                    [
+                      attribute.class("shrink-0 pointer-events-none"),
+                      attribute.style(
+                        "height",
+                        int.to_string(tick_header_px) <> "px",
+                      ),
+                    ],
+                    [],
+                  ),
+                ],
+                [
+                  view_sub_row(BarLeft),
+                  view_sub_row(BarCenter),
+                  view_sub_row(BarRight),
+                ],
+              ]),
+            ),
           ],
         ]),
       )
