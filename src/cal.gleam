@@ -1071,9 +1071,9 @@ fn view_timeline(
       })
 
     // Labels float past the group into the center area.
-    // Label deconfliction: next label must start no earlier than the previous
-    // segment's end (top + dur) plus a small gap. This prevents a long label
-    // from visually running into the next segment's label even if the text wraps.
+    // Label deconfliction: within each lane, nudge a label down if it would
+    // overlap the previous label in the same lane. Labels in different lanes
+    // have different horizontal positions and never visually collide.
     // gap_min: minimum gap between the bottom of one label and the top of the next.
     let label_gap_min = 3
     let sorted_segs =
@@ -1091,12 +1091,18 @@ fn view_timeline(
         False, _ -> 12
       }
     }
+    // last_bottoms: Dict(col, last_bottom_min) tracking per-lane label state.
     let nudged =
-      list.fold(sorted_segs, #([], -999), fn(acc, seg) {
-        let #(placed, last_bottom) = acc
+      list.fold(sorted_segs, #([], dict.new()), fn(acc, seg) {
+        let #(placed, last_bottoms) = acc
+        let last_bottom = case dict.get(last_bottoms, seg.col) {
+          Ok(v) -> v
+          Error(_) -> -999
+        }
         let actual = int.max(seg.top_min, last_bottom + label_gap_min)
         let bottom = actual + label_height_min(seg)
-        #(list.append(placed, [#(actual, seg)]), bottom)
+        let new_bottoms = dict.insert(last_bottoms, seg.col, bottom)
+        #(list.append(placed, [#(actual, seg)]), new_bottoms)
       })
       |> fn(p) { p.0 }
 
