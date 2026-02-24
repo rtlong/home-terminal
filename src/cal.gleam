@@ -1005,13 +1005,18 @@ fn view_timeline(
   // ── Render a bar + its labels ──────────────────────────────────────────────
   // `from_right`: True = bar anchored from right edge; False = from left edge.
   // `anchor_px`: px from the anchor edge to the near side of lane 0.
-  // `center`: True = strips use calc(50% - offset) so the group is centered.
+  // `center_bar`: True = strips use calc(50% ± offset) so the group is centered.
+  // `opposing_segs`: segs from the other side bar (left→right, right→left).
+  //   Used to determine per-label width: a label may extend to the full column
+  //   width unless an opposing seg's time range overlaps, in which case the label
+  //   is constrained to its own half so the two labels don't collide.
   // Lanes expand inward. Labels float past the group into the column center.
   let render_bar = fn(
     segs: List(BarSegment),
     from_right: Bool,
     anchor_px: Int,
     center_bar: Bool,
+    opposing_segs: List(BarSegment),
   ) -> List(Element(msg)) {
     let total_lanes =
       list.fold(segs, 1, fn(acc, seg) { int.max(acc, seg.col_count) })
@@ -1121,18 +1126,35 @@ fn view_timeline(
               False -> {
                 // Label must clear the rightmost lane's strip right edge.
                 // Lane (total_lanes-1) center = anchor_px + (total_lanes-1)*lane_stride.
-                // Its right edge = center + lane_w/2.
-                // Add 2px gap → label_edge = anchor_px + (total_lanes-1)*lane_stride + lane_w/2 + 2.
+                // Its right edge = center + lane_w/2.  Add 2px gap.
                 let label_edge =
                   anchor_px + { total_lanes - 1 } * lane_stride + lane_w / 2 + 2
+                // Check whether any opposing-bar seg overlaps this label's time window.
+                // If so, constrain the label to its own half of the column so the two
+                // labels don't collide. Otherwise let it run to the far edge (right:0 /
+                // left:0), giving the text as much room as possible.
+                let label_h = label_height_min(seg)
+                let label_end = label_top + label_h
+                let opposing_overlap =
+                  list.any(opposing_segs, fn(opp) {
+                    let opp_end = opp.top_min + opp.dur_min
+                    // Overlapping if the label window and the opposing seg window intersect.
+                    label_top < opp_end && label_end > opp.top_min
+                  })
                 case from_right {
                   False -> [
                     #("left", px_str(label_edge)),
-                    #("right", "50%"),
+                    #("right", case opposing_overlap {
+                      True -> "50%"
+                      False -> "0"
+                    }),
                     #("text-align", "left"),
                   ]
                   True -> [
-                    #("left", "50%"),
+                    #("left", case opposing_overlap {
+                      True -> "50%"
+                      False -> "0"
+                    }),
                     #("right", px_str(label_edge)),
                     #("text-align", "right"),
                   ]
@@ -1186,9 +1208,13 @@ fn view_timeline(
   }
 
   // ── Render the three bars ──────────────────────────────────────────────────
-  let left_els = render_bar(left_segs, False, left_anchor_px, False)
-  let right_els = render_bar(right_segs, True, right_anchor_px, False)
-  let center_els = render_bar(center_segs, False, 0, True)
+  // Pass opposing segs so each bar's labels know when to constrain their width.
+  // Left labels may widen when no right-bar seg overlaps; right labels likewise.
+  // Center bar has no opponent (it occupies the middle), so pass empty list.
+  let left_els = render_bar(left_segs, False, left_anchor_px, False, right_segs)
+  let right_els =
+    render_bar(right_segs, True, right_anchor_px, False, left_segs)
+  let center_els = render_bar(center_segs, False, 0, True, [])
 
   html.div(
     [attribute.class("relative flex-1 min-h-0 overflow-hidden")],
