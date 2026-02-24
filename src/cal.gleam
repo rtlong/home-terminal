@@ -423,7 +423,10 @@ pub fn view_gantt(
                       True,
                       e.free,
                       e.summary,
-                      format_time(s, local_offset) <> " →",
+                      case is_quarter_hour(st.minutes) {
+                        True -> ""
+                        False -> format_time(s, local_offset) <> " →"
+                      },
                     )
                   })
                 #(list.append(bars_acc, new_bars), allday_acc)
@@ -447,7 +450,10 @@ pub fn view_gantt(
                       True,
                       e.free,
                       e.summary,
-                      "ends " <> format_time(en, local_offset),
+                      case is_quarter_hour(et.minutes) {
+                        True -> ""
+                        False -> "ends " <> format_time(en, local_offset)
+                      },
                     )
                   })
                 #(list.append(bars_acc, new_bars), allday_acc)
@@ -463,10 +469,15 @@ pub fn view_gantt(
                   int.min(et.hours * 60 + et.minutes, window.end_min)
                   - window.start_min
                 let width_min = int.max(right_min - left_min, 1)
-                let time_str =
-                  format_time(s, local_offset)
-                  <> "–"
-                  <> format_time(en, local_offset)
+                let time_str = case
+                  is_quarter_hour(st.minutes) && is_quarter_hour(et.minutes)
+                {
+                  True -> ""
+                  False ->
+                    format_time(s, local_offset)
+                    <> "–"
+                    <> format_time(en, local_offset)
+                }
                 let new_bars =
                   list.map(bars_for_event(e), fn(pair) {
                     let #(bar, color) = pair
@@ -776,9 +787,7 @@ pub fn view_gantt(
             _ -> [
               html.span(
                 [
-                  attribute.class(
-                    "shrink-0 max-w-full truncate font-medium leading-none",
-                  ),
+                  attribute.class("font-medium leading-tight"),
                   attribute.style("font-size", "9px"),
                   attribute.style("padding-left", "3px"),
                 ],
@@ -790,9 +799,7 @@ pub fn view_gantt(
                 t, True ->
                   html.span(
                     [
-                      attribute.class(
-                        "shrink truncate min-w-0 leading-none opacity-70",
-                      ),
+                      attribute.class("leading-none opacity-70"),
                       attribute.style("font-size", "8px"),
                     ],
                     [html.text(" " <> t)],
@@ -804,7 +811,7 @@ pub fn view_gantt(
             list.flatten([
               [
                 attribute.class(
-                  "overflow-hidden flex items-center gap-0.5 pointer-events-none select-none rounded-sm",
+                  "overflow-hidden flex flex-wrap items-start content-center gap-x-0.5 pointer-events-none select-none rounded-sm",
                 ),
                 attribute.style("flex", int.to_string(flex_val) <> " 0 0"),
                 attribute.style("min-width", "0"),
@@ -933,7 +940,10 @@ pub fn view_gantt(
           attribute.style("display", "grid"),
           attribute.style("grid-template-columns", grid_cols),
           attribute.style("grid-auto-flow", "dense"),
-          attribute.style("grid-auto-rows", int.to_string(bar_px) <> "px"),
+          attribute.style(
+            "grid-auto-rows",
+            "minmax(" <> int.to_string(bar_px) <> "px, auto)",
+          ),
           attribute.style("border-bottom", "1px solid oklch(0 0 0 / 8%)"),
         ],
         list.map(groups, render_group),
@@ -1306,6 +1316,11 @@ fn format_time(ts: Timestamp, local_offset: duration.Duration) -> String {
   <> ":"
   <> string.pad_start(string.inspect(m), 2, "0")
   <> period
+}
+
+/// True when a minute value falls on a quarter-hour boundary (0, 15, 30, 45).
+fn is_quarter_hour(m: Int) -> Bool {
+  m % 15 == 0
 }
 
 fn format_hour(h: Int) -> String {
