@@ -1080,12 +1080,13 @@ fn view_timeline(
     let sorted_segs =
       list.sort(segs, fn(a, b) { int.compare(a.top_min, b.top_min) })
     // Reserve space for each label so subsequent labels don't collide.
-    // For event strips, the strip itself is dur_min tall — the label can occupy
-    // that full height without overlapping the next strip's label.
-    // For travel strips (thick=False), use dur_min too (typically 5–25 min).
-    // This is more accurate than a fixed line-count estimate because long event
-    // summaries can wrap to 3–4 lines, which a fixed estimate undershoots.
-    let label_height_min = fn(seg: BarSegment) -> Int { seg.dur_min }
+    // Use seg.dur_min as the reservation so back-to-back events don't crowd each
+    // other, but cap at 30min so all-day/spanning events (dur_min can be 800+)
+    // don't push all subsequent labels off screen.
+    // Floor at 12min so very short travel blocks still leave one line of breathing room.
+    let label_height_min = fn(seg: BarSegment) -> Int {
+      int.max(int.min(seg.dur_min, 30), 12)
+    }
     let nudged =
       list.fold(sorted_segs, #([], -999), fn(acc, seg) {
         let #(placed, last_bottom) = acc
