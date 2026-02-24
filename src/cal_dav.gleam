@@ -45,7 +45,12 @@ pub fn fetch_events(
 ) -> Result(#(List(String), List(Event)), String) {
   use calendar_infos <- result.try(discover_calendars(config))
   let now = timestamp.system_time()
-  let seven_days_later = timestamp.add(now, gleam_time_duration_days(7))
+  // Fetch from 2 days in the past so that:
+  //   - events that started before "now" but are still ongoing are included
+  //   - multi-day spanning events (e.g. cross-midnight) appear on all their days
+  //   - events earlier today that have already ended are still shown
+  let fetch_start = timestamp.add(now, gleam_time_duration_days(-2))
+  let fetch_end = timestamp.add(now, gleam_time_duration_days(7))
 
   let calendar_names = list.map(calendar_infos, fn(info) { info.1 })
 
@@ -53,7 +58,13 @@ pub fn fetch_events(
     list.flat_map(calendar_infos, fn(info) {
       let #(href, display_name) = info
       case
-        fetch_calendar_events(config, href, display_name, now, seven_days_later)
+        fetch_calendar_events(
+          config,
+          href,
+          display_name,
+          fetch_start,
+          fetch_end,
+        )
       {
         Ok(evts) -> evts
         Error(_) -> []
