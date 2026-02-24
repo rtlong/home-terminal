@@ -572,7 +572,7 @@ fn view_all_day_strip(
           let #(text_align, border_class, border_color_prop) = case bar {
             BarLeft -> #("left", "border-l-2", "border-left-color")
             BarRight -> #("right", "border-r-2", "border-right-color")
-            BarCenter -> #("left", "", "")
+            BarCenter -> #("center", "", "")
           }
           Ok(
             html.div(
