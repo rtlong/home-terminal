@@ -1033,14 +1033,18 @@ fn view_timeline(
       })
 
     // Labels float past the group into the center area.
-    let min_gap_min = 10
+    // Label deconfliction: next label must start no earlier than the previous
+    // segment's end (top + dur) plus a small gap. This prevents a long label
+    // from visually running into the next segment's label even if the text wraps.
+    let label_gap_min = 3
     let sorted_segs =
       list.sort(segs, fn(a, b) { int.compare(a.top_min, b.top_min) })
     let nudged =
       list.fold(sorted_segs, #([], -999), fn(acc, seg) {
-        let #(placed, last_top) = acc
-        let actual = int.max(seg.top_min, last_top + min_gap_min)
-        #(list.append(placed, [#(actual, seg)]), actual)
+        let #(placed, last_bottom) = acc
+        let actual = int.max(seg.top_min, last_bottom + label_gap_min)
+        let bottom = actual + seg.dur_min
+        #(list.append(placed, [#(actual, seg)]), bottom)
       })
       |> fn(p) { p.0 }
 
