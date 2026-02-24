@@ -569,10 +569,10 @@ fn view_all_day_strip(
             [#(b, _), ..] -> b
             [] -> BarCenter
           }
-          let text_align = case bar {
-            BarLeft -> "left"
-            BarRight -> "right"
-            BarCenter -> "left"
+          let #(text_align, border_class, border_color_prop) = case bar {
+            BarLeft -> #("left", "border-l-2", "border-left-color")
+            BarRight -> #("right", "border-r-2", "border-right-color")
+            BarCenter -> #("left", "border-l-2", "border-left-color")
           }
           Ok(
             html.div(
@@ -586,9 +586,10 @@ fn view_all_day_strip(
                 html.div(
                   [
                     attribute.class(
-                      "flex-1 text-xs leading-none truncate border-l-2 p-2 rounded-lg",
+                      "flex-1 text-xs leading-none truncate p-2 rounded-lg "
+                      <> border_class,
                     ),
-                    attribute.style("border-left-color", color),
+                    attribute.style(border_color_prop, color),
                     attribute.style("background-color", bgcolor(color)),
                     attribute.style("text-align", text_align),
                   ],
