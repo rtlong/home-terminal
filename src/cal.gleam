@@ -1080,12 +1080,15 @@ fn view_timeline(
     let sorted_segs =
       list.sort(segs, fn(a, b) { int.compare(a.top_min, b.top_min) })
     // Reserve space for each label so subsequent labels don't collide.
-    // Use seg.dur_min as the reservation so back-to-back events don't crowd each
-    // other, but cap at 30min so all-day/spanning events (dur_min can be 800+)
-    // don't push all subsequent labels off screen.
-    // Floor at 12min so very short travel blocks still leave one line of breathing room.
+    // Use seg.dur_min as the base reservation (so back-to-back events push each
+    // other's labels apart naturally), but clamp the range:
+    //   - floor 12min: ~1 line at 9px font; ensures even tiny travel segs leave room
+    //   - cap 60min: ~5 lines; prevents spanning events (dur_min up to 840)
+    //     from pushing all subsequent labels off the bottom of the screen.
+    // 60min is chosen because the longest realistic label (4-line wrapping summary
+    // + time line) renders to ~56px ≈ 59min at the typical window scale.
     let label_height_min = fn(seg: BarSegment) -> Int {
-      int.max(int.min(seg.dur_min, 30), 12)
+      int.max(int.min(seg.dur_min, 60), 12)
     }
     let nudged =
       list.fold(sorted_segs, #([], -999), fn(acc, seg) {
