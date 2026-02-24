@@ -317,7 +317,7 @@ pub fn view_gantt(
                 attribute.style("grid-column", int.to_string(min + 1)),
                 attribute.style("grid-row", "1 / 3"),
                 attribute.style("align-self", "stretch"),
-                attribute.style("border-left", "2px solid " <> hline_color),
+                attribute.style("border-left", "1px solid " <> hline_color),
               ],
               [],
             ),
@@ -806,6 +806,7 @@ pub fn view_gantt(
                   "overflow-hidden flex items-center gap-0.5 px-1 pointer-events-none select-none rounded-sm",
                 ),
                 attribute.style("flex", int.to_string(flex_val) <> " 0 0"),
+                attribute.style("box-sizing", "border-box"),
                 attribute.style("min-width", "0"),
                 attribute.style("background-color", color),
                 attribute.style("opacity", "0.85"),
@@ -992,7 +993,7 @@ pub fn view_gantt(
           attribute.class(
             "shrink-0 flex flex-col gap-0.5 pt-0.5 pr-1 select-none overflow-hidden",
           ),
-          attribute.style("width", "7rem"),
+          attribute.style("width", "10rem"),
         ],
         list.flatten([[date_label], all_day_chips]),
       )
