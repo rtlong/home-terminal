@@ -1137,8 +1137,14 @@ fn view_timeline(
             [
               html.div(
                 [
-                  attribute.class("absolute select-none pointer-events-none"),
-                  attribute.styles([#("top", pct(label_top)), ..label_attrs]),
+                  attribute.class(
+                    "absolute select-none pointer-events-none overflow-hidden",
+                  ),
+                  attribute.styles([
+                    #("top", pct(label_top)),
+                    #("max-height", fpct(int_to_float(label_height_min(seg)))),
+                    ..label_attrs
+                  ]),
                 ],
                 [
                   html.p(
