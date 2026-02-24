@@ -17,8 +17,11 @@ import envoy
 import gleam/dict
 import gleam/erlang/process.{type Subject}
 import gleam/list
+import gleam/order
 import gleam/otp/actor
 import gleam/string
+import gleam/time/calendar
+import gleam/time/timestamp
 import log
 import state
 import travel
@@ -31,17 +34,16 @@ const poll_interval_ms = 300_000
 // TYPES -----------------------------------------------------------------------
 
 /// The calendar payload pushed to registered clients on every update.
-/// Carries the event list result, the full list of discovered calendar names
-/// (even those with zero events in the window), the display config, the
-/// Unix timestamp of the last successful CalDAV fetch (0 = not yet fetched),
-/// and a travel-info cache keyed by location string.
 pub type CalendarData {
   CalendarData(
     events: Result(List(Event), String),
     calendar_names: List(String),
     cal_config: state.Config,
     fetched_at: Int,
+    /// Home→location info cache, keyed by location string.
     travel_cache: dict.Dict(String, cal.TravelInfo),
+    /// Point-to-point leg durations in seconds, keyed by leg_cache_key/2.
+    leg_cache: cal.LegCache,
   )
 }
 
@@ -74,8 +76,10 @@ type State {
     calendar_names: List(String),
     cal_config: state.Config,
     fetched_at: Int,
-    /// Travel-time cache keyed by location string, persists across fetches.
+    /// Home→location info cache keyed by location string.
     travel_cache: dict.Dict(String, cal.TravelInfo),
+    /// Point-to-point leg durations in seconds, keyed by leg_cache_key.
+    leg_cache: cal.LegCache,
   )
 }
 
@@ -120,6 +124,7 @@ pub fn start(
           cal_config: cal_config,
           fetched_at: 0,
           travel_cache: dict.new(),
+          leg_cache: dict.new(),
         )
       actor.initialised(actor_state) |> actor.returning(self_subject) |> Ok
     })
@@ -186,6 +191,7 @@ fn broadcast(state: State) -> Nil {
       cal_config: state.cal_config,
       fetched_at: state.fetched_at,
       travel_cache: state.travel_cache,
+      leg_cache: state.leg_cache,
     )
   list.each(state.clients, fn(c) { c.callback(data) })
 }
@@ -200,6 +206,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
         cal_config: state.cal_config,
         fetched_at: state.fetched_at,
         travel_cache: state.travel_cache,
+        leg_cache: state.leg_cache,
       ))
       actor.continue(
         State(..state, clients: [Client(id:, callback:), ..state.clients]),
@@ -243,13 +250,12 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
           )
           state.write_cache(state.data_dir, events)
 
-          // Resolve travel info for new locations (skip empty + already cached).
-          let new_travel_cache = case
+          let #(new_travel_cache, new_leg_cache) = case
             envoy.get("GOOGLE_MAPS_API_KEY"),
             state.cal_config.home_address
           {
             Ok(api_key), home_address if home_address != "" -> {
-              // Collect unique non-empty locations not yet in the cache.
+              // ── Phase A: home→loc for each new unique location ──────────────
               let new_locations =
                 events
                 |> list.filter_map(fn(e) {
@@ -264,31 +270,88 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
                 })
                 |> list.unique
 
-              // Fetch travel info for each new location and merge into cache.
-              list.fold(new_locations, state.travel_cache, fn(cache, loc) {
-                case travel.get_travel_info(home_address, loc, api_key) {
-                  Ok(result) -> {
-                    let info =
-                      cal.TravelInfo(
-                        city: result.city,
-                        distance_text: result.distance_text,
-                        duration_text: result.duration_text,
+              let updated_travel_cache =
+                list.fold(new_locations, state.travel_cache, fn(cache, loc) {
+                  case travel.get_travel_info(home_address, loc, api_key) {
+                    Ok(r) ->
+                      dict.insert(
+                        cache,
+                        loc,
+                        cal.TravelInfo(
+                          city: r.city,
+                          distance_text: r.distance_text,
+                          duration_text: r.duration_text,
+                          duration_secs: r.duration_secs,
+                        ),
                       )
-                    dict.insert(cache, loc, info)
+                    Error(err) -> {
+                      log.println(
+                        "[cal_server] home→loc failed for \""
+                        <> loc
+                        <> "\": "
+                        <> err,
+                      )
+                      cache
+                    }
                   }
-                  Error(err) -> {
-                    log.println(
-                      "[cal_server] travel lookup failed for \""
-                      <> loc
-                      <> "\": "
-                      <> err,
-                    )
-                    cache
+                })
+
+              // ── Phase B: point-to-point legs for routing ─────────────────────
+              // We need: loc→home, and loc_a→loc_b for each consecutive
+              // located-event pair on the same day.
+              let all_locs =
+                events
+                |> list.filter_map(fn(e) {
+                  case e.location {
+                    "" -> Error(Nil)
+                    loc -> Ok(loc)
                   }
-                }
-              })
+                })
+                |> list.unique
+
+              // loc → home for each location.
+              let reverse_legs =
+                list.map(all_locs, fn(loc) { #(loc, home_address) })
+
+              // Consecutive pairs of located events within the same day.
+              let pair_legs = consecutive_located_pairs(events)
+
+              // Merge all required legs, deduplicate, skip already cached.
+              let all_required_legs =
+                list.append(reverse_legs, pair_legs)
+                |> list.unique
+                |> list.filter(fn(pair) {
+                  let #(o, d) = pair
+                  !dict.has_key(state.leg_cache, travel.leg_cache_key(o, d))
+                })
+
+              let updated_leg_cache =
+                list.fold(all_required_legs, state.leg_cache, fn(cache, pair) {
+                  let #(o, d) = pair
+                  case travel.get_leg(o, d, api_key) {
+                    Ok(leg) ->
+                      dict.insert(
+                        cache,
+                        travel.leg_cache_key(o, d),
+                        leg.duration_secs,
+                      )
+                    Error(err) -> {
+                      log.println(
+                        "[cal_server] leg failed \""
+                        <> o
+                        <> "\"→\""
+                        <> d
+                        <> "\": "
+                        <> err,
+                      )
+                      cache
+                    }
+                  }
+                })
+
+              #(updated_travel_cache, updated_leg_cache)
             }
-            _, _ -> state.travel_cache
+            _, _ -> #(state.travel_cache, state.leg_cache)
           }
 
           State(
@@ -297,6 +360,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
             calendar_names: cal_names,
             fetched_at: now_secs,
             travel_cache: new_travel_cache,
+            leg_cache: new_leg_cache,
           )
         }
         Error(err) -> {
@@ -333,6 +397,55 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
 
 fn ignore_timer(_timer: process.Timer) -> Nil {
   Nil
+}
+
+/// Return all consecutive (origin, destination) location pairs across
+/// same-day timed events, for point-to-point leg prefetching.
+/// Events without a location are skipped (they are "in-place").
+fn consecutive_located_pairs(events: List(Event)) -> List(#(String, String)) {
+  let local_offset = calendar.local_offset()
+  // Group located timed events by calendar date.
+  let located_timed =
+    list.filter(events, fn(e) {
+      case e.start {
+        cal.AtTime(_) -> e.location != ""
+        cal.AllDay(_) -> False
+      }
+    })
+
+  // Sort by start time.
+  let sorted =
+    list.sort(located_timed, fn(a, b) {
+      case a.start, b.start {
+        cal.AtTime(ta), cal.AtTime(tb) -> timestamp.compare(ta, tb)
+        _, _ -> order.Eq
+      }
+    })
+
+  // Group into days and take consecutive pairs within each day.
+  let by_day =
+    list.group(sorted, fn(e) {
+      case e.start {
+        cal.AtTime(ts) -> timestamp.to_calendar(ts, local_offset).0
+        cal.AllDay(d) -> d
+      }
+    })
+
+  dict.values(by_day)
+  |> list.flat_map(fn(day_events) {
+    case day_events {
+      [] | [_] -> []
+      _ ->
+        list.zip(
+          list.take(day_events, list.length(day_events) - 1),
+          list.drop(day_events, 1),
+        )
+        |> list.map(fn(pair) {
+          let #(a, b) = pair
+          #(a.location, b.location)
+        })
+    }
+  })
 }
 
 fn unix_seconds_now() -> Int {

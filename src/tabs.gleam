@@ -78,6 +78,7 @@ fn init(server: Server) -> #(Model, Effect(Msg)) {
         cal_config: state.empty_config(),
         fetched_at: 0,
         travel_cache: dict.new(),
+        leg_cache: dict.new(),
       ),
       registration: placeholder,
       server: server,

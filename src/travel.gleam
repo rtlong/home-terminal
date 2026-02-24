@@ -32,12 +32,32 @@ pub type TravelResult {
     distance_text: String,
     /// Estimated travel time with traffic, e.g. "12 mins".
     duration_text: String,
+    /// Estimated travel duration in seconds (from duration_in_traffic.value).
+    duration_secs: Int,
   )
+}
+
+/// A point-to-point travel leg used for routing decisions.
+pub type TravelLeg {
+  TravelLeg(
+    /// Duration with traffic in seconds.
+    duration_secs: Int,
+    /// Human-readable duration string, e.g. "12 mins".
+    duration_text: String,
+  )
+}
+
+// CACHE KEYS ------------------------------------------------------------------
+
+/// Canonical string key for a point-to-point leg in the leg cache.
+/// Uses "|||" as a separator unlikely to appear in addresses.
+pub fn leg_cache_key(origin: String, destination: String) -> String {
+  origin <> "|||" <> destination
 }
 
 // PUBLIC API ------------------------------------------------------------------
 
-/// Query the Distance Matrix API and return travel info.
+/// Query the Distance Matrix API and return travel info (home → destination).
 /// Returns Error(reason) if the API key is absent, the HTTP request fails,
 /// the response status is not "OK", or the response cannot be parsed.
 pub fn get_travel_info(
@@ -47,6 +67,17 @@ pub fn get_travel_info(
 ) -> Result(TravelResult, String) {
   use body <- result.try(send_request(home, destination, api_key))
   parse_response(body)
+}
+
+/// Query the Distance Matrix API for a point-to-point leg (any origin → destination).
+/// Returns only duration info, not city/distance (those aren't needed for routing).
+pub fn get_leg(
+  origin: String,
+  destination: String,
+  api_key: String,
+) -> Result(TravelLeg, String) {
+  use body <- result.try(send_request(origin, destination, api_key))
+  parse_leg_response(body)
 }
 
 // INTERNAL --------------------------------------------------------------------
@@ -106,15 +137,19 @@ fn parse_response(body: String) -> Result(TravelResult, String) {
           }
         })
 
-      // Decoder for one element object: { status, distance.text, duration_in_traffic.text }
+      // Decoder for one element: status, distance.text, duration_in_traffic.text+value
       let element_decoder = {
         use elem_status <- decode.field("status", decode.string)
         use dist <- decode.subfield(["distance", "text"], decode.string)
-        use dur <- decode.subfield(
+        use dur_text <- decode.subfield(
           ["duration_in_traffic", "text"],
           decode.string,
         )
-        decode.success(#(elem_status, dist, dur))
+        use dur_secs <- decode.subfield(
+          ["duration_in_traffic", "value"],
+          decode.int,
+        )
+        decode.success(#(elem_status, dist, dur_text, dur_secs))
       }
 
       // rows is List(row), row has elements: List(element)
@@ -123,7 +158,7 @@ fn parse_response(body: String) -> Result(TravelResult, String) {
         |> decode.then(fn(elems) {
           case elems {
             [first, ..] -> decode.success(first)
-            [] -> decode.failure(#("", "", ""), "non-empty elements")
+            [] -> decode.failure(#("", "", "", 0), "non-empty elements")
           }
         })
 
@@ -132,28 +167,78 @@ fn parse_response(body: String) -> Result(TravelResult, String) {
           "destination_addresses",
           first_string_in_list,
         )
-        use #(elem_status, dist, dur) <- decode.field(
+        use #(elem_status, dist, dur_text, dur_secs) <- decode.field(
           "rows",
           decode.list(row_decoder)
             |> decode.then(fn(rows) {
               case rows {
                 [first, ..] -> decode.success(first)
-                [] -> decode.failure(#("", "", ""), "non-empty rows")
+                [] -> decode.failure(#("", "", "", 0), "non-empty rows")
               }
             }),
         )
-        decode.success(#(dest_addr, elem_status, dist, dur))
+        decode.success(#(dest_addr, elem_status, dist, dur_text, dur_secs))
       }
       case json.parse(body, decoder) {
         Error(e) -> Error("parse error: " <> string.inspect(e))
-        Ok(#(dest_addr, elem_status, dist, dur)) ->
+        Ok(#(dest_addr, elem_status, dist, dur_text, dur_secs)) ->
           case elem_status {
             "OK" ->
               Ok(TravelResult(
                 city: city_from_address(dest_addr),
                 distance_text: dist,
-                duration_text: dur,
+                duration_text: dur_text,
+                duration_secs: dur_secs,
               ))
+            other -> Error("element status: " <> other)
+          }
+      }
+    }
+    other -> Error("API status: " <> other)
+  }
+}
+
+fn parse_leg_response(body: String) -> Result(TravelLeg, String) {
+  use top_status <- result.try(
+    json.parse(body, decode.at(["status"], decode.string))
+    |> result.map_error(fn(e) { "parse error: " <> string.inspect(e) }),
+  )
+  case top_status {
+    "OK" -> {
+      let element_decoder = {
+        use elem_status <- decode.field("status", decode.string)
+        use dur_text <- decode.subfield(
+          ["duration_in_traffic", "text"],
+          decode.string,
+        )
+        use dur_secs <- decode.subfield(
+          ["duration_in_traffic", "value"],
+          decode.int,
+        )
+        decode.success(#(elem_status, dur_text, dur_secs))
+      }
+      let row_decoder =
+        decode.at(["elements"], decode.list(element_decoder))
+        |> decode.then(fn(elems) {
+          case elems {
+            [first, ..] -> decode.success(first)
+            [] -> decode.failure(#("", "", 0), "non-empty elements")
+          }
+        })
+      let decoder =
+        decode.at(["rows"], decode.list(row_decoder))
+        |> decode.then(fn(rows) {
+          case rows {
+            [first, ..] -> decode.success(first)
+            [] -> decode.failure(#("", "", 0), "non-empty rows")
+          }
+        })
+      case json.parse(body, decoder) {
+        Error(e) -> Error("parse error: " <> string.inspect(e))
+        Ok(#(elem_status, dur_text, dur_secs)) ->
+          case elem_status {
+            "OK" ->
+              Ok(TravelLeg(duration_secs: dur_secs, duration_text: dur_text))
             other -> Error("element status: " <> other)
           }
       }

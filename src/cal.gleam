@@ -4,6 +4,7 @@ import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
 import gleam/order
+import gleam/result
 import gleam/string
 import gleam/time/calendar.{type Date, Date}
 import gleam/time/duration
@@ -33,12 +34,286 @@ pub type Event {
   )
 }
 
-/// Travel info resolved for an event's location.
+/// Travel info resolved for an event's location (home → location).
 /// city: short display name (e.g. "Boston")
 /// distance_text: human-readable distance from home (e.g. "2.3 mi")
 /// duration_text: travel time from home with traffic (e.g. "12 min")
+/// duration_secs: travel time in seconds (for routing math)
 pub type TravelInfo {
-  TravelInfo(city: String, distance_text: String, duration_text: String)
+  TravelInfo(
+    city: String,
+    distance_text: String,
+    duration_text: String,
+    duration_secs: Int,
+  )
+}
+
+/// Cache of point-to-point travel durations, keyed by "origin|||destination".
+/// Includes home→loc, loc→home, and loc_a→loc_b legs.
+pub type LegCache =
+  Dict(String, Int)
+
+/// A travel block to render between (or around) events on the timeline.
+pub type TravelBlock {
+  TravelBlock(
+    /// Start of the gap (end of prior event, or midnight for first block).
+    gap_start: Timestamp,
+    /// End of the gap (start of next event).
+    gap_end: Timestamp,
+    /// True = the person can make a home stop; False = direct A→B route.
+    via_home: Bool,
+    /// Chosen travel time in seconds.
+    travel_secs: Int,
+    /// Human-readable travel label, e.g. "8 min" or "22 min".
+    travel_text: String,
+    /// Free dwell time after travel, in seconds (gap - travel).
+    dwell_secs: Int,
+  )
+}
+
+// TRAVEL BLOCK COMPUTATION ----------------------------------------------------
+
+/// Slack added on top of via-home travel time before choosing home route (secs).
+const home_detour_slack_secs = 900
+
+/// Compute travel blocks for a sequence of timed events on a single day.
+///
+/// `events`        — timed events for this person on this day, sorted by start.
+/// `travel_cache`  — home→loc cache (keyed by location string).
+/// `leg_cache`     — point-to-point durations keyed by leg_cache_key/2.
+/// `home_key`      — the canonical home address string used as a cache key.
+/// `leg_key`       — fn(origin, dest) -> String cache key (from travel module).
+///
+/// Returns a list of TravelBlocks. Blocks are only generated where there is a
+/// known travel time on at least one side of the gap.
+pub fn compute_travel_blocks(
+  events: List(Event),
+  leg_cache: LegCache,
+  home_key: String,
+  leg_key: fn(String, String) -> String,
+) -> List(TravelBlock) {
+  // Keep only timed events with a known start/end.
+  let timed =
+    list.filter(events, fn(e) {
+      case e.start, e.end {
+        AtTime(_), AtTime(_) -> True
+        _, _ -> False
+      }
+    })
+
+  case timed {
+    [] -> []
+    _ -> {
+      // Helper: look up leg duration in seconds.
+      let get_leg = fn(origin: String, dest: String) -> Result(Int, Nil) {
+        dict.get(leg_cache, leg_key(origin, dest))
+      }
+
+      // Build a list of gaps to analyse. Each gap is:
+      //   #(gap_start_ts, gap_end_ts, origin_loc, dest_loc)
+      // where origin_loc / dest_loc are "" for "home" or locationless events.
+      //
+      // We generate:
+      //   home → first located event
+      //   located_event_end → next located event_start  (skipping locationless)
+      //   last located event → home
+      //
+      // "locationless" events are in-place: we do NOT travel to them, but we
+      // DO let time pass through them. For routing purposes they are transparent:
+      // travel home happens after the last located event before the locationless
+      // run, only if there's enough time before the next located event.
+
+      // Separate into located vs locationless for the sequencing.
+      // We work through the sorted event list and emit a gap wherever we have
+      // origin and destination locations.
+      let gaps = build_gaps(timed, home_key)
+
+      list.filter_map(gaps, fn(gap) {
+        let #(gap_start, gap_end, origin, dest) = gap
+        let gap_secs =
+          timestamp.difference(gap_end, gap_start)
+          |> duration.to_seconds
+          |> float_to_int_floor
+
+        // Try via-home route: origin→home + home→dest.
+        let via_home_secs = case origin == home_key, dest == home_key {
+          // Already at home: no outbound leg needed.
+          True, _ -> result.map(get_leg(home_key, dest), fn(d) { d })
+          // Returning home: no inbound leg needed.
+          _, True -> result.map(get_leg(origin, home_key), fn(o) { o })
+          // Neither endpoint is home.
+          False, False -> {
+            use o <- result.try(get_leg(origin, home_key))
+            use d <- result.try(get_leg(home_key, dest))
+            Ok(o + d)
+          }
+        }
+
+        // Try direct route: origin→dest.
+        let direct_secs = get_leg(origin, dest)
+
+        case via_home_secs, direct_secs {
+          // No travel info at all — skip this gap.
+          Error(_), Error(_) -> Error(Nil)
+
+          // Only direct route available.
+          Error(_), Ok(d) -> {
+            let dwell = int.max(gap_secs - d, 0)
+            Ok(TravelBlock(
+              gap_start:,
+              gap_end:,
+              via_home: False,
+              travel_secs: d,
+              travel_text: secs_to_min_text(d),
+              dwell_secs: dwell,
+            ))
+          }
+
+          // Only via-home available.
+          Ok(vh), Error(_) -> {
+            let dwell = int.max(gap_secs - vh, 0)
+            Ok(TravelBlock(
+              gap_start:,
+              gap_end:,
+              via_home: True,
+              travel_secs: vh,
+              travel_text: secs_to_min_text(vh),
+              dwell_secs: dwell,
+            ))
+          }
+
+          // Both available: choose home route if it fits with slack.
+          Ok(vh), Ok(d) -> {
+            let use_home = vh + home_detour_slack_secs <= gap_secs
+            let travel = case use_home {
+              True -> vh
+              False -> d
+            }
+            let dwell = int.max(gap_secs - travel, 0)
+            Ok(TravelBlock(
+              gap_start:,
+              gap_end:,
+              via_home: use_home,
+              travel_secs: travel,
+              travel_text: secs_to_min_text(travel),
+              dwell_secs: dwell,
+            ))
+          }
+        }
+      })
+    }
+  }
+}
+
+/// Build the list of #(gap_start, gap_end, origin_loc, dest_loc) tuples from
+/// a sorted list of timed events. Origin/dest are location strings; home_key
+/// is used for the first and last synthetic gap.
+fn build_gaps(
+  events: List(Event),
+  home_key: String,
+) -> List(#(Timestamp, Timestamp, String, String)) {
+  case events {
+    [] -> []
+    _ -> {
+      // Find the first and last event that have a location (for home bookends).
+      let located = list.filter(events, fn(e) { e.location != "" })
+      case located {
+        [] -> []
+        [first_loc, ..] -> {
+          let last_loc = list.fold(located, first_loc, fn(_, e) { e })
+
+          // home → first located event
+          let first_gap = case first_loc.start {
+            AtTime(ts) -> [
+              #(ts, ts, home_key, first_loc.location),
+            ]
+            AllDay(_) -> []
+          }
+
+          // last located event → home
+          let last_gap = case last_loc.end {
+            AtTime(ts) -> [
+              #(ts, ts, last_loc.location, home_key),
+            ]
+            AllDay(_) -> []
+          }
+
+          // Between consecutive events: walk through and emit gaps where
+          // the prior event had a location and the next event has a location,
+          // using event end→start as the gap timestamps.
+          // Locationless events are transparent (in-place), so we track the
+          // "current origin" as the last seen located event's location.
+          let between_gaps = build_between_gaps(events, located, home_key)
+
+          list.flatten([first_gap, between_gaps, last_gap])
+        }
+      }
+    }
+  }
+}
+
+/// Emit inter-event gaps. We iterate the full event list, tracking the
+/// "current origin location" = location of the last event that had one.
+/// When we encounter an event with a location, we emit a gap from
+/// (end of prior located event OR home) to (start of this event).
+fn build_between_gaps(
+  all_events: List(Event),
+  _located: List(Event),
+  home_key: String,
+) -> List(#(Timestamp, Timestamp, String, String)) {
+  // Walk events in order. prev_loc = location of last event with a location.
+  // prev_end = end timestamp of that event.
+  let #(gaps, _, _) =
+    list.fold(all_events, #([], home_key, option_none_ts()), fn(acc, e) {
+      let #(gaps, prev_loc, prev_end) = acc
+      case e.location, e.start, e.end {
+        loc, AtTime(s), AtTime(en) if loc != "" -> {
+          // This event has a location. Emit a gap from prev_end to s,
+          // but only if there was a prior located event (prev_end != epoch).
+          let new_gaps = case is_epoch(prev_end) {
+            True -> gaps
+            False -> [#(prev_end, s, prev_loc, loc), ..gaps]
+          }
+          #(new_gaps, loc, en)
+        }
+        _, AtTime(_), AtTime(en) -> {
+          // Locationless event: transparent, but advance prev_end so
+          // the next located event measures gap from after this one.
+          // prev_loc stays the same (still "at" wherever we were before).
+          let new_end = case is_epoch(prev_end) {
+            True -> prev_end
+            False -> en
+          }
+          #(gaps, prev_loc, new_end)
+        }
+        _, _, _ -> acc
+      }
+    })
+  list.reverse(gaps)
+}
+
+fn option_none_ts() -> Timestamp {
+  timestamp.from_unix_seconds(0)
+}
+
+fn is_epoch(ts: Timestamp) -> Bool {
+  timestamp.to_unix_seconds_and_nanoseconds(ts).0 == 0
+}
+
+fn float_to_int_floor(f: Float) -> Int {
+  case f >=. 0.0 {
+    True -> float_truncate(f)
+    False -> float_truncate(f) - 1
+  }
+}
+
+@external(erlang, "erlang", "trunc")
+fn float_truncate(f: Float) -> Int
+
+/// Format seconds as "N min", rounding to nearest minute.
+pub fn secs_to_min_text(secs: Int) -> String {
+  let mins = { secs + 30 } / 60
+  int.to_string(mins) <> " min"
 }
 
 // LAYOUT CONSTANTS ------------------------------------------------------------
