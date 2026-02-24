@@ -1040,7 +1040,7 @@ pub fn view_gantt(
         let set_pct = sun_pct(clamp_pct(st.sunset))
         let dusk_pct = sun_pct(clamp_pct(st.civil_dusk))
         // Colours
-        let night_color = "oklch(0.22 0.07 255 / 65%)"
+        let night_color = "oklch(0.20 0.14 265 / 80%)"
         let dawn_color = "oklch(0.45 0.08 40 / 40%)"
         let glow_color = "oklch(0.70 0.12 55 / 25%)"
         let day_color = "oklch(1 0 0 / 0%)"
