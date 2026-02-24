@@ -280,8 +280,8 @@ pub fn view_gantt(
                 html.div(
                   [
                     attribute.class("pointer-events-none"),
-                    attribute.style("height", "100%"),
                     attribute.style("grid-column", int.to_string(min + 1)),
+                    attribute.style("grid-row", "1"),
                     attribute.style("border-left", "1px solid " <> qline_color),
                   ],
                   [],
@@ -299,8 +299,8 @@ pub fn view_gantt(
               html.div(
                 [
                   attribute.class("pointer-events-none"),
-                  attribute.style("height", "100%"),
                   attribute.style("grid-column", int.to_string(min + 1)),
+                  attribute.style("grid-row", "1"),
                   attribute.style("border-left", "2px solid " <> hline_color),
                 ],
                 [],
@@ -601,35 +601,71 @@ pub fn view_gantt(
       let right_min = left_min + clamped_width
       let show_time = clamped_width >= 35
       case is_free {
-        // Free events: number-line style — a thin horizontal axis with arrowhead
-        // caps at each end and the label floating above the line in the center.
+        // Free events: number-line style — a thin horizontal axis with caps
+        // at each end and the label floating above the line.
+        // Terminating end (event starts/ends within window): vertical bar cap.
+        // Continuing end (event runs past window boundary): arrow cap.
         True -> {
-          // Left-pointing arrowhead (open end of span — start of free time)
-          let arrow_left =
+          // Continuing-left: arrow pointing left (event runs before window start)
+          let continuing_left =
             html.div(
               [
                 attribute.style("width", "0"),
                 attribute.style("height", "0"),
-                attribute.style("border-top", "3px solid transparent"),
-                attribute.style("border-bottom", "3px solid transparent"),
+                attribute.style("border-top", "4px solid transparent"),
+                attribute.style("border-bottom", "4px solid transparent"),
                 attribute.style("border-right", "5px solid " <> color),
                 attribute.style("flex-shrink", "0"),
+                attribute.style("opacity", "0.7"),
               ],
               [],
             )
-          // Right-pointing arrowhead (open end of span — end of free time)
-          let arrow_right =
+          // Terminating-left: vertical bar (event starts here)
+          let terminating_left =
+            html.div(
+              [
+                attribute.style("width", "2px"),
+                attribute.style("height", "8px"),
+                attribute.style("background-color", color),
+                attribute.style("flex-shrink", "0"),
+                attribute.style("opacity", "0.7"),
+              ],
+              [],
+            )
+          // Continuing-right: arrow pointing right (event runs past window end)
+          let continuing_right =
             html.div(
               [
                 attribute.style("width", "0"),
                 attribute.style("height", "0"),
-                attribute.style("border-top", "3px solid transparent"),
-                attribute.style("border-bottom", "3px solid transparent"),
+                attribute.style("border-top", "4px solid transparent"),
+                attribute.style("border-bottom", "4px solid transparent"),
                 attribute.style("border-left", "5px solid " <> color),
                 attribute.style("flex-shrink", "0"),
+                attribute.style("opacity", "0.7"),
               ],
               [],
             )
+          // Terminating-right: vertical bar (event ends here)
+          let terminating_right =
+            html.div(
+              [
+                attribute.style("width", "2px"),
+                attribute.style("height", "8px"),
+                attribute.style("background-color", color),
+                attribute.style("flex-shrink", "0"),
+                attribute.style("opacity", "0.7"),
+              ],
+              [],
+            )
+          let left_cap = case left_min <= 0 {
+            True -> continuing_left
+            False -> terminating_left
+          }
+          let right_cap = case right_min >= total_min {
+            True -> continuing_right
+            False -> terminating_right
+          }
           // Label text (name + optional time), sitting above the axis line
           let label_el = case label {
             "" -> element.none()
@@ -681,7 +717,7 @@ pub fn view_gantt(
                 ],
                 [label_el],
               ),
-              // Axis row: left arrow + line + right arrow
+              // Axis row: left cap + line + right cap
               html.div(
                 [
                   attribute.style("display", "flex"),
@@ -689,7 +725,7 @@ pub fn view_gantt(
                   attribute.style("min-width", "0"),
                 ],
                 [
-                  arrow_left,
+                  left_cap,
                   html.div(
                     [
                       attribute.style("flex", "1 0 0"),
@@ -699,7 +735,7 @@ pub fn view_gantt(
                     ],
                     [],
                   ),
-                  arrow_right,
+                  right_cap,
                 ],
               ),
             ],
@@ -839,7 +875,9 @@ pub fn view_gantt(
             ])
           html.div(
             [
-              attribute.class("flex flex-row pointer-events-none select-none"),
+              attribute.class(
+                "flex flex-row pointer-events-none select-none rounded-sm",
+              ),
               attribute.style("grid-column", col_start <> " / " <> col_end),
               attribute.style("border", "1.5px solid " <> color),
               attribute.style("min-width", "0"),
