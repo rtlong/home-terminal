@@ -238,12 +238,12 @@ pub fn view_gantt(
   }
   let _xfpct = fn(f: Float) -> String { float_pct(f /. total_f *. 100.0) }
 
-  // Person names for sub-row labels.
-  let person0 = case people {
+  // Person names for sub-row labels (unused now that labels are hidden).
+  let _person0 = case people {
     [p, ..] -> p
     [] -> ""
   }
-  let person1 = case people {
+  let _person1 = case people {
     [_, p, ..] -> p
     _ -> ""
   }
@@ -265,47 +265,61 @@ pub fn view_gantt(
   let qline_color = "oklch(0 0 0 / 8%)"
   let hline_color = "oklch(0 0 0 / 35%)"
 
-  // Quarter-hour lines (15, 30, 45 min offsets within each hour) — faint.
-  let quarter_lines =
-    list.flat_map(int_range(first_hour, last_hour - 1), fn(h) {
-      list.filter_map([15, 30, 45], fn(q) {
-        let min = h * 60 + q - window.start_min
+  // Gridlines — placed in a full-height overlay grid that shares the same
+  // column template as event sub-rows, so lines align exactly with bar edges.
+  // Quarter lines: faint, 1px. Hour lines: stronger, 2px.
+  let grid_line_items =
+    list.flatten([
+      list.flat_map(int_range(first_hour, last_hour - 1), fn(h) {
+        list.filter_map([15, 30, 45], fn(q) {
+          let min = h * 60 + q - window.start_min
+          case min > 0 && min < total_min {
+            False -> Error(Nil)
+            True ->
+              Ok(
+                html.div(
+                  [
+                    attribute.class("pointer-events-none h-full"),
+                    attribute.style("grid-column", int.to_string(min + 1)),
+                    attribute.style("border-left", "1px solid " <> qline_color),
+                  ],
+                  [],
+                ),
+              )
+          }
+        })
+      }),
+      list.filter_map(int_range(first_hour, last_hour), fn(h) {
+        let min = h * 60 - window.start_min
         case min > 0 && min < total_min {
           False -> Error(Nil)
           True ->
             Ok(
               html.div(
                 [
-                  attribute.class("absolute top-0 bottom-0 pointer-events-none"),
-                  attribute.style("left", xpct(min)),
-                  attribute.style("border-left", "1px solid " <> qline_color),
+                  attribute.class("pointer-events-none h-full"),
+                  attribute.style("grid-column", int.to_string(min + 1)),
+                  attribute.style("border-left", "2px solid " <> hline_color),
                 ],
                 [],
               ),
             )
         }
-      })
-    })
-  // Hour lines — clearly stronger than quarter lines.
-  let hour_lines =
-    list.filter_map(int_range(first_hour, last_hour), fn(h) {
-      let min = h * 60 - window.start_min
-      case min > 0 && min < total_min {
-        False -> Error(Nil)
-        True ->
-          Ok(
-            html.div(
-              [
-                attribute.class("absolute top-0 bottom-0 pointer-events-none"),
-                attribute.style("left", xpct(min)),
-                attribute.style("border-left", "2px solid " <> hline_color),
-              ],
-              [],
-            ),
-          )
-      }
-    })
-  let all_grid_lines = list.append(quarter_lines, hour_lines)
+      }),
+    ])
+  // The gridline overlay: a full-height absolute grid that sits behind events.
+  let grid_cols_str =
+    "repeat(" <> int.to_string(total_min) <> ", minmax(0, 1fr))"
+  let grid_line_overlay =
+    html.div(
+      [
+        attribute.class("absolute inset-0 pointer-events-none"),
+        attribute.style("display", "grid"),
+        attribute.style("grid-template-columns", grid_cols_str),
+        attribute.style("grid-template-rows", "1fr"),
+      ],
+      grid_line_items,
+    )
 
   // A type alias for gantt bar tuples: (bar, left_min, width_min, color, thick, label, label2)
   // We use a record-less 7-tuple throughout.
@@ -489,11 +503,16 @@ pub fn view_gantt(
     // Fixed pixel height for every bar lane.
     let bar_px = 20
 
-    // Hour tick labels in a dedicated thin header strip at the top of time_grid.
+    // Hour tick labels — placed in the same grid as event bars so they align
+    // exactly with gridlines. Labels sit to the right of the hour boundary
+    // (translateX(2px)) rather than centred on it, avoiding overlap with the
+    // gridline itself and making them readable.
     let hour_tick_strip =
       html.div(
         [
           attribute.class("relative shrink-0 select-none pointer-events-none"),
+          attribute.style("display", "grid"),
+          attribute.style("grid-template-columns", grid_cols_str),
           attribute.style("height", int.to_string(tick_header_px) <> "px"),
         ],
         list.filter_map(int_range(first_hour, last_hour), fn(h) {
@@ -504,18 +523,12 @@ pub fn view_gantt(
               Ok(
                 html.span(
                   [
-                    attribute.class(
-                      "absolute top-0 text-text-muted leading-none z-30",
-                    ),
-                    attribute.style("left", xpct(min)),
+                    attribute.class("text-text-muted leading-none self-end"),
+                    attribute.style("grid-column", int.to_string(min + 1)),
                     attribute.style("font-size", "8px"),
-                    attribute.style("line-height", "1"),
-                    attribute.style("padding", "1px 1px 0"),
-                    attribute.style("transform", case min {
-                      0 -> "translateX(1px)"
-                      _ if min >= total_min -> "translateX(calc(-100% - 1px))"
-                      _ -> "translateX(-50%)"
-                    }),
+                    attribute.style("padding-left", "2px"),
+                    attribute.style("padding-bottom", "1px"),
+                    attribute.style("white-space", "nowrap"),
                   ],
                   [html.text(format_hour(h))],
                 ),
@@ -524,8 +537,8 @@ pub fn view_gantt(
         }),
       )
 
-    // CSS grid column template: one column per minute in the window.
-    let grid_cols = "repeat(" <> int.to_string(total_min) <> ", minmax(0, 1fr))"
+    // CSS grid column template — reuse the one built in the outer scope.
+    let grid_cols = grid_cols_str
 
     // Group bars by their event: each event bar plus any DriveTo/DriveFrom
     // travel bars that touch it forms a single grid item spanning the full
@@ -575,27 +588,18 @@ pub fn view_gantt(
       list.append(groups, lone_groups)
     }
 
-    // Render a single bar segment within a group flex row.
-    // Width is driven by flex-grow proportional to the bar's minute span.
-    let render_bar_segment = fn(
+    // Render one event bar (no travel) inside a group.
+    let render_event_bar = fn(
       bar: #(BarPos, Int, Int, String, Bool, Bool, String, String),
+      flex_val: Int,
     ) -> Element(msg) {
-      let #(_, left_min, width_min, color, thick, is_free, label, label2) = bar
+      let #(_, left_min, width_min, color, _thick, is_free, label, label2) = bar
       let clamped_width = int.min(width_min, total_min - left_min)
-      let pad_px = case thick {
-        True -> 2
-        False -> 5
-      }
-      let opacity = case thick {
-        True -> "0.85"
-        False -> "0.55"
-      }
-      let too_narrow = !thick && clamped_width < 20
-      let show_time = thick && clamped_width >= 35
-      let label_content = case label, too_narrow {
-        _, True -> []
-        "", False -> []
-        _, False -> [
+      let right_min = left_min + clamped_width
+      let show_time = clamped_width >= 35
+      let label_content = case label {
+        "" -> []
+        _ -> [
           html.span(
             [
               attribute.class(
@@ -621,7 +625,6 @@ pub fn view_gantt(
           },
         ]
       }
-      let right_min = left_min + clamped_width
       let is_start_day_xm = !is_free && left_min > 0 && right_min >= total_min
       let is_end_day_xm =
         !is_free
@@ -655,12 +658,12 @@ pub fn view_gantt(
             attribute.class(
               "overflow-hidden flex items-center gap-0.5 px-1 pointer-events-none select-none rounded-sm",
             ),
-            attribute.style("flex", int.to_string(clamped_width) <> " 0 0"),
+            attribute.style("flex", int.to_string(flex_val) <> " 0 0"),
             attribute.style("min-width", "0"),
-            attribute.style("margin-top", int.to_string(pad_px) <> "px"),
-            attribute.style("margin-bottom", int.to_string(pad_px) <> "px"),
+            attribute.style("margin-top", "2px"),
+            attribute.style("margin-bottom", "2px"),
             attribute.style("background-color", color),
-            attribute.style("opacity", opacity),
+            attribute.style("opacity", "0.85"),
             attribute.style("color", "white"),
           ],
           extra_style,
@@ -669,10 +672,103 @@ pub fn view_gantt(
       )
     }
 
+    // Render one group: event bar optionally wrapped in a travel-time border.
+    // When travel exists, the outer div shows a full-height border in the
+    // calendar color spanning the whole travel extent. The event bar sits
+    // inside at its actual proportional position with transparent spacers
+    // filling the travel time on each side.
+    let render_group = fn(
+      g: #(
+        Int,
+        Int,
+        List(#(BarPos, Int, Int, String, Bool, Bool, String, String)),
+      ),
+    ) -> Element(msg) {
+      let #(g_left, g_right, members) = g
+      let col_start = int.to_string(g_left + 1)
+      let col_end = int.to_string(g_right + 1)
+      let is_thick = fn(
+        b: #(BarPos, Int, Int, String, Bool, Bool, String, String),
+      ) {
+        b.4
+      }
+      let ev_bars = list.filter(members, is_thick)
+      let travel_bars = list.filter(members, fn(b) { !is_thick(b) })
+      case travel_bars, ev_bars {
+        // Group has travel: render a border envelope with the event inside.
+        [_, ..], [ev, ..] -> {
+          let ev_left = ev.1
+          let ev_right = ev.1 + int.min(ev.2, total_min - ev.1)
+          let color = ev.3
+          let drive_to_w = ev_left - g_left
+          let ev_w = ev_right - ev_left
+          let drive_from_w = g_right - ev_right
+          // Transparent spacers for travel portions; solid bar for event.
+          let inner_els =
+            list.flatten([
+              case drive_to_w > 0 {
+                False -> []
+                True -> [
+                  html.div(
+                    [
+                      attribute.style(
+                        "flex",
+                        int.to_string(drive_to_w) <> " 0 0",
+                      ),
+                    ],
+                    [],
+                  ),
+                ]
+              },
+              [render_event_bar(ev, ev_w)],
+              case drive_from_w > 0 {
+                False -> []
+                True -> [
+                  html.div(
+                    [
+                      attribute.style(
+                        "flex",
+                        int.to_string(drive_from_w) <> " 0 0",
+                      ),
+                    ],
+                    [],
+                  ),
+                ]
+              },
+            ])
+          html.div(
+            [
+              attribute.class(
+                "flex flex-row pointer-events-none select-none rounded-sm",
+              ),
+              attribute.style("grid-column", col_start <> " / " <> col_end),
+              attribute.style("border", "1.5px solid " <> color),
+              attribute.style("margin-top", "1px"),
+              attribute.style("margin-bottom", "1px"),
+              attribute.style("min-width", "0"),
+              attribute.style("overflow", "hidden"),
+            ],
+            inner_els,
+          )
+        }
+        // No travel: just the event bar directly.
+        _, [ev, ..] -> {
+          let ev_w = int.min(ev.2, total_min - ev.1)
+          html.div(
+            [
+              attribute.class("flex flex-row"),
+              attribute.style("grid-column", col_start <> " / " <> col_end),
+              attribute.style("min-width", "0"),
+            ],
+            [render_event_bar(ev, ev_w)],
+          )
+        }
+        // Lone travel bar without an event (shouldn't happen but handle gracefully).
+        _, _ -> element.none()
+      }
+    }
+
     // Render one sub-row using CSS grid with auto-placement.
-    // Each group is one grid item (grid-column = full group extent).
-    // Within each group, sub-bars are a flex row sized proportionally.
-    // grid-auto-flow: dense packs groups into rows without overlap.
     let view_sub_row = fn(pos: BarPos) -> Element(msg) {
       let bars =
         list.filter(
@@ -682,20 +778,6 @@ pub fn view_gantt(
           },
         )
       let groups = make_groups(bars)
-      let group_els =
-        list.map(groups, fn(g) {
-          let #(g_left, g_right, members) = g
-          let col_start = int.to_string(g_left + 1)
-          let col_end = int.to_string(g_right + 1)
-          html.div(
-            [
-              attribute.class("flex flex-row"),
-              attribute.style("grid-column", col_start <> " / " <> col_end),
-              attribute.style("min-width", "0"),
-            ],
-            list.map(members, render_bar_segment),
-          )
-        })
       html.div(
         [
           attribute.class("flex-1"),
@@ -705,9 +787,10 @@ pub fn view_gantt(
           attribute.style("grid-auto-rows", int.to_string(bar_px) <> "px"),
           attribute.style("border-bottom", "1px solid oklch(0 0 0 / 8%)"),
         ],
-        group_els,
+        list.map(groups, render_group),
       )
     }
+
     // Now indicator: vertical line spanning all sub-rows, positioned inside time_grid.
     let now_offset = now_min - window.start_min
     let now_el = case is_today && now_offset >= 0 && now_offset <= total_min {
@@ -753,42 +836,17 @@ pub fn view_gantt(
         [html.text(weekday_name(day) <> " " <> format_date(day))],
       )
 
-    // Left gutter: date, all-day chips, tick-strip spacer, then person labels.
-    // Sub-row heights are now browser-determined (CSS grid auto-rows), so we
-    // can't mirror them exactly; person labels sit below the tick strip.
-    let person_label = fn(name: String) -> Element(msg) {
-      case name {
-        "" -> element.none()
-        n ->
-          html.span(
-            [
-              attribute.class("text-text-faint leading-none"),
-              attribute.style("font-size", "7px"),
-            ],
-            [html.text(n)],
-          )
-      }
-    }
+    // Left gutter: date label + all-day chips. Width is wider to allow chips
+    // to display more text before truncating.
     let left_gutter =
       html.div(
         [
           attribute.class(
             "shrink-0 flex flex-col gap-0.5 pt-0.5 pr-1 select-none overflow-hidden",
           ),
-          attribute.style("width", "5.5rem"),
+          attribute.style("width", "7rem"),
         ],
-        list.flatten([
-          [date_label],
-          all_day_chips,
-          [
-            html.div(
-              [attribute.style("height", int.to_string(tick_header_px) <> "px")],
-              [],
-            ),
-            person_label(person0),
-            person_label(person1),
-          ],
-        ]),
+        list.flatten([[date_label], all_day_chips]),
       )
 
     // Time grid: sub-rows fill vertical space equally via flex-1.
@@ -802,8 +860,8 @@ pub fn view_gantt(
           attribute.style("border-left", "1px solid oklch(0 0 0 / 20%)"),
         ],
         list.flatten([
-          // Gridlines first — absolute, span full time_grid height (top-0 bottom-0).
-          all_grid_lines,
+          // Gridline overlay — absolute, same column grid as event bars.
+          [grid_line_overlay],
           // Now indicator — absolute, spans full height.
           [now_el],
           // Hour tick header strip — flow element, sits at top of time grid.
