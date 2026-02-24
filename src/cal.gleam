@@ -31,6 +31,8 @@ pub type Event {
     end: EventTime,
     calendar_name: String,
     location: String,
+    /// True when TRANSP:TRANSPARENT — the event does not mark the person busy.
+    free: Bool,
   )
 }
 
@@ -413,6 +415,7 @@ pub fn view_gantt(
                 width_min,
                 color,
                 True,
+                e.free,
                 e.summary <> loc_suffix,
                 time_str,
               )
@@ -438,7 +441,16 @@ pub fn view_gantt(
             case width_min > 0 {
               False -> Error(Nil)
               True ->
-                Ok(#(bar, left_min, width_min, color, False, travel_text, ""))
+                Ok(#(
+                  bar,
+                  left_min,
+                  width_min,
+                  color,
+                  False,
+                  False,
+                  travel_text,
+                  "",
+                ))
             }
           }
           DriveFrom(event_end:, travel_secs:, travel_text:, color:, bar:) -> {
@@ -458,6 +470,7 @@ pub fn view_gantt(
                   width_min,
                   color,
                   False,
+                  False,
                   travel_text <> " home",
                   "",
                 ))
@@ -470,22 +483,20 @@ pub fn view_gantt(
 
     // --- Lane assignment ---
     // Each sub-row gets bars packed into the fewest non-overlapping lanes.
-    // A bar #(pos, left_min, width_min, color, thick, label, label2).
+    // Bar tuple: #(BarPos, Int, Int, String, Bool, Bool, String, String)
+    //             pos  left width color thick free  label label2
     // Two bars overlap if one starts before the other ends.
     // Returns List(#(lane_index, bar_tuple)).
-    // Bar tuple type alias used throughout:
-    // #(BarPos, Int, Int, String, Bool, String, String)
-    //   pos  left width color thick label label2
     let assign_lanes = fn(
-      bars: List(#(BarPos, Int, Int, String, Bool, String, String)),
-    ) -> List(#(Int, #(BarPos, Int, Int, String, Bool, String, String))) {
+      bars: List(#(BarPos, Int, Int, String, Bool, Bool, String, String)),
+    ) -> List(#(Int, #(BarPos, Int, Int, String, Bool, Bool, String, String))) {
       // Sort by left_min ascending.
       let sorted =
         list.sort(
           bars,
           fn(
-            a: #(BarPos, Int, Int, String, Bool, String, String),
-            b: #(BarPos, Int, Int, String, Bool, String, String),
+            a: #(BarPos, Int, Int, String, Bool, Bool, String, String),
+            b: #(BarPos, Int, Int, String, Bool, Bool, String, String),
           ) {
             int.compare(a.1, b.1)
           },
@@ -493,13 +504,13 @@ pub fn view_gantt(
       // lane_ends: List(Int) — the right_min of the last bar in each lane.
       // Fold carries #(assignments, lane_ends).
       let init: #(
-        List(#(Int, #(BarPos, Int, Int, String, Bool, String, String))),
+        List(#(Int, #(BarPos, Int, Int, String, Bool, Bool, String, String))),
         List(Int),
       ) = #([], [])
       list.fold(
         sorted,
         init,
-        fn(acc, bar: #(BarPos, Int, Int, String, Bool, String, String)) {
+        fn(acc, bar: #(BarPos, Int, Int, String, Bool, Bool, String, String)) {
           let #(assignments, lane_ends) = acc
           let bar_left = bar.1
           let bar_right = bar.1 + bar.2
@@ -532,99 +543,129 @@ pub fn view_gantt(
     let bar_px = 20
 
     // Render one sub-row (by BarPos) as stacked lanes.
+    // Returns element.none() when there are no bars so empty rows are invisible.
     let view_sub_row = fn(pos: BarPos, row_label: String) -> Element(msg) {
       let bars = list.filter(all_bars, fn(t) { t.0 == pos })
-      let assigned = assign_lanes(bars)
-      let lane_count = case assigned {
-        [] -> 1
-        _ -> list.fold(assigned, 0, fn(mx, p) { int.max(mx, p.0 + 1) })
-      }
-      let row_height_px = lane_count * bar_px
+      case bars {
+        [] -> element.none()
+        _ -> {
+          let assigned = assign_lanes(bars)
+          let lane_count =
+            list.fold(assigned, 0, fn(mx, p) { int.max(mx, p.0 + 1) })
+          let row_height_px = lane_count * bar_px
 
-      // Build one absolutely-positioned bar element per assigned bar.
-      let bar_els =
-        list.map(assigned, fn(pair) {
-          let #(lane, #(_, left_min, width_min, color, thick, label, label2)) =
-            pair
-          let top_px = lane * bar_px
-          // Vertical padding inside the lane height.
-          let pad_px = case thick {
-            True -> 2
-            False -> 5
-          }
-          let bar_top_px = top_px + pad_px
-          let bar_height_px = bar_px - pad_px * 2
-          let opacity = case thick {
-            True -> "0.85"
-            False -> "0.55"
-          }
-          let clamped_width = int.min(width_min, total_min - left_min)
-          // Label: primary (summary) + secondary (time) inside the bar.
-          let label_content = case label {
-            "" -> []
-            _ -> [
-              html.span(
-                [
-                  attribute.class("truncate font-medium leading-none"),
-                  attribute.style("font-size", "9px"),
-                ],
-                [html.text(label)],
-              ),
-              case label2 {
-                "" -> element.none()
-                t ->
+          // Build one absolutely-positioned bar element per assigned bar.
+          let bar_els =
+            list.map(assigned, fn(pair) {
+              let #(
+                lane,
+                #(_, left_min, width_min, color, thick, is_free, label, label2),
+              ) = pair
+              let top_px = lane * bar_px
+              // Vertical padding inside the lane height.
+              let pad_px = case thick {
+                True -> 2
+                False -> 5
+              }
+              let bar_top_px = top_px + pad_px
+              let bar_height_px = bar_px - pad_px * 2
+              let opacity = case thick {
+                True -> "0.85"
+                False -> "0.55"
+              }
+              let clamped_width = int.min(width_min, total_min - left_min)
+              // Detect cross-midnight: original bar extends past the window.
+              let cross_midnight = width_min > total_min - left_min
+              // Label: primary (summary) + secondary (time) inside the bar.
+              let label_content = case label {
+                "" -> []
+                _ -> [
                   html.span(
                     [
-                      attribute.class("truncate leading-none opacity-70"),
-                      attribute.style("font-size", "8px"),
+                      attribute.class("truncate font-medium leading-none"),
+                      attribute.style("font-size", "9px"),
                     ],
-                    [html.text(" " <> t)],
-                  )
-              },
-            ]
+                    [html.text(label)],
+                  ),
+                  case label2 {
+                    "" -> element.none()
+                    t ->
+                      html.span(
+                        [
+                          attribute.class("truncate leading-none opacity-70"),
+                          attribute.style("font-size", "8px"),
+                        ],
+                        [html.text(" " <> t)],
+                      )
+                  },
+                ]
+              }
+              // Free (transparent) events: outlined bar with colored border, no fill.
+              // Cross-midnight busy events: fade-out on right edge.
+              let extra_style = case is_free, cross_midnight {
+                True, _ -> [
+                  attribute.style("background-color", "transparent"),
+                  attribute.style("border", "1.5px solid " <> color),
+                  attribute.style("opacity", "0.7"),
+                  attribute.style("color", color),
+                ]
+                False, True -> [
+                  attribute.style(
+                    "mask-image",
+                    "linear-gradient(to right, black 70%, transparent 100%)",
+                  ),
+                ]
+                False, False -> []
+              }
+              html.div(
+                list.flatten([
+                  [
+                    attribute.class(
+                      "absolute overflow-hidden flex items-center gap-0.5 px-1 pointer-events-none select-none rounded-sm",
+                    ),
+                    attribute.style("left", xpct(left_min)),
+                    attribute.style("width", xfpct(int_to_float(clamped_width))),
+                    attribute.style("top", int.to_string(bar_top_px) <> "px"),
+                    attribute.style(
+                      "height",
+                      int.to_string(bar_height_px) <> "px",
+                    ),
+                    attribute.style("background-color", color),
+                    attribute.style("opacity", opacity),
+                    attribute.style("color", "white"),
+                  ],
+                  extra_style,
+                ]),
+                label_content,
+              )
+            })
+
+          // Row label (person name) overlaid at top-left.
+          let label_el = case row_label {
+            "" -> element.none()
+            name ->
+              html.span(
+                [
+                  attribute.class(
+                    "absolute top-0.5 left-0.5 text-text-faint leading-none pointer-events-none select-none z-10",
+                  ),
+                  attribute.style("font-size", "7px"),
+                ],
+                [html.text(name)],
+              )
           }
+
           html.div(
             [
               attribute.class(
-                "absolute overflow-hidden flex items-center gap-0.5 px-1 pointer-events-none select-none rounded-sm",
+                "relative border-b border-border/15 overflow-hidden",
               ),
-              attribute.style("left", xpct(left_min)),
-              attribute.style("width", xfpct(int_to_float(clamped_width))),
-              attribute.style("top", int.to_string(bar_top_px) <> "px"),
-              attribute.style("height", int.to_string(bar_height_px) <> "px"),
-              attribute.style("background-color", color),
-              attribute.style("opacity", opacity),
-              attribute.style("color", "white"),
+              attribute.style("height", int.to_string(row_height_px) <> "px"),
             ],
-            label_content,
+            list.flatten([hour_lines, bar_els, [label_el]]),
           )
-        })
-
-      // Hour gridlines.
-      let grid_lines = list.map(hour_lines, fn(line) { line })
-
-      // Row label (person name) overlaid at top-left of the lane area.
-      let label_el = case row_label {
-        "" -> element.none()
-        name ->
-          html.span(
-            [
-              attribute.class(
-                "absolute top-0.5 left-0.5 text-text-faint leading-none pointer-events-none select-none z-10",
-              ),
-              attribute.style("font-size", "7px"),
-            ],
-            [html.text(name)],
-          )
+        }
       }
-
-      html.div(
-        [
-          attribute.class("relative border-b border-border/15 overflow-hidden"),
-          attribute.style("height", int.to_string(row_height_px) <> "px"),
-        ],
-        list.flatten([grid_lines, bar_els, [label_el]]),
-      )
     }
 
     // Now indicator: vertical line spanning all sub-rows, positioned inside time_grid.
@@ -684,10 +725,6 @@ pub fn view_gantt(
 
     // Time grid: sub-rows stacked, sized to their lane content.
     // The now-line spans the full height via absolute positioning.
-    let center_label = case person0, person1 {
-      "", "" -> ""
-      _, _ -> ""
-    }
     let time_grid =
       html.div(
         [
@@ -698,7 +735,7 @@ pub fn view_gantt(
         [
           now_el,
           view_sub_row(BarLeft, person0),
-          view_sub_row(BarCenter, center_label),
+          view_sub_row(BarCenter, ""),
           view_sub_row(BarRight, person1),
         ],
       )

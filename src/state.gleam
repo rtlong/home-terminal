@@ -243,6 +243,7 @@ fn encode_event(event: Event) -> json.Json {
     #("summary", json.string(event.summary)),
     #("calendar_name", json.string(event.calendar_name)),
     #("location", json.string(event.location)),
+    #("free", json.bool(event.free)),
     #("start", encode_event_time(event.start)),
     #("end", encode_event_time(event.end)),
   ])
@@ -313,7 +314,16 @@ fn event_decoder() -> decode.Decoder(Event) {
   use start <- decode.field("start", event_time_decoder())
   use end <- decode.field("end", event_time_decoder())
   use location <- decode.optional_field("location", "", decode.string)
-  decode.success(Event(uid:, summary:, calendar_name:, start:, end:, location:))
+  use free <- decode.optional_field("free", False, decode.bool)
+  decode.success(Event(
+    uid:,
+    summary:,
+    calendar_name:,
+    start:,
+    end:,
+    location:,
+    free:,
+  ))
 }
 
 fn event_time_decoder() -> decode.Decoder(cal.EventTime) {

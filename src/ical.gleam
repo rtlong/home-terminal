@@ -125,6 +125,12 @@ fn expand_vevent(
   case get_prop(props, "UID"), get_prop(props, "SUMMARY") {
     Ok(uid), Ok(summary) -> {
       let location = get_prop(props, "LOCATION") |> result.unwrap("")
+      // TRANSP:TRANSPARENT means the event does not block the person as busy.
+      let free =
+        get_prop(props, "TRANSP")
+        |> result.unwrap("OPAQUE")
+        |> string.uppercase
+        == "TRANSPARENT"
       let dtstart_is_local = has_tzid_param(lines, "DTSTART")
       let dtend_is_local =
         has_tzid_param(lines, "DTEND")
@@ -165,6 +171,7 @@ fn expand_vevent(
                         end:,
                         calendar_name:,
                         location:,
+                        free:,
                       ),
                     ]
                     False -> []
@@ -190,6 +197,7 @@ fn expand_vevent(
                     summary,
                     calendar_name,
                     location,
+                    free,
                     start,
                     end,
                     duration_secs,
@@ -221,6 +229,7 @@ fn expand_weekly(
   summary: String,
   calendar_name: String,
   location: String,
+  free: Bool,
   master_start: EventTime,
   master_end: EventTime,
   duration_secs: Int,
@@ -247,6 +256,7 @@ fn expand_weekly(
         summary,
         calendar_name,
         location,
+        free,
         local_offset,
         window_start,
         window_end,
@@ -271,6 +281,7 @@ fn expand_weekly(
         summary,
         calendar_name,
         location,
+        free,
         local_offset,
         window_start_date,
         window_end_date,
@@ -390,6 +401,7 @@ fn generate_weekly_allday(
   summary: String,
   calendar_name: String,
   location: String,
+  free: Bool,
   local_offset: duration.Duration,
   window_start_date: calendar.Date,
   window_end_date: calendar.Date,
@@ -425,6 +437,7 @@ fn generate_weekly_allday(
             summary,
             calendar_name,
             location,
+            free,
             local_offset,
             window_start_date,
             window_end_date,
@@ -449,6 +462,7 @@ fn generate_weekly_allday(
                 summary,
                 calendar_name,
                 location,
+                free,
                 local_offset,
                 window_start_date,
                 window_end_date,
@@ -504,6 +518,7 @@ fn generate_weekly_allday(
                     end: AllDay(instance_end_date),
                     calendar_name:,
                     location:,
+                    free:,
                   )
               }
 
@@ -516,6 +531,7 @@ fn generate_weekly_allday(
                 summary,
                 calendar_name,
                 location,
+                free,
                 local_offset,
                 window_start_date,
                 window_end_date,
@@ -539,6 +555,7 @@ fn generate_weekly_timed(
   summary: String,
   calendar_name: String,
   location: String,
+  free: Bool,
   local_offset: duration.Duration,
   window_start: timestamp.Timestamp,
   window_end: timestamp.Timestamp,
@@ -577,6 +594,7 @@ fn generate_weekly_timed(
             summary,
             calendar_name,
             location,
+            free,
             local_offset,
             window_start,
             window_end,
@@ -600,6 +618,7 @@ fn generate_weekly_timed(
                 summary,
                 calendar_name,
                 location,
+                free,
                 local_offset,
                 window_start,
                 window_end,
@@ -651,6 +670,7 @@ fn generate_weekly_timed(
                     end: AtTime(instance_end_ts),
                     calendar_name:,
                     location:,
+                    free:,
                   )
               }
 
@@ -663,6 +683,7 @@ fn generate_weekly_timed(
                 summary,
                 calendar_name,
                 location,
+                free,
                 local_offset,
                 window_start,
                 window_end,
@@ -696,6 +717,11 @@ fn parse_override_event(
       && is_floating_datetime(dtend_raw)
     }
   let location = get_prop(props, "LOCATION") |> result.unwrap("")
+  let free =
+    get_prop(props, "TRANSP")
+    |> result.unwrap("OPAQUE")
+    |> string.uppercase
+    == "TRANSPARENT"
   use start <- result.try(parse_event_time(
     dtstart_raw,
     dtstart_is_local,
@@ -706,7 +732,7 @@ fn parse_override_event(
     dtend_is_local,
     local_offset,
   ))
-  Ok(Event(uid:, summary:, start:, end:, calendar_name:, location:))
+  Ok(Event(uid:, summary:, start:, end:, calendar_name:, location:, free:))
 }
 
 /// Collect all EXDATE values as Timestamps.
