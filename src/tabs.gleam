@@ -275,17 +275,20 @@ fn view_active_tab(model: Model) -> Element(Msg) {
           let color_for = fn(cal_name: String) -> String {
             state.get_calendar_config(cfg, cal_name).color
           }
-          // Derive a person color from an event's calendar assignment.
-          // Uses the first assigned person's color, or a neutral gray fallback.
-          let color_for_event = fn(e: cal.Event) -> String {
+          // Derive person colors from an event's calendar assignment.
+          // Returns one color per assigned person; falls back to a single gray
+          // if no people are assigned.
+          let colors_for_event = fn(e: cal.Event) -> List(String) {
             let people =
               dict.get(cfg.calendar_people, e.calendar_name)
               |> result.unwrap([])
             case people {
-              [person, ..] ->
-                dict.get(cfg.people_colors, person)
-                |> result.unwrap("#888888")
-              [] -> "#888888"
+              [] -> ["#888888"]
+              _ ->
+                list.map(people, fn(person) {
+                  dict.get(cfg.people_colors, person)
+                  |> result.unwrap("#888888")
+                })
             }
           }
           let visible_events =
@@ -302,7 +305,7 @@ fn view_active_tab(model: Model) -> Element(Msg) {
                 model.calendar_data.travel_cache,
                 model.calendar_data.leg_cache,
                 model.calendar_data.cal_config.home_address,
-                color_for_event,
+                colors_for_event,
               ),
             ],
           )

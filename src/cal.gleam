@@ -55,13 +55,11 @@ pub type LegCache =
 
 /// A travel block to render on the timeline.
 ///
-/// Each located event independently generates:
-///   - A DriveTo block: home → event, arrival-aligned (strip ends at event start)
-///   - A DriveFrom block: event → home, departure-aligned (strip starts at event end)
+/// Each located event generates one block per assigned person:
+///   - DriveTo: home → event, arrival-aligned (strip ends at event_start)
+///   - DriveFrom: event → home, departure-aligned (strip starts at event_end)
 ///
-/// Strips may overlap when two events are close together — that is visually
-/// correct (you'd be driving to the next event before you've even left the last).
-/// Each block carries the person color derived from the event's calendar assignment.
+/// `col` and `col_count` lay out same-anchor blocks side by side.
 pub type TravelBlock {
   /// Home → event. Strip is arrival-aligned: ends at `event_start`.
   DriveTo(
@@ -69,6 +67,8 @@ pub type TravelBlock {
     travel_secs: Int,
     travel_text: String,
     color: String,
+    col: Int,
+    col_count: Int,
   )
   /// Event → home. Strip is departure-aligned: starts at `event_end`.
   DriveFrom(
@@ -76,6 +76,8 @@ pub type TravelBlock {
     travel_secs: Int,
     travel_text: String,
     color: String,
+    col: Int,
+    col_count: Int,
   )
 }
 
@@ -83,46 +85,101 @@ pub type TravelBlock {
 
 /// Compute travel blocks for a day's timed events.
 ///
-/// For each located timed event, emits a DriveTo (home→loc) and a DriveFrom
-/// (loc→home) block if the respective leg is in the cache.
-/// `color_for_event` maps an event to its person's CSS color string.
+/// For each located timed event, emits one DriveTo and one DriveFrom per
+/// person assigned to that event's calendar.
+/// `colors_for_event` returns all person colors for an event (one per person).
 pub fn compute_travel_blocks(
   events: List(Event),
   leg_cache: LegCache,
   home_key: String,
   leg_key: fn(String, String) -> String,
-  color_for_event: fn(Event) -> String,
+  colors_for_event: fn(Event) -> List(String),
 ) -> List(TravelBlock) {
-  list.flat_map(events, fn(e) {
-    case e.location, e.start, e.end {
-      loc, AtTime(start), AtTime(end) if loc != "" -> {
-        let color = color_for_event(e)
-        let to_block = case dict.get(leg_cache, leg_key(home_key, loc)) {
-          Ok(secs) -> [
-            DriveTo(
-              event_start: start,
-              travel_secs: secs,
-              travel_text: secs_to_min_text(secs),
-              color:,
-            ),
-          ]
-          Error(_) -> []
+  // Emit one block per person per event (without col info yet).
+  let raw =
+    list.flat_map(events, fn(e) {
+      case e.location, e.start, e.end {
+        loc, AtTime(start), AtTime(end) if loc != "" -> {
+          let colors = colors_for_event(e)
+          let to_secs = dict.get(leg_cache, leg_key(home_key, loc))
+          let from_secs = dict.get(leg_cache, leg_key(loc, home_key))
+          list.flat_map(colors, fn(color) {
+            let to_block = case to_secs {
+              Ok(secs) -> [
+                DriveTo(
+                  event_start: start,
+                  travel_secs: secs,
+                  travel_text: secs_to_min_text(secs),
+                  color:,
+                  col: 0,
+                  col_count: 1,
+                ),
+              ]
+              Error(_) -> []
+            }
+            let from_block = case from_secs {
+              Ok(secs) -> [
+                DriveFrom(
+                  event_end: end,
+                  travel_secs: secs,
+                  travel_text: secs_to_min_text(secs),
+                  color:,
+                  col: 0,
+                  col_count: 1,
+                ),
+              ]
+              Error(_) -> []
+            }
+            list.append(to_block, from_block)
+          })
         }
-        let from_block = case dict.get(leg_cache, leg_key(loc, home_key)) {
-          Ok(secs) -> [
-            DriveFrom(
-              event_end: end,
-              travel_secs: secs,
-              travel_text: secs_to_min_text(secs),
-              color:,
-            ),
-          ]
-          Error(_) -> []
-        }
-        list.append(to_block, from_block)
+        _, _, _ -> []
       }
-      _, _, _ -> []
+    })
+
+  assign_block_columns(raw)
+}
+
+/// Group blocks by anchor timestamp, then assign col/col_count within each group.
+/// DriveTo blocks share an anchor = event_start; DriveFrom share anchor = event_end.
+fn assign_block_columns(blocks: List(TravelBlock)) -> List(TravelBlock) {
+  // Key = unix seconds of anchor timestamp.
+  let anchor_of = fn(b: TravelBlock) -> Int {
+    case b {
+      DriveTo(event_start:, ..) ->
+        timestamp.to_unix_seconds_and_nanoseconds(event_start).0
+      DriveFrom(event_end:, ..) ->
+        timestamp.to_unix_seconds_and_nanoseconds(event_end).0
     }
+  }
+
+  let grouped = list.group(blocks, anchor_of)
+
+  dict.values(grouped)
+  |> list.flat_map(fn(group) {
+    let n = list.length(group)
+    list.index_map(group, fn(b, i) {
+      case b {
+        DriveTo(event_start:, travel_secs:, travel_text:, color:, ..) ->
+          DriveTo(
+            event_start:,
+            travel_secs:,
+            travel_text:,
+            color:,
+            col: i,
+            col_count: n,
+          )
+        DriveFrom(event_end:, travel_secs:, travel_text:, color:, ..) ->
+          DriveFrom(
+            event_end:,
+            travel_secs:,
+            travel_text:,
+            color:,
+            col: i,
+            col_count: n,
+          )
+      }
+    })
   })
 }
 
@@ -163,14 +220,14 @@ pub fn view_error(reason: String) -> Element(msg) {
 /// The main 7-day view. Shows events for today and the next 6 days.
 /// All columns share the same time window so timelines are aligned.
 /// `color_for` maps calendar_name → CSS color for event blocks.
-/// `color_for_event` maps an Event → person CSS color for travel strips.
+/// `colors_for_event` returns all person colors for an event (one per assigned person).
 pub fn view_seven_days(
   events: List(Event),
   color_for: fn(String) -> String,
   travel_cache: Dict(String, TravelInfo),
   leg_cache: LegCache,
   home_address: String,
-  color_for_event: fn(Event) -> String,
+  colors_for_event: fn(Event) -> List(String),
 ) -> Element(msg) {
   let now = timestamp.system_time()
   let local_offset = calendar.local_offset()
@@ -211,7 +268,7 @@ pub fn view_seven_days(
             leg_cache,
             addr,
             travel.leg_cache_key,
-            color_for_event,
+            colors_for_event,
           )
       }
       #(day_timed, day_blocks)
@@ -896,10 +953,18 @@ fn view_timeline(
   // Render travel blocks.
   // DriveTo: arrival-aligned strip ending at event_start (home → event).
   // DriveFrom: departure-aligned strip starting at event_end (event → home).
+  // col/col_count lay out same-anchor blocks side by side.
   let block_els =
     list.filter_map(travel_blocks, fn(b) {
       case b {
-        DriveTo(event_start:, travel_secs:, travel_text:, color:) -> {
+        DriveTo(
+          event_start:,
+          travel_secs:,
+          travel_text:,
+          color:,
+          col:,
+          col_count:,
+        ) -> {
           let #(_, t) = timestamp.to_calendar(event_start, local_offset)
           let anchor_min = t.hours * 60 + t.minutes
           let travel_min = { travel_secs + 30 } / 60
@@ -914,11 +979,20 @@ fn view_timeline(
                 pct(clamped_end - clamped_start),
                 travel_text,
                 color,
+                col,
+                col_count,
               ))
           }
         }
 
-        DriveFrom(event_end:, travel_secs:, travel_text:, color:) -> {
+        DriveFrom(
+          event_end:,
+          travel_secs:,
+          travel_text:,
+          color:,
+          col:,
+          col_count:,
+        ) -> {
           let #(_, t) = timestamp.to_calendar(event_end, local_offset)
           let anchor_min = t.hours * 60 + t.minutes
           let travel_min = { travel_secs + 30 } / 60
@@ -933,6 +1007,8 @@ fn view_timeline(
                 pct(clamped_end - clamped_start),
                 travel_text <> " home",
                 color,
+                col,
+                col_count,
               ))
           }
         }
@@ -946,23 +1022,29 @@ fn view_timeline(
 }
 
 /// Render a single travel-time strip on the timeline.
-/// `top` and `height` are CSS percentage strings (already computed).
-/// `label` is the text to show. `color` is the person's CSS color.
-/// The strip uses a semi-transparent tint of the person's color.
+/// `col`/`col_count` divide the column width for side-by-side person strips.
 fn travel_strip(
   top: String,
   height: String,
   label: String,
   color: String,
+  col: Int,
+  col_count: Int,
 ) -> Element(msg) {
+  let nf = int_to_float(col_count)
+  let cf = int_to_float(col)
+  let left_css = float_pct(cf /. nf *. 100.0)
+  let right_css = float_pct(int_to_float(col_count - col - 1) /. nf *. 100.0)
   html.div(
     [
       attribute.class(
-        "absolute left-0 right-0 overflow-hidden select-none pointer-events-none flex items-end pb-px",
+        "absolute overflow-hidden select-none pointer-events-none flex items-end pb-px",
       ),
       attribute.styles([
         #("top", top),
         #("height", height),
+        #("left", left_css),
+        #("right", right_css),
         #("background-color", "hsl(from " <> color <> " h s var(--event-bg-l))"),
         #("border-top", "1px solid hsl(from " <> color <> " h s 60% / 0.4)"),
       ]),
