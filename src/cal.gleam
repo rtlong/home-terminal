@@ -985,6 +985,23 @@ pub fn view_gantt(
         [html.text(weekday_name(day) <> " " <> format_date(day))],
       )
 
+    // Sunrise/sunset line for left gutter: "↑6:28a ↓5:28p"
+    let sun_label_el = case sun_times {
+      Error(_) -> element.none()
+      Ok(st) -> {
+        let rise_str = "↑" <> format_time_min(st.sunrise)
+        let set_str = "↓" <> format_time_min(st.sunset)
+        html.span(
+          [
+            attribute.class("leading-none select-none"),
+            attribute.style("font-size", "9px"),
+            attribute.style("color", "oklch(0.60 0.08 55)"),
+          ],
+          [html.text(rise_str <> " " <> set_str)],
+        )
+      }
+    }
+
     // Left gutter: date label + all-day chips. Width is wider to allow chips
     // to display more text before truncating.
     let left_gutter =
@@ -995,7 +1012,7 @@ pub fn view_gantt(
           ),
           attribute.style("width", "10rem"),
         ],
-        list.flatten([[date_label], all_day_chips]),
+        list.flatten([[date_label], [sun_label_el], all_day_chips]),
       )
 
     // Day/night gradient background based on sunrise/sunset times.
@@ -1023,7 +1040,7 @@ pub fn view_gantt(
         let set_pct = sun_pct(clamp_pct(st.sunset))
         let dusk_pct = sun_pct(clamp_pct(st.civil_dusk))
         // Colours
-        let night_color = "oklch(0.18 0.04 260 / 55%)"
+        let night_color = "oklch(0.22 0.07 255 / 65%)"
         let dawn_color = "oklch(0.45 0.08 40 / 40%)"
         let glow_color = "oklch(0.70 0.12 55 / 25%)"
         let day_color = "oklch(1 0 0 / 0%)"
@@ -1061,11 +1078,13 @@ pub fn view_gantt(
       }
     }
 
-    // Sunrise/sunset markers: small icon + time label on the tick strip.
+    // Sunrise/sunset markers: a vertical dashed line spanning full height,
+    // with a small "↑6:28a" / "↓5:28p" label sitting in the tick-header row.
+    // Reuses the same grid as the hour gridlines so column positions match exactly.
     let sun_markers_el = case sun_times {
       Error(_) -> element.none()
       Ok(st) -> {
-        let make_marker = fn(abs_min: Int, symbol: String, is_rise: Bool) -> List(
+        let make_marker = fn(abs_min: Int, label: String, is_rise: Bool) -> List(
           Element(msg),
         ) {
           let rel = abs_min - window.start_min
@@ -1074,35 +1093,53 @@ pub fn view_gantt(
             True -> {
               let col = int.to_string(rel + 1)
               let color = case is_rise {
-                True -> "oklch(0.65 0.15 55)"
-                False -> "oklch(0.55 0.12 30)"
+                True -> "oklch(0.62 0.14 58)"
+                False -> "oklch(0.52 0.12 32)"
               }
-              [
+              // Vertical dashed line spanning both grid rows
+              let line =
                 html.div(
                   [
-                    attribute.class("pointer-events-none select-none absolute"),
+                    attribute.class("pointer-events-none"),
+                    attribute.style("grid-column", col),
+                    attribute.style("grid-row", "1 / 3"),
+                    attribute.style("align-self", "stretch"),
+                    attribute.style(
+                      "border-left",
+                      "1px dashed " <> color <> "99",
+                    ),
+                  ],
+                  [],
+                )
+              // Tick-row label: arrow + time, sitting at bottom of header strip
+              let tick =
+                html.span(
+                  [
+                    attribute.class(
+                      "leading-none pointer-events-none select-none",
+                    ),
                     attribute.style("grid-column", col),
                     attribute.style("grid-row", "1"),
-                    attribute.style("align-self", "start"),
-                    attribute.style("display", "flex"),
-                    attribute.style("flex-direction", "column"),
-                    attribute.style("align-items", "center"),
-                    attribute.style("font-size", "7px"),
+                    attribute.style("align-self", "end"),
+                    attribute.style("font-size", "8px"),
                     attribute.style("color", color),
-                    attribute.style("line-height", "1"),
+                    attribute.style("padding-left", "2px"),
+                    attribute.style("padding-bottom", "1px"),
                     attribute.style("white-space", "nowrap"),
                     attribute.style("z-index", "2"),
                   ],
-                  [html.text(symbol)],
-                ),
-              ]
+                  [html.text(label)],
+                )
+              [line, tick]
             }
           }
         }
+        let rise_label = "↑" <> format_time_min(st.sunrise)
+        let set_label = "↓" <> format_time_min(st.sunset)
         let all_markers =
           list.flatten([
-            make_marker(st.sunrise, "☀", True),
-            make_marker(st.sunset, "☀", False),
+            make_marker(st.sunrise, rise_label, True),
+            make_marker(st.sunset, set_label, False),
           ])
         case all_markers {
           [] -> element.none()
@@ -1450,6 +1487,24 @@ fn format_time(ts: Timestamp, local_offset: duration.Duration) -> String {
 /// True when a minute value falls on a quarter-hour boundary (0, 15, 30, 45).
 fn is_quarter_hour(m: Int) -> Bool {
   m % 15 == 0
+}
+
+/// Format absolute minutes-since-midnight as a short time string, e.g. "6:28a" or "5:28p".
+fn format_time_min(abs_min: Int) -> String {
+  let h = abs_min / 60
+  let m = abs_min % 60
+  let period = case h >= 12 {
+    True -> "p"
+    False -> "a"
+  }
+  let h12 = case h % 12 {
+    0 -> 12
+    n -> n
+  }
+  string.inspect(h12)
+  <> ":"
+  <> string.pad_start(string.inspect(m), 2, "0")
+  <> period
 }
 
 fn format_hour(h: Int) -> String {
