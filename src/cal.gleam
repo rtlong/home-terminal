@@ -191,17 +191,9 @@ pub fn view_seven_days(
           AtTime(s), AtTime(en) -> {
             let start_date = timestamp.to_calendar(s, local_offset).0
             let end_date = timestamp.to_calendar(en, local_offset).0
-            // Event overlaps `day` if it starts on or before `day` and ends after `day`
-            // (exclusive end: an event ending exactly at midnight doesn't show next day).
-            date_lte(start_date, day)
-            && {
-              // If end is strictly after midnight of `day`, it overlaps.
-              calendar.naive_date_compare(end_date, day) == order.Gt
-              || {
-                // Or start is on `day` (same-day event, end_date == day is fine).
-                calendar.naive_date_compare(start_date, day) == order.Eq
-              }
-            }
+            // Event overlaps `day` if start_date <= day <= end_date.
+            // This correctly includes the final day of a cross-midnight event.
+            date_lte(start_date, day) && date_gte(end_date, day)
           }
           _, _ -> False
         }
@@ -992,8 +984,6 @@ fn view_timeline(
   ) -> List(Element(msg)) {
     let total_lanes =
       list.fold(segs, 1, fn(acc, seg) { int.max(acc, seg.col_count) })
-    // The group spans anchor_px .. anchor_px + total_lanes*lane_stride from the edge.
-    let group_far_px = anchor_px + total_lanes * lane_stride
 
     let seg_els =
       list.map(segs, fn(seg) {
@@ -1056,11 +1046,15 @@ fn view_timeline(
     let label_gap_min = 8
     let sorted_segs =
       list.sort(segs, fn(a, b) { int.compare(a.top_min, b.top_min) })
+    // label_height_min: estimate of a 2-line label at 9px font (~20px ≈ 4 min at 5px/min).
+    // We carry this forward so only genuinely overlapping labels are nudged,
+    // rather than reserving the full seg.dur_min (which pushes labels far below their events).
+    let label_height_min = 4
     let nudged =
       list.fold(sorted_segs, #([], -999), fn(acc, seg) {
         let #(placed, last_bottom) = acc
         let actual = int.max(seg.top_min, last_bottom + label_gap_min)
-        let bottom = actual + seg.dur_min
+        let bottom = actual + label_height_min
         #(list.append(placed, [#(actual, seg)]), bottom)
       })
       |> fn(p) { p.0 }
@@ -1087,13 +1081,15 @@ fn view_timeline(
               False ->
                 case from_right {
                   False -> [
-                    #("left", px_str(group_far_px + 2)),
+                    // Label starts just past lane-0 strip right edge: anchor + lane_w + gap.
+                    // This is fixed regardless of how many extra lanes exist.
+                    #("left", px_str(anchor_px + lane_w + 2)),
                     #("right", "50%"),
                     #("text-align", "left"),
                   ]
                   True -> [
                     #("left", "50%"),
-                    #("right", px_str(group_far_px + 2)),
+                    #("right", px_str(anchor_px + lane_w + 2)),
                     #("text-align", "right"),
                   ]
                 }
