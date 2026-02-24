@@ -142,10 +142,10 @@ pub fn compute_travel_blocks(
   })
 }
 
-/// Format seconds as "N min", rounding to nearest minute.
+/// Format seconds as just the minute count (e.g. "24"), rounding to nearest minute.
 pub fn secs_to_min_text(secs: Int) -> String {
   let mins = { secs + 30 } / 60
-  int.to_string(mins) <> " min"
+  int.to_string(mins)
 }
 
 // LAYOUT CONSTANTS ------------------------------------------------------------
@@ -185,7 +185,7 @@ pub fn view_error(reason: String) -> Element(msg) {
 pub fn view_gantt(
   events: List(Event),
   color_for: fn(String) -> String,
-  travel_cache: Dict(String, TravelInfo),
+  _travel_cache: Dict(String, TravelInfo),
   leg_cache: LegCache,
   home_address: String,
   bars_for_event: fn(Event) -> List(#(BarPos, String)),
@@ -254,12 +254,35 @@ pub fn view_gantt(
     t.hours * 60 + t.minutes
   }
 
-  // Hour gridlines — shared across all rows.
+  // Hour gridlines + quarter-hour sub-lines — shared across all rows.
   let first_hour = case window.start_min % 60 {
     0 -> window.start_min / 60
     _ -> window.start_min / 60 + 1
   }
   let last_hour = window.end_min / 60
+  // Quarter-hour lines (15, 30, 45 min offsets within each hour) — very faint.
+  let quarter_lines =
+    list.flat_map(int_range(first_hour, last_hour - 1), fn(h) {
+      list.filter_map([15, 30, 45], fn(q) {
+        let min = h * 60 + q - window.start_min
+        case min > 0 && min < total_min {
+          False -> Error(Nil)
+          True ->
+            Ok(
+              html.div(
+                [
+                  attribute.class(
+                    "absolute top-0 bottom-0 border-l border-border/20 pointer-events-none",
+                  ),
+                  attribute.style("left", xpct(min)),
+                ],
+                [],
+              ),
+            )
+        }
+      })
+    })
+  // Hour lines — slightly stronger than quarter lines.
   let hour_lines =
     list.filter_map(int_range(first_hour, last_hour), fn(h) {
       let min = h * 60 - window.start_min
@@ -270,7 +293,7 @@ pub fn view_gantt(
             html.div(
               [
                 attribute.class(
-                  "absolute top-0 bottom-0 border-l border-border/40 pointer-events-none",
+                  "absolute top-0 bottom-0 border-l border-border/50 pointer-events-none",
                 ),
                 attribute.style("left", xpct(min)),
               ],
@@ -279,6 +302,7 @@ pub fn view_gantt(
           )
       }
     })
+  let all_grid_lines = list.append(quarter_lines, hour_lines)
 
   // A type alias for gantt bar tuples: (bar, left_min, width_min, color, thick, label, label2)
   // We use a record-less 7-tuple throughout.
@@ -292,65 +316,112 @@ pub fn view_gantt(
     all_day_events: List(Event),
   ) -> Element(msg) {
     // Build horizontal segments for timed events.
-    let event_bars =
-      list.flat_map(day_timed, fn(e) {
+    // Cross-midnight events are treated differently per day:
+    //   start day  → bar from start → window end, label shows start time
+    //   middle days → promoted to all-day chip (added to extra_allday)
+    //   end day    → bar from window start → end time, label shows "ends X:XXpm"
+    let extra_allday_ref = []
+    let #(event_bars, extra_allday) =
+      list.fold(day_timed, #([], extra_allday_ref), fn(acc, e) {
+        let #(bars_acc, allday_acc) = acc
         case e.start, e.end {
           AtTime(s), AtTime(en) -> {
             let #(start_date, st) = timestamp.to_calendar(s, local_offset)
             let #(end_date, et) = timestamp.to_calendar(en, local_offset)
-            let start_min = case calendar.naive_date_compare(start_date, day) {
-              order.Eq -> st.hours * 60 + st.minutes
-              _ -> 0
+            let is_start_day =
+              calendar.naive_date_compare(start_date, day) == order.Eq
+            let is_end_day =
+              calendar.naive_date_compare(end_date, day) == order.Eq
+            let is_cross_midnight = !is_end_day || !is_start_day
+
+            case is_start_day, is_end_day {
+              // Middle day: event spans entirely through this day — show as all-day chip.
+              False, False -> #(bars_acc, [e, ..allday_acc])
+
+              // Start day: event starts today and crosses midnight.
+              True, False -> {
+                let left_min =
+                  int.max(st.hours * 60 + st.minutes, window.start_min)
+                  - window.start_min
+                let width_min = total_min - left_min
+                let new_bars =
+                  list.map(bars_for_event(e), fn(pair) {
+                    let #(bar, color) = pair
+                    #(
+                      bar,
+                      left_min,
+                      width_min,
+                      color,
+                      True,
+                      e.free,
+                      e.summary,
+                      format_time(s, local_offset) <> " →",
+                    )
+                  })
+                #(list.append(bars_acc, new_bars), allday_acc)
+              }
+
+              // End day: event started on a previous day and ends today.
+              False, True -> {
+                let left_min = 0
+                let right_min =
+                  int.min(et.hours * 60 + et.minutes, window.end_min)
+                  - window.start_min
+                let width_min = int.max(right_min, 1)
+                let new_bars =
+                  list.map(bars_for_event(e), fn(pair) {
+                    let #(bar, color) = pair
+                    #(
+                      bar,
+                      left_min,
+                      width_min,
+                      color,
+                      True,
+                      e.free,
+                      e.summary,
+                      "ends " <> format_time(en, local_offset),
+                    )
+                  })
+                #(list.append(bars_acc, new_bars), allday_acc)
+              }
+
+              // Normal same-day event.
+              True, True -> {
+                let _ = is_cross_midnight
+                let left_min =
+                  int.max(st.hours * 60 + st.minutes, window.start_min)
+                  - window.start_min
+                let right_min =
+                  int.min(et.hours * 60 + et.minutes, window.end_min)
+                  - window.start_min
+                let width_min = int.max(right_min - left_min, 1)
+                let time_str =
+                  format_time(s, local_offset)
+                  <> "–"
+                  <> format_time(en, local_offset)
+                let new_bars =
+                  list.map(bars_for_event(e), fn(pair) {
+                    let #(bar, color) = pair
+                    #(
+                      bar,
+                      left_min,
+                      width_min,
+                      color,
+                      True,
+                      e.free,
+                      e.summary,
+                      time_str,
+                    )
+                  })
+                #(list.append(bars_acc, new_bars), allday_acc)
+              }
             }
-            let end_min = case calendar.naive_date_compare(end_date, day) {
-              order.Eq -> et.hours * 60 + et.minutes
-              _ -> 1440
-            }
-            let left_min =
-              int.max(start_min, window.start_min) - window.start_min
-            let right_min = int.min(end_min, window.end_min) - window.start_min
-            let width_min = int.max(right_min - left_min, 1)
-            // Cross-midnight: bar extends beyond the display window end.
-            let is_cross_midnight = end_min > window.end_min
-            // Omit the time range label for cross-midnight events — it would show
-            // original start/end times that don't match the clamped bar position.
-            let time_str = case is_cross_midnight {
-              True -> ""
-              False ->
-                format_time(s, local_offset)
-                <> "–"
-                <> format_time(en, local_offset)
-            }
-            let loc_suffix = case e.location {
-              "" -> ""
-              loc ->
-                case dict.get(travel_cache, loc) {
-                  Ok(info) -> " · " <> info.city
-                  Error(_) -> ""
-                }
-            }
-            // Append "→" to the summary of cross-midnight events to signal continuation.
-            let summary_suffix = case is_cross_midnight {
-              True -> " →"
-              False -> ""
-            }
-            list.map(bars_for_event(e), fn(pair) {
-              let #(bar, color) = pair
-              #(
-                bar,
-                left_min,
-                width_min,
-                color,
-                True,
-                e.free,
-                e.summary <> loc_suffix <> summary_suffix,
-                time_str,
-              )
-            })
           }
-          _, _ -> []
+          _, _ -> acc
         }
       })
+    // Merge cross-midnight span events into the all-day chips list.
+    let all_day_events = list.append(all_day_events, extra_allday)
 
     // Travel block segments.
     let travel_bars =
@@ -398,7 +469,7 @@ pub fn view_gantt(
                   color,
                   False,
                   False,
-                  travel_text <> " home",
+                  travel_text,
                   "",
                 ))
             }
@@ -549,26 +620,39 @@ pub fn view_gantt(
               let clamped_width = int.min(width_min, total_min - left_min)
               // Detect cross-midnight: original bar extends past the window.
               let cross_midnight = width_min > total_min - left_min
-              // Suppress labels on narrow travel bars (thin bars < 20 min wide).
+              // Suppress labels on very narrow bars.
+              // Travel bars (thin): suppress if < 20 min.
+              // Event bars (thick): always show summary; time/loc shown conditionally.
               let too_narrow = !thick && clamped_width < 20
-              // Label: primary (summary) + secondary (time) inside the bar.
+              // Thresholds for showing secondary info on event bars.
+              // Show time annotation only if bar is wide enough (~35 min).
+              let show_time = thick && clamped_width >= 35
+              // Label: primary (event name) always shown; secondary (time) shown when wide enough.
               let label_content = case label, too_narrow {
                 _, True -> []
                 "", False -> []
                 _, False -> [
                   html.span(
                     [
-                      attribute.class("truncate font-medium leading-none"),
+                      // Summary always visible, never shrinks away — takes minimum width needed,
+                      // then truncates if even that doesn't fit.
+                      attribute.class(
+                        "shrink-0 max-w-full truncate font-medium leading-none",
+                      ),
                       attribute.style("font-size", "9px"),
                     ],
                     [html.text(label)],
                   ),
-                  case label2 {
-                    "" -> element.none()
-                    t ->
+                  case label2, show_time {
+                    _, False -> element.none()
+                    "", _ -> element.none()
+                    t, True ->
                       html.span(
                         [
-                          attribute.class("truncate leading-none opacity-70"),
+                          // Secondary info: shown only if bar is wide enough, and itself truncates.
+                          attribute.class(
+                            "shrink truncate min-w-0 leading-none opacity-70",
+                          ),
                           attribute.style("font-size", "8px"),
                         ],
                         [html.text(" " <> t)],
@@ -638,7 +722,7 @@ pub fn view_gantt(
               ),
               attribute.style("height", int.to_string(row_height_px) <> "px"),
             ],
-            list.flatten([hour_lines, bar_els, [label_el]]),
+            list.flatten([all_grid_lines, bar_els, [label_el]]),
           )
         }
       }
@@ -718,7 +802,7 @@ pub fn view_gantt(
 
     html.div(
       [
-        attribute.class("flex flex-col flex-1 border-b border-border/30"),
+        attribute.class("flex flex-col flex-1 border-b border-border"),
         attribute.class(case is_today {
           True -> "bg-surface-2/20"
           False -> ""
@@ -755,11 +839,8 @@ pub fn view_gantt(
                   ),
                   attribute.style("left", xpct(min)),
                   attribute.style("font-size", "8px"),
-                  // First tick: don't shift left (would clip out of container).
-                  attribute.style("transform", case min {
-                    0 -> "translateX(0%)"
-                    _ -> "translateX(-50%)"
-                  }),
+                  // Center the label over the gridline; let overflow-hidden clip edges.
+                  attribute.style("transform", "translateX(-50%)"),
                 ],
                 [html.text(format_hour(h))],
               ))
