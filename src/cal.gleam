@@ -199,35 +199,10 @@ pub fn view_seven_days(
       })
     })
 
-  // Shared time window across all days.
-  let window = compute_window(day_timed_lists, local_offset)
-
-  // Compute a stable row assignment for all-day events visible in this window.
-  // This ensures a multi-day event appears on the same row across all columns.
-  let #(all_day_row_map, all_day_row_count) = compute_all_day_rows(events, days)
-
-  html.div(
-    [
-      attribute.class(
-        "flex-1 min-h-0 grid grid-cols-7 gap-px p-2 overflow-hidden bg-surface",
-      ),
-    ],
-    list.map(days, fn(day) {
-      let day_all_day =
-        list.filter(events, fn(e) { all_day_spans_date(e, day) })
-      let day_timed =
-        list.filter(events, fn(e) {
-          case e.start {
-            AtTime(ts) ->
-              calendar.naive_date_compare(
-                timestamp.to_calendar(ts, local_offset).0,
-                day,
-              )
-              == order.Eq
-            AllDay(_) -> False
-          }
-        })
-      // Compute travel blocks for this day's events.
+  // Compute travel blocks for every day up-front so we can include their
+  // extents in the shared window calculation.
+  let day_timed_and_blocks =
+    list.map(day_timed_lists, fn(day_timed) {
       let day_blocks = case home_address {
         "" -> []
         addr ->
@@ -239,6 +214,28 @@ pub fn view_seven_days(
             color_for_event,
           )
       }
+      #(day_timed, day_blocks)
+    })
+
+  let all_day_blocks = list.flat_map(day_timed_and_blocks, fn(pair) { pair.1 })
+
+  // Shared time window across all days, extended to cover travel block extents.
+  let window = compute_window(day_timed_lists, all_day_blocks, local_offset)
+
+  // Compute a stable row assignment for all-day events visible in this window.
+  // This ensures a multi-day event appears on the same row across all columns.
+  let #(all_day_row_map, all_day_row_count) = compute_all_day_rows(events, days)
+
+  html.div(
+    [
+      attribute.class(
+        "flex-1 min-h-0 grid grid-cols-7 gap-px p-2 overflow-hidden bg-surface",
+      ),
+    ],
+    list.map(list.zip(days, day_timed_and_blocks), fn(pair) {
+      let #(day, #(day_timed, day_blocks)) = pair
+      let day_all_day =
+        list.filter(events, fn(e) { all_day_spans_date(e, day) })
       view_day(
         day,
         day == today_date,
@@ -265,6 +262,7 @@ type Window {
 
 fn compute_window(
   day_timed_lists: List(List(Event)),
+  all_blocks: List(TravelBlock),
   local_offset: duration.Duration,
 ) -> Window {
   let timed_events = list.flatten(day_timed_lists)
@@ -293,8 +291,46 @@ fn compute_window(
           }
         })
 
-      let earliest = list.fold(start_mins, default_window_start_min, int.min)
-      let latest = list.fold(end_mins, default_window_end_min, int.max)
+      // Extend window to cover travel block extents.
+      // DriveTo: strip ends at event_start (already in start_mins), but
+      //   begins travel_secs earlier — can push window start earlier.
+      // DriveFrom: strip begins at event_end (already in end_mins), but
+      //   extends travel_secs later — can push window end later.
+      let block_start_mins =
+        list.filter_map(all_blocks, fn(b) {
+          case b {
+            DriveTo(event_start:, travel_secs:, ..) -> {
+              let #(_, t) = timestamp.to_calendar(event_start, local_offset)
+              let anchor = t.hours * 60 + t.minutes
+              Ok(anchor - { travel_secs + 30 } / 60)
+            }
+            DriveFrom(..) -> Error(Nil)
+          }
+        })
+      let block_end_mins =
+        list.filter_map(all_blocks, fn(b) {
+          case b {
+            DriveFrom(event_end:, travel_secs:, ..) -> {
+              let #(_, t) = timestamp.to_calendar(event_end, local_offset)
+              let anchor = t.hours * 60 + t.minutes
+              Ok(anchor + { travel_secs + 30 } / 60)
+            }
+            DriveTo(..) -> Error(Nil)
+          }
+        })
+
+      let earliest =
+        list.fold(
+          list.append(start_mins, block_start_mins),
+          default_window_start_min,
+          int.min,
+        )
+      let latest =
+        list.fold(
+          list.append(end_mins, block_end_mins),
+          default_window_end_min,
+          int.max,
+        )
 
       let snapped_start = earliest / 60 * 60
       let snapped_end = case latest % 60 {
