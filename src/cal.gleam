@@ -4,7 +4,6 @@ import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
 import gleam/order
-import gleam/result
 import gleam/string
 import gleam/time/calendar.{type Date, Date}
 import gleam/time/duration
@@ -487,120 +486,6 @@ pub fn view_gantt(
 
     let all_bars = list.append(event_bars, travel_bars)
 
-    // --- Lane assignment ---
-    // Bar tuple: #(BarPos, Int, Int, String, Bool, Bool, String, String)
-    //             pos  left width color thick free  label label2
-    //
-    // Two-phase: event bars (thick=True) get lanes greedily; travel bars
-    // (thick=False) are pinned to the same lane as their adjacent event bar.
-    //
-    // Key invariant: when checking whether a lane is free for a candidate event
-    // bar, we use the effective span = the event's own range PLUS any adjacent
-    // travel bars (DriveTo to its left, DriveFrom to its right).  This prevents
-    // a free/long event from being placed in the same lane as a
-    // busy-event+travel group whose travel strips time-overlap the free event
-    // even when the busy event itself ends before the free event does.
-    let assign_lanes = fn(
-      bars: List(#(BarPos, Int, Int, String, Bool, Bool, String, String)),
-    ) -> List(#(Int, #(BarPos, Int, Int, String, Bool, Bool, String, String))) {
-      let is_thick = fn(
-        b: #(BarPos, Int, Int, String, Bool, Bool, String, String),
-      ) {
-        b.4
-      }
-      let event_bars_only = list.filter(bars, is_thick)
-      let travel_bars_only = list.filter(bars, fn(b) { !is_thick(b) })
-
-      // Full span of an event bar including its flanking travel strips.
-      let effective_left = fn(
-        ev: #(BarPos, Int, Int, String, Bool, Bool, String, String),
-      ) -> Int {
-        let ev_left = ev.1
-        list.fold(travel_bars_only, ev_left, fn(acc, tb) {
-          case tb.1 + tb.2 == ev_left {
-            True -> int.min(acc, tb.1)
-            False -> acc
-          }
-        })
-      }
-      let effective_right = fn(
-        ev: #(BarPos, Int, Int, String, Bool, Bool, String, String),
-      ) -> Int {
-        let ev_right = ev.1 + ev.2
-        list.fold(travel_bars_only, ev_right, fn(acc, tb) {
-          case tb.1 == ev_right {
-            True -> int.max(acc, tb.1 + tb.2)
-            False -> acc
-          }
-        })
-      }
-
-      // Phase 1: greedy lane assignment for event bars, sorted by effective start.
-      let sorted_events =
-        list.sort(event_bars_only, fn(a, b) {
-          int.compare(effective_left(a), effective_left(b))
-        })
-      let init: #(
-        List(#(Int, #(BarPos, Int, Int, String, Bool, Bool, String, String))),
-        List(Int),
-      ) = #([], [])
-      let #(event_assigned, _lane_ends) =
-        list.fold(sorted_events, init, fn(acc, bar) {
-          let #(assignments, lane_ends) = acc
-          let span_left = effective_left(bar)
-          let span_right = effective_right(bar)
-          let found =
-            list.index_map(lane_ends, fn(end_min, idx) { #(idx, end_min) })
-            |> list.find(fn(p: #(Int, Int)) { p.1 <= span_left })
-          case found {
-            Ok(#(lane_idx, _)) -> {
-              let new_ends =
-                list.index_map(lane_ends, fn(e, i) {
-                  case i == lane_idx {
-                    True -> span_right
-                    False -> e
-                  }
-                })
-              #(list.append(assignments, [#(lane_idx, bar)]), new_ends)
-            }
-            Error(Nil) -> {
-              let lane_idx = list.length(lane_ends)
-              #(
-                list.append(assignments, [#(lane_idx, bar)]),
-                list.append(lane_ends, [span_right]),
-              )
-            }
-          }
-        })
-
-      // Phase 2: pin each travel bar to its adjacent event bar's lane.
-      let travel_assigned =
-        list.map(travel_bars_only, fn(bar) {
-          let travel_left = bar.1
-          let travel_right = bar.1 + bar.2
-          let lane =
-            list.find(event_assigned, fn(p) {
-              let ev_left = p.1.1
-              let ev_right = ev_left + p.1.2
-              travel_right == ev_left || travel_left == ev_right
-            })
-            |> result.map(
-              fn(
-                p: #(
-                  Int,
-                  #(BarPos, Int, Int, String, Bool, Bool, String, String),
-                ),
-              ) {
-                p.0
-              },
-            )
-            |> result.unwrap(list.length(event_assigned))
-          #(lane, bar)
-        })
-
-      list.append(event_assigned, travel_assigned)
-    }
-
     // Fixed pixel height for every bar lane.
     let bar_px = 20
 
@@ -642,9 +527,152 @@ pub fn view_gantt(
     // CSS grid column template: one column per minute in the window.
     let grid_cols = "repeat(" <> int.to_string(total_min) <> ", minmax(0, 1fr))"
 
-    // Render one sub-row using CSS grid.
-    // Each bar is placed via grid-column (1-indexed, end exclusive) and
-    // grid-row (1-indexed lane).  No absolute positioning, no % math.
+    // Group bars by their event: each event bar plus any DriveTo/DriveFrom
+    // travel bars that touch it forms a single grid item spanning the full
+    // extent (travel_start .. travel_end).  Inside the group, sub-bars are
+    // laid out as a flex row with each piece sized proportionally by minutes,
+    // keeping travel flush with its event without needing explicit grid-row.
+    // Free events (no adjacent travel) and lone travel-free events are their
+    // own single-bar groups.
+    let make_groups = fn(
+      bars: List(#(BarPos, Int, Int, String, Bool, Bool, String, String)),
+    ) -> List(
+      #(Int, Int, List(#(BarPos, Int, Int, String, Bool, Bool, String, String))),
+    ) {
+      let is_thick = fn(
+        b: #(BarPos, Int, Int, String, Bool, Bool, String, String),
+      ) {
+        b.4
+      }
+      let event_bars = list.filter(bars, is_thick)
+      let travel_bars = list.filter(bars, fn(b) { !is_thick(b) })
+      // For each event bar, claim its touching travel bars.
+      let #(groups, claimed) =
+        list.fold(event_bars, #([], []), fn(acc, ev) {
+          let #(gs, claimed) = acc
+          let ev_left = ev.1
+          let ev_right = ev.1 + ev.2
+          let drive_to =
+            list.filter(travel_bars, fn(tb) { tb.1 + tb.2 == ev_left })
+          let drive_from = list.filter(travel_bars, fn(tb) { tb.1 == ev_right })
+          let members = list.flatten([drive_to, [ev], drive_from])
+          let g_left = list.fold(members, ev_left, fn(m, b) { int.min(m, b.1) })
+          let g_right =
+            list.fold(members, ev_right, fn(m, b) { int.max(m, b.1 + b.2) })
+          let new_claimed =
+            list.flatten([
+              claimed,
+              list.map(drive_to, fn(b) { b.1 }),
+              list.map(drive_from, fn(b) { b.1 }),
+            ])
+          #(list.append(gs, [#(g_left, g_right, members)]), new_claimed)
+        })
+      // Any travel bar not claimed by an event gets its own group.
+      let lone_travel =
+        list.filter(travel_bars, fn(tb) { !list.contains(claimed, tb.1) })
+      let lone_groups =
+        list.map(lone_travel, fn(tb) { #(tb.1, tb.1 + tb.2, [tb]) })
+      list.append(groups, lone_groups)
+    }
+
+    // Render a single bar segment within a group flex row.
+    // Width is driven by flex-grow proportional to the bar's minute span.
+    let render_bar_segment = fn(
+      bar: #(BarPos, Int, Int, String, Bool, Bool, String, String),
+    ) -> Element(msg) {
+      let #(_, left_min, width_min, color, thick, is_free, label, label2) = bar
+      let clamped_width = int.min(width_min, total_min - left_min)
+      let pad_px = case thick {
+        True -> 2
+        False -> 5
+      }
+      let opacity = case thick {
+        True -> "0.85"
+        False -> "0.55"
+      }
+      let too_narrow = !thick && clamped_width < 20
+      let show_time = thick && clamped_width >= 35
+      let label_content = case label, too_narrow {
+        _, True -> []
+        "", False -> []
+        _, False -> [
+          html.span(
+            [
+              attribute.class(
+                "shrink-0 max-w-full truncate font-medium leading-none",
+              ),
+              attribute.style("font-size", "9px"),
+            ],
+            [html.text(label)],
+          ),
+          case label2, show_time {
+            _, False -> element.none()
+            "", _ -> element.none()
+            t, True ->
+              html.span(
+                [
+                  attribute.class(
+                    "shrink truncate min-w-0 leading-none opacity-70",
+                  ),
+                  attribute.style("font-size", "8px"),
+                ],
+                [html.text(" " <> t)],
+              )
+          },
+        ]
+      }
+      let right_min = left_min + clamped_width
+      let is_start_day_xm = !is_free && left_min > 0 && right_min >= total_min
+      let is_end_day_xm =
+        !is_free
+        && left_min == 0
+        && right_min < total_min
+        && width_min == clamped_width
+      let extra_style = case is_free, is_start_day_xm, is_end_day_xm {
+        True, _, _ -> [
+          attribute.style("background-color", "transparent"),
+          attribute.style("border", "1.5px solid " <> color),
+          attribute.style("opacity", "0.7"),
+          attribute.style("color", color),
+        ]
+        False, True, _ -> [
+          attribute.style(
+            "mask-image",
+            "linear-gradient(to right, black 60%, transparent 100%)",
+          ),
+        ]
+        False, False, True -> [
+          attribute.style(
+            "mask-image",
+            "linear-gradient(to left, black 60%, transparent 100%)",
+          ),
+        ]
+        False, False, False -> []
+      }
+      html.div(
+        list.flatten([
+          [
+            attribute.class(
+              "overflow-hidden flex items-center gap-0.5 px-1 pointer-events-none select-none rounded-sm",
+            ),
+            attribute.style("flex", int.to_string(clamped_width) <> " 0 0"),
+            attribute.style("min-width", "0"),
+            attribute.style("margin-top", int.to_string(pad_px) <> "px"),
+            attribute.style("margin-bottom", int.to_string(pad_px) <> "px"),
+            attribute.style("background-color", color),
+            attribute.style("opacity", opacity),
+            attribute.style("color", "white"),
+          ],
+          extra_style,
+        ]),
+        label_content,
+      )
+    }
+
+    // Render one sub-row using CSS grid with auto-placement.
+    // Each group is one grid item (grid-column = full group extent).
+    // Within each group, sub-bars are a flex row sized proportionally.
+    // grid-auto-flow: dense packs groups into rows without overlap.
     let view_sub_row = fn(pos: BarPos) -> Element(msg) {
       let bars =
         list.filter(
@@ -653,134 +681,33 @@ pub fn view_gantt(
             t.0 == pos
           },
         )
-      let assigned = assign_lanes(bars)
-      let lane_count =
-        list.fold(assigned, 0, fn(mx, p) { int.max(mx, p.0 + 1) })
-      let grid_height_px = int.max(lane_count, 1) * bar_px
-
-      let bar_els =
-        list.map(assigned, fn(pair) {
-          let #(
-            lane,
-            #(_, left_min, width_min, color, thick, is_free, label, label2),
-          ) = pair
-          let clamped_width = int.min(width_min, total_min - left_min)
-          let right_min = left_min + clamped_width
-          // CSS grid columns are 1-indexed; end line is exclusive.
-          let col_start = int.to_string(left_min + 1)
-          let col_end = int.to_string(right_min + 1)
-          let row = int.to_string(lane + 1)
-          // Vertical padding inside the lane.
-          let pad_px = case thick {
-            True -> 2
-            False -> 5
-          }
-          let opacity = case thick {
-            True -> "0.85"
-            False -> "0.55"
-          }
-          // Suppress labels on very narrow travel bars.
-          let too_narrow = !thick && clamped_width < 20
-          let show_time = thick && clamped_width >= 35
-          let label_content = case label, too_narrow {
-            _, True -> []
-            "", False -> []
-            _, False -> [
-              html.span(
-                [
-                  attribute.class(
-                    "shrink-0 max-w-full truncate font-medium leading-none",
-                  ),
-                  attribute.style("font-size", "9px"),
-                ],
-                [html.text(label)],
-              ),
-              case label2, show_time {
-                _, False -> element.none()
-                "", _ -> element.none()
-                t, True ->
-                  html.span(
-                    [
-                      attribute.class(
-                        "shrink truncate min-w-0 leading-none opacity-70",
-                      ),
-                      attribute.style("font-size", "8px"),
-                    ],
-                    [html.text(" " <> t)],
-                  )
-              },
-            ]
-          }
-          // Visual style: free → outlined; cross-midnight → gradient fade.
-          let is_start_day_xm =
-            !is_free && left_min > 0 && right_min >= total_min
-          let is_end_day_xm =
-            !is_free
-            && left_min == 0
-            && right_min < total_min
-            && width_min == clamped_width
-          let extra_style = case is_free, is_start_day_xm, is_end_day_xm {
-            True, _, _ -> [
-              attribute.style("background-color", "transparent"),
-              attribute.style("border", "1.5px solid " <> color),
-              attribute.style("opacity", "0.7"),
-              attribute.style("color", color),
-            ]
-            False, True, _ -> [
-              attribute.style(
-                "mask-image",
-                "linear-gradient(to right, black 60%, transparent 100%)",
-              ),
-            ]
-            False, False, True -> [
-              attribute.style(
-                "mask-image",
-                "linear-gradient(to left, black 60%, transparent 100%)",
-              ),
-            ]
-            False, False, False -> []
-          }
+      let groups = make_groups(bars)
+      let group_els =
+        list.map(groups, fn(g) {
+          let #(g_left, g_right, members) = g
+          let col_start = int.to_string(g_left + 1)
+          let col_end = int.to_string(g_right + 1)
           html.div(
-            list.flatten([
-              [
-                attribute.class(
-                  "overflow-hidden flex items-center gap-0.5 px-1 pointer-events-none select-none rounded-sm",
-                ),
-                attribute.style("grid-column", col_start <> " / " <> col_end),
-                attribute.style("grid-row", row),
-                attribute.style("margin-top", int.to_string(pad_px) <> "px"),
-                attribute.style("margin-bottom", int.to_string(pad_px) <> "px"),
-                attribute.style("background-color", color),
-                attribute.style("opacity", opacity),
-                attribute.style("color", "white"),
-                attribute.style("min-width", "0"),
-              ],
-              extra_style,
-            ]),
-            label_content,
+            [
+              attribute.class("flex flex-row"),
+              attribute.style("grid-column", col_start <> " / " <> col_end),
+              attribute.style("min-width", "0"),
+            ],
+            list.map(members, render_bar_segment),
           )
         })
-
       html.div(
         [
           attribute.class("flex-1"),
           attribute.style("display", "grid"),
           attribute.style("grid-template-columns", grid_cols),
-          attribute.style(
-            "grid-template-rows",
-            "repeat("
-              <> int.to_string(int.max(lane_count, 1))
-              <> ", "
-              <> int.to_string(bar_px)
-              <> "px)",
-          ),
-          attribute.style("height", int.to_string(grid_height_px) <> "px"),
+          attribute.style("grid-auto-flow", "dense"),
+          attribute.style("grid-auto-rows", int.to_string(bar_px) <> "px"),
           attribute.style("border-bottom", "1px solid oklch(0 0 0 / 8%)"),
         ],
-        bar_els,
+        group_els,
       )
     }
-
     // Now indicator: vertical line spanning all sub-rows, positioned inside time_grid.
     let now_offset = now_min - window.start_min
     let now_el = case is_today && now_offset >= 0 && now_offset <= total_min {
@@ -826,30 +753,9 @@ pub fn view_gantt(
         [html.text(weekday_name(day) <> " " <> format_date(day))],
       )
 
-    // Compute the grid height for each sub-row position so the left gutter can
-    // mirror the same heights for person-label alignment.
-    let sub_row_height = fn(pos: BarPos) -> Int {
-      let bars =
-        list.filter(
-          all_bars,
-          fn(t: #(BarPos, Int, Int, String, Bool, Bool, String, String)) {
-            t.0 == pos
-          },
-        )
-      let assigned = assign_lanes(bars)
-      let lane_count =
-        list.fold(assigned, 0, fn(mx, p) { int.max(mx, p.0 + 1) })
-      int.max(lane_count, 1) * bar_px
-    }
-    let sh_left = sub_row_height(BarLeft)
-    let sh_center = sub_row_height(BarCenter)
-    let sh_right = sub_row_height(BarRight)
-
-    // Left gutter: date + all-day chips (in a top section), then three sub-row
-    // sections whose heights mirror the time grid sub-rows so person labels
-    // sit vertically centered within the correct lane band.
-    //
-    // A thin spacer at the top matches the hour-tick header strip height.
+    // Left gutter: date, all-day chips, tick-strip spacer, then person labels.
+    // Sub-row heights are now browser-determined (CSS grid auto-rows), so we
+    // can't mirror them exactly; person labels sit below the tick strip.
     let person_label = fn(name: String) -> Element(msg) {
       case name {
         "" -> element.none()
@@ -863,16 +769,6 @@ pub fn view_gantt(
           )
       }
     }
-    let sub_row_gutter = fn(h: Int, child: Element(msg)) -> Element(msg) {
-      html.div(
-        [
-          attribute.class("flex items-center"),
-          attribute.style("height", int.to_string(h) <> "px"),
-          attribute.style("border-bottom", "1px solid oklch(0 0 0 / 8%)"),
-        ],
-        [child],
-      )
-    }
     let left_gutter =
       html.div(
         [
@@ -884,18 +780,13 @@ pub fn view_gantt(
         list.flatten([
           [date_label],
           all_day_chips,
-          // Tick header spacer — matches the hour-tick strip height above sub-rows.
           [
             html.div(
               [attribute.style("height", int.to_string(tick_header_px) <> "px")],
               [],
             ),
-          ],
-          // Three sub-row gutters mirror the time grid grid heights.
-          [
-            sub_row_gutter(sh_left, person_label(person0)),
-            sub_row_gutter(sh_center, element.none()),
-            sub_row_gutter(sh_right, person_label(person1)),
+            person_label(person0),
+            person_label(person1),
           ],
         ]),
       )
