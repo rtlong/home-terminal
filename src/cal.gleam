@@ -780,6 +780,7 @@ pub fn view_gantt(
                     "shrink-0 max-w-full truncate font-medium leading-none",
                   ),
                   attribute.style("font-size", "9px"),
+                  attribute.style("padding-left", "3px"),
                 ],
                 [html.text(label)],
               ),
@@ -803,10 +804,9 @@ pub fn view_gantt(
             list.flatten([
               [
                 attribute.class(
-                  "overflow-hidden flex items-center gap-0.5 px-1 pointer-events-none select-none rounded-sm",
+                  "overflow-hidden flex items-center gap-0.5 pointer-events-none select-none rounded-sm",
                 ),
                 attribute.style("flex", int.to_string(flex_val) <> " 0 0"),
-                attribute.style("box-sizing", "border-box"),
                 attribute.style("min-width", "0"),
                 attribute.style("background-color", color),
                 attribute.style("opacity", "0.85"),
