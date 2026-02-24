@@ -1097,22 +1097,31 @@ fn view_timeline(
     // both bars have events.
     let has_opposing = !list.is_empty(opposing_segs)
 
-    // Build label divs as a flow list. Each carries a margin-top equal to the
-    // time gap between this seg's top_min and the previous seg's top_min
-    // (as a percentage of the window). The browser stacks them naturally —
-    // if a label is taller than its gap the next one just flows below it.
+    // Build label divs, absolutely positioned within the column.
+    // Each label's top = max(seg.top_min, prev_label_bottom + gap) so labels
+    // never overlap each other. We track last_bottom in minutes to nudge;
+    // cap the reservation at 90min so spanning events (dur_min ~840) don't
+    // push all subsequent labels off screen.
+    let label_gap_min = 3
+    let label_reserve = fn(seg: BarSegment) -> Int {
+      int.max(int.min(seg.dur_min, 90), 12)
+    }
     let label_children =
-      list.fold(sorted_segs, #([], 0), fn(acc, seg) {
-        let #(children, prev_top) = acc
+      list.fold(sorted_segs, #([], -999), fn(acc, seg) {
+        let #(children, last_bottom) = acc
         case seg.label {
-          "" -> #(children, seg.top_min)
+          "" -> #(children, last_bottom)
           _ -> {
-            let gap_min = int.max(seg.top_min - prev_top, 0)
+            let top = int.max(seg.top_min, last_bottom + label_gap_min)
             let label_div =
               html.div(
                 [
-                  attribute.class("select-none pointer-events-none min-w-0"),
-                  attribute.style("margin-top", fpct(int_to_float(gap_min))),
+                  attribute.class(
+                    "absolute select-none pointer-events-none min-w-0",
+                  ),
+                  attribute.style("top", pct(top)),
+                  attribute.style("left", "0"),
+                  attribute.style("right", "0"),
                 ],
                 [
                   html.p(
@@ -1140,7 +1149,7 @@ fn view_timeline(
                   },
                 ],
               )
-            #(list.append(children, [label_div]), seg.top_min)
+            #(list.append(children, [label_div]), top + label_reserve(seg))
           }
         }
       })
