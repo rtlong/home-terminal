@@ -885,9 +885,13 @@ fn view_timeline(
   }
 
   // ── Lane assignment ────────────────────────────────────────────────────────
-  // Event segs are packed into lanes by interval overlap.
-  // Travel segs inherit the lane of their parent event (matched by color).
-  // If no parent event matches, they go in lane 0.
+  // Event segs are packed into lanes by interval overlap or abutment.
+  // Two strips abut when one ends exactly where the next begins — they get
+  // separate lanes so they are visually distinct (especially same-color strips).
+  // Travel segs inherit the lane of their temporally adjacent parent event:
+  //   DriveFrom: travel starts where event ends  → match ev where ev.end == seg.top_min
+  //   DriveTo:   travel ends where event starts   → match ev where ev.top_min == seg.end
+  // Fall back to color-only match if no adjacency found.
   let assign_lanes = fn(
     event_segs: List(BarSegment),
     travel_segs: List(BarSegment),
@@ -904,7 +908,8 @@ fn view_timeline(
               Ok(_) -> found
               Error(_) -> {
                 let #(lane, last_end) = pair
-                case last_end <= seg.top_min {
+                // Strict < so abutting strips (last_end == seg.top_min) go to a new lane.
+                case last_end < seg.top_min {
                   True -> Ok(lane)
                   False -> Error(Nil)
                 }
@@ -937,16 +942,42 @@ fn view_timeline(
       list.map(assigned_events, fn(seg) {
         BarSegment(..seg, col_count: total_lanes)
       })
-    // Travel segs: match to parent event by color, inherit col/col_count.
+    // Travel segs: find the event that temporally touches this travel block.
+    // A DriveFrom travel starts where its event ends; a DriveTo travel ends where its event starts.
+    // We prefer adjacency match (exact touch) over color-only match so that when multiple
+    // events share the same color, we pick the right one.
     let assigned_travel =
       list.map(travel_segs, fn(seg) {
+        let seg_end = seg.top_min + seg.dur_min
         let col =
-          list.fold(assigned_events, 0, fn(found, ev) {
-            case ev.color == seg.color {
-              True -> ev.col
-              False -> found
+          list.fold(assigned_events, Error(0), fn(found, ev) {
+            let ev_end = ev.top_min + ev.dur_min
+            case
+              // Already found an adjacent match — keep it.
+              found,
+              // DriveFrom: event ends exactly where travel starts.
+              ev_end == seg.top_min && ev.color == seg.color,
+              // DriveTo: travel ends exactly where event starts.
+              ev.top_min == seg_end && ev.color == seg.color
+            {
+              Ok(c), _, _ -> Ok(c)
+              _, True, _ -> Ok(ev.col)
+              _, _, True -> Ok(ev.col)
+              Error(c), False, False ->
+                case ev.color == seg.color {
+                  // Color-only fallback — keep updating so we get the last match,
+                  // but mark as Error so a later adjacency match can override it.
+                  True -> Error(ev.col)
+                  False -> Error(c)
+                }
             }
           })
+          |> fn(r) {
+            case r {
+              Ok(c) -> c
+              Error(c) -> c
+            }
+          }
         BarSegment(..seg, col:, col_count: total_lanes)
       })
     list.append(assigned_events, assigned_travel)
@@ -1043,18 +1074,28 @@ fn view_timeline(
     // Label deconfliction: next label must start no earlier than the previous
     // segment's end (top + dur) plus a small gap. This prevents a long label
     // from visually running into the next segment's label even if the text wraps.
-    let label_gap_min = 8
+    // gap_min: minimum gap between the bottom of one label and the top of the next.
+    let label_gap_min = 3
     let sorted_segs =
       list.sort(segs, fn(a, b) { int.compare(a.top_min, b.top_min) })
-    // label_height_min: estimate of a 2-line label at 9px font (~20px ≈ 4 min at 5px/min).
-    // We carry this forward so only genuinely overlapping labels are nudged,
-    // rather than reserving the full seg.dur_min (which pushes labels far below their events).
-    let label_height_min = 4
+    // Estimate label height in minutes based on number of text lines.
+    // At 9px font with leading-tight (~1.15), one line ≈ 11px.
+    // Window is typically ~840 min over ~800px → ~0.95 px/min → 11px ≈ 12 min.
+    // Events have 2 lines (summary + time); travel has 1 line.
+    // We use these estimates to reserve space so the next label doesn't overlap,
+    // without capping the label height in CSS (labels are now unconstrained).
+    let label_height_min = fn(seg: BarSegment) -> Int {
+      case seg.thick, seg.label2 {
+        True, "" -> 12
+        True, _ -> 22
+        False, _ -> 12
+      }
+    }
     let nudged =
       list.fold(sorted_segs, #([], -999), fn(acc, seg) {
         let #(placed, last_bottom) = acc
         let actual = int.max(seg.top_min, last_bottom + label_gap_min)
-        let bottom = actual + label_height_min
+        let bottom = actual + label_height_min(seg)
         #(list.append(placed, [#(actual, seg)]), bottom)
       })
       |> fn(p) { p.0 }
@@ -1097,14 +1138,8 @@ fn view_timeline(
             [
               html.div(
                 [
-                  attribute.class(
-                    "absolute select-none pointer-events-none overflow-hidden",
-                  ),
-                  attribute.styles([
-                    #("top", pct(label_top)),
-                    #("max-height", fpct(int_to_float(seg.dur_min))),
-                    ..label_attrs
-                  ]),
+                  attribute.class("absolute select-none pointer-events-none"),
+                  attribute.styles([#("top", pct(label_top)), ..label_attrs]),
                 ],
                 [
                   html.p(
