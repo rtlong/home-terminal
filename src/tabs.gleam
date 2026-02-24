@@ -320,6 +320,8 @@ fn view_active_tab(model: Model) -> Element(Msg) {
                 model.calendar_data.cal_config.home_address,
                 bars_for_event,
                 cfg.people,
+                model.calendar_data.cal_config.latitude,
+                model.calendar_data.cal_config.longitude,
               ),
             ],
           )

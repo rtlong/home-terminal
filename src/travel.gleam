@@ -55,6 +55,69 @@ pub fn leg_cache_key(origin: String, destination: String) -> String {
   origin <> "|||" <> destination
 }
 
+// GEOCODING -------------------------------------------------------------------
+
+/// Lat/lon result from geocoding an address.
+pub type GeocodedLocation {
+  GeocodedLocation(lat: Float, lng: Float)
+}
+
+/// Geocode an address string to lat/lon using the Google Maps Geocoding API.
+/// Returns Error(reason) if the key is absent, the request fails, or the
+/// address cannot be resolved.
+pub fn geocode_address(
+  address: String,
+  api_key: String,
+) -> Result(GeocodedLocation, String) {
+  let params =
+    [#("address", address), #("key", api_key)]
+    |> list.map(fn(p) {
+      uri.percent_encode(p.0) <> "=" <> uri.percent_encode(p.1)
+    })
+    |> string.join("&")
+
+  let url = "https://maps.googleapis.com/maps/api/geocode/json?" <> params
+
+  use req <- result.try(
+    request.to(url)
+    |> result.map_error(fn(_) { "failed to build geocode request" }),
+  )
+
+  use resp <- result.try(
+    hackney.send(req)
+    |> result.map_error(fn(err) {
+      "geocode HTTP request failed: " <> string.inspect(err)
+    }),
+  )
+
+  // Navigate: status, results[0].geometry.location.{lat,lng}
+  // Decode the first result's location via list + decode.then.
+  let location_decoder = {
+    use lat <- decode.subfield(["geometry", "location", "lat"], decode.float)
+    use lng <- decode.subfield(["geometry", "location", "lng"], decode.float)
+    decode.success(#(lat, lng))
+  }
+  let first_result_decoder =
+    decode.list(location_decoder)
+    |> decode.then(fn(results) {
+      case results {
+        [first, ..] -> decode.success(first)
+        [] -> decode.failure(#(0.0, 0.0), "non-empty results")
+      }
+    })
+  let decoder = {
+    use status <- decode.field("status", decode.string)
+    use latlon <- decode.field("results", first_result_decoder)
+    decode.success(#(status, latlon.0, latlon.1))
+  }
+
+  case json.parse(resp.body, decoder) {
+    Error(e) -> Error("geocode parse error: " <> string.inspect(e))
+    Ok(#("OK", lat, lng)) -> Ok(GeocodedLocation(lat:, lng:))
+    Ok(#(status, _, _)) -> Error("geocode API status: " <> status)
+  }
+}
+
 // PUBLIC API ------------------------------------------------------------------
 
 /// Query the Distance Matrix API and return travel info (home → destination).

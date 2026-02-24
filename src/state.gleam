@@ -45,6 +45,10 @@ pub type Config {
     people_colors: Dict(String, String),
     /// Per-calendar display settings (visibility, color).
     calendars: Dict(String, CalendarConfig),
+    /// Geographic coordinates for sunrise/sunset calculation.
+    /// Decimal degrees: positive = N/E, negative = S/W.
+    latitude: Float,
+    longitude: Float,
   )
 }
 
@@ -56,6 +60,8 @@ pub fn empty_config() -> Config {
     calendar_people: dict.new(),
     people_colors: dict.new(),
     calendars: dict.new(),
+    latitude: 0.0,
+    longitude: 0.0,
   )
 }
 
@@ -302,6 +308,8 @@ fn encode_config(config: Config) -> json.Json {
     #("calendar_people", json.object(cal_people_entries)),
     #("people_colors", json.object(people_colors_entries)),
     #("calendars", json.object(cal_entries)),
+    #("latitude", json.float(config.latitude)),
+    #("longitude", json.float(config.longitude)),
   ])
 }
 
@@ -370,12 +378,16 @@ fn config_decoder() -> decode.Decoder(Config) {
     dict.new(),
     decode.dict(decode.string, calendar_config_decoder()),
   )
+  use latitude <- decode.optional_field("latitude", 0.0, decode.float)
+  use longitude <- decode.optional_field("longitude", 0.0, decode.float)
   decode.success(Config(
     home_address:,
     people:,
     calendar_people:,
     people_colors:,
     calendars:,
+    latitude:,
+    longitude:,
   ))
 }
 

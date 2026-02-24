@@ -4,6 +4,7 @@ import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
 import gleam/order
+import gleam/result
 import gleam/string
 import gleam/time/calendar.{type Date, Date}
 import gleam/time/duration
@@ -190,6 +191,8 @@ pub fn view_gantt(
   home_address: String,
   bars_for_event: fn(Event) -> List(#(BarPos, String)),
   people: List(String),
+  latitude: Float,
+  longitude: Float,
 ) -> Element(msg) {
   let now = timestamp.system_time()
   let local_offset = calendar.local_offset()
@@ -231,6 +234,16 @@ pub fn view_gantt(
   let window = compute_window(day_timed_lists, all_day_blocks, local_offset)
   let total_min = window.end_min - window.start_min
   let total_f = int_to_float(total_min)
+
+  // Compute sunrise/sunset times for each day (when lat/lon are configured).
+  let utc_offset_hours = duration.to_seconds(local_offset) /. 3600.0
+  let day_sun_times =
+    list.map(days, fn(day) {
+      case latitude == 0.0 && longitude == 0.0 {
+        True -> Error(Nil)
+        False -> compute_sun_times(day, latitude, longitude, utc_offset_hours)
+      }
+    })
 
   // Percentage helpers relative to the time window.
   let xpct = fn(min: Int) -> String {
@@ -382,6 +395,7 @@ pub fn view_gantt(
     day_timed: List(Event),
     day_blocks: List(TravelBlock),
     all_day_events: List(Event),
+    sun_times: Result(SunTimes, Nil),
   ) -> Element(msg) {
     // Build horizontal segments for timed events.
     // Cross-midnight events are treated differently per day:
@@ -984,6 +998,131 @@ pub fn view_gantt(
         list.flatten([[date_label], all_day_chips]),
       )
 
+    // Day/night gradient background based on sunrise/sunset times.
+    // Phases: night → civil dawn → sunrise → daylight → sunset → civil dusk → night
+    // Only rendered when sun_times is available (lat/lon configured and sun rises/sets).
+    let sun_gradient_el = case sun_times {
+      Error(_) -> element.none()
+      Ok(st) -> {
+        // Convert absolute minutes-since-midnight to window-relative percentage strings.
+        let sun_pct = fn(abs_min: Int) -> String {
+          let rel = abs_min - window.start_min
+          float_pct(int_to_float(rel) /. total_f *. 100.0)
+        }
+        // Clamp to [0%, 100%] so stops outside the window don't distort the gradient.
+        let clamp_pct = fn(abs_min: Int) -> Int {
+          int.max(window.start_min, int.min(window.end_min, abs_min))
+        }
+        let dawn_pct = sun_pct(clamp_pct(st.civil_dawn))
+        let rise_pct = sun_pct(clamp_pct(st.sunrise))
+        // A brief "post-dawn glow" stop partway between sunrise and 30min later.
+        let glow_end = clamp_pct(st.sunrise + 30)
+        let glow_end_pct = sun_pct(glow_end)
+        let glow_start = clamp_pct(st.sunset - 30)
+        let glow_start_pct = sun_pct(glow_start)
+        let set_pct = sun_pct(clamp_pct(st.sunset))
+        let dusk_pct = sun_pct(clamp_pct(st.civil_dusk))
+        // Colours
+        let night_color = "oklch(0.18 0.04 260 / 55%)"
+        let dawn_color = "oklch(0.45 0.08 40 / 40%)"
+        let glow_color = "oklch(0.70 0.12 55 / 25%)"
+        let day_color = "oklch(1 0 0 / 0%)"
+        // Build gradient stops as a comma-separated string
+        let stops =
+          string.join(
+            [
+              night_color <> " " <> dawn_pct,
+              dawn_color <> " " <> rise_pct,
+              glow_color <> " " <> glow_end_pct,
+              day_color <> " " <> glow_end_pct,
+              day_color <> " " <> glow_start_pct,
+              glow_color <> " " <> glow_start_pct,
+              dawn_color <> " " <> set_pct,
+              night_color <> " " <> dusk_pct,
+            ],
+            ", ",
+          )
+        html.div(
+          [
+            attribute.class("absolute inset-0 pointer-events-none"),
+            attribute.style(
+              "background",
+              "linear-gradient(to right, "
+                <> night_color
+                <> ", "
+                <> stops
+                <> ", "
+                <> night_color
+                <> ")",
+            ),
+          ],
+          [],
+        )
+      }
+    }
+
+    // Sunrise/sunset markers: small icon + time label on the tick strip.
+    let sun_markers_el = case sun_times {
+      Error(_) -> element.none()
+      Ok(st) -> {
+        let make_marker = fn(abs_min: Int, symbol: String, is_rise: Bool) -> List(
+          Element(msg),
+        ) {
+          let rel = abs_min - window.start_min
+          case rel > 0 && rel < total_min {
+            False -> []
+            True -> {
+              let col = int.to_string(rel + 1)
+              let color = case is_rise {
+                True -> "oklch(0.65 0.15 55)"
+                False -> "oklch(0.55 0.12 30)"
+              }
+              [
+                html.div(
+                  [
+                    attribute.class("pointer-events-none select-none absolute"),
+                    attribute.style("grid-column", col),
+                    attribute.style("grid-row", "1"),
+                    attribute.style("align-self", "start"),
+                    attribute.style("display", "flex"),
+                    attribute.style("flex-direction", "column"),
+                    attribute.style("align-items", "center"),
+                    attribute.style("font-size", "7px"),
+                    attribute.style("color", color),
+                    attribute.style("line-height", "1"),
+                    attribute.style("white-space", "nowrap"),
+                    attribute.style("z-index", "2"),
+                  ],
+                  [html.text(symbol)],
+                ),
+              ]
+            }
+          }
+        }
+        let all_markers =
+          list.flatten([
+            make_marker(st.sunrise, "☀", True),
+            make_marker(st.sunset, "☀", False),
+          ])
+        case all_markers {
+          [] -> element.none()
+          markers ->
+            html.div(
+              [
+                attribute.class("absolute inset-0 pointer-events-none"),
+                attribute.style("display", "grid"),
+                attribute.style("grid-template-columns", grid_cols_str),
+                attribute.style(
+                  "grid-template-rows",
+                  int.to_string(tick_header_px) <> "px 1fr",
+                ),
+              ],
+              markers,
+            )
+        }
+      }
+    }
+
     // Combined overlay: gridlines + tick labels in a single absolute grid.
     // Row 1 = tick_header_px tall (labels live here).
     // Row 2 = 1fr (fills remaining height, gridlines cover both rows via 1/3).
@@ -1022,7 +1161,11 @@ pub fn view_gantt(
             html.div(
               [attribute.class("relative flex-1 flex flex-col min-w-0")],
               list.flatten([
+                // Day/night gradient (behind everything).
+                [sun_gradient_el],
                 [grid_line_overlay],
+                // Sunrise/sunset markers overlay.
+                [sun_markers_el],
                 // Spacer that holds the tick label row height in flow.
                 [
                   html.div(
@@ -1073,12 +1216,22 @@ pub fn view_gantt(
     [
       html.div(
         [attribute.class("flex-1 min-h-0 flex flex-col")],
-        list.map(list.zip(days, day_timed_and_blocks), fn(pair) {
-          let #(day, #(day_timed, day_blocks)) = pair
-          let all_day =
-            list.filter(events, fn(e) { all_day_spans_date(e, day) })
-          view_gantt_day(day, day == today_date, day_timed, day_blocks, all_day)
-        }),
+        list.map(
+          list.zip(days, list.zip(day_timed_and_blocks, day_sun_times)),
+          fn(pair) {
+            let #(day, #(#(day_timed, day_blocks), sun_times)) = pair
+            let all_day =
+              list.filter(events, fn(e) { all_day_spans_date(e, day) })
+            view_gantt_day(
+              day,
+              day == today_date,
+              day_timed,
+              day_blocks,
+              all_day,
+              sun_times,
+            )
+          },
+        ),
       ),
     ],
   )
@@ -1335,6 +1488,148 @@ fn weekday_name(date: Date) -> String {
     _ -> "???"
   }
 }
+
+// SUNRISE / SUNSET CALCULATION ------------------------------------------------
+
+/// Sun times for a given day: minutes-since-midnight (local time) for each
+/// phase. Returns Error(Nil) if the sun never rises/sets (polar extremes).
+pub type SunTimes {
+  SunTimes(civil_dawn: Int, sunrise: Int, sunset: Int, civil_dusk: Int)
+}
+
+/// Compute sunrise, sunset, civil dawn and civil dusk for a given date and
+/// location. Returns Error(Nil) if the sun doesn't rise or set that day.
+///
+/// Algorithm: Sunrise Equation (Wikipedia / Jean Meeus simplified form).
+/// `utc_offset_hours` is the UTC offset in hours (e.g. -5.0 for EST, -4.0 for EDT).
+pub fn compute_sun_times(
+  date: Date,
+  lat: Float,
+  lon: Float,
+  utc_offset_hours: Float,
+) -> Result(SunTimes, Nil) {
+  // Julian date (noon = integer).
+  let year = date.year
+  let month = calendar.month_to_int(date.month)
+  let day = date.day
+  // Simple Julian date formula valid for modern dates.
+  let jd =
+    int_to_float(
+      367
+      * year
+      - { 7 * { year + { month + 9 } / 12 } }
+      / 4
+      + 275
+      * month
+      / 9
+      + day
+      + 1_721_013,
+    )
+    +. 0.5
+
+  // Current Julian cycle number (days since J2000.0 noon, offset for longitude).
+  let j2000 = 2_451_545.0
+  let n = float_round(jd -. j2000 +. 0.0008 -. lon /. 360.0)
+  let n_f = int_to_float(n)
+
+  // Mean solar noon.
+  let j_star = n_f -. lon /. 360.0
+
+  // Solar mean anomaly (degrees).
+  let m_deg = mod_f(357.5291 +. 0.98560028 *. j_star, 360.0)
+  let m = to_rad(m_deg)
+
+  // Equation of the center.
+  let c =
+    1.9148
+    *. math_sin(m)
+    +. 0.02
+    *. math_sin(2.0 *. m)
+    +. 0.0003
+    *. math_sin(3.0 *. m)
+
+  // Ecliptic longitude of the sun (degrees).
+  let lam = mod_f(m_deg +. c +. 180.0 +. 102.9372, 360.0)
+
+  // Solar transit (Julian date of solar noon).
+  let j_transit =
+    j2000
+    +. j_star
+    +. 0.0053
+    *. math_sin(m)
+    -. 0.0069
+    *. math_sin(2.0 *. to_rad(lam))
+
+  // Declination of the sun.
+  let sin_d = math_sin(to_rad(lam)) *. math_sin(to_rad(23.4397))
+  let cos_d = math_cos(math_asin(sin_d))
+
+  // Hour angle for a given altitude (negative = below horizon).
+  // altitude = -0.833° for geometric sunrise/sunset (accounts for refraction + disc radius).
+  // altitude = -6.0°  for civil twilight.
+  let hour_angle = fn(altitude_deg: Float) -> Result(Float, Nil) {
+    let cos_ha =
+      { math_sin(to_rad(altitude_deg)) -. math_sin(to_rad(lat)) *. sin_d }
+      /. { math_cos(to_rad(lat)) *. cos_d }
+    case cos_ha >. 1.0 || cos_ha <. -1.0 {
+      True -> Error(Nil)
+      False -> Ok(to_deg(math_acos(cos_ha)))
+    }
+  }
+
+  // Convert a Julian date offset from transit to local minutes-since-midnight.
+  let jd_offset_to_local_min = fn(offset_days: Float) -> Int {
+    let frac = mod_f(j_transit +. offset_days -. j2000 +. 0.5, 1.0)
+    let utc_min = float_round(frac *. 1440.0)
+    let local_min = utc_min + float_round(utc_offset_hours *. 60.0)
+    { local_min % 1440 + 1440 } % 1440
+  }
+
+  use ha_sun <- result.try(hour_angle(-0.833))
+  use ha_civ <- result.try(hour_angle(-6.0))
+
+  let sunrise_min = jd_offset_to_local_min(0.0 -. ha_sun /. 360.0)
+  let sunset_min = jd_offset_to_local_min(ha_sun /. 360.0)
+  let dawn_min = jd_offset_to_local_min(0.0 -. ha_civ /. 360.0)
+  let dusk_min = jd_offset_to_local_min(ha_civ /. 360.0)
+
+  Ok(SunTimes(
+    civil_dawn: dawn_min,
+    sunrise: sunrise_min,
+    sunset: sunset_min,
+    civil_dusk: dusk_min,
+  ))
+}
+
+/// Modulo for floats (always returns a non-negative result).
+fn mod_f(a: Float, b: Float) -> Float {
+  let n = math_floor(a /. b)
+  a -. b *. n
+}
+
+fn to_rad(deg: Float) -> Float {
+  deg *. 0.017453292519943295
+}
+
+fn to_deg(rad: Float) -> Float {
+  rad *. 57.29577951308232
+}
+
+// Math FFI (Erlang :math module)
+@external(erlang, "math", "sin")
+fn math_sin(x: Float) -> Float
+
+@external(erlang, "math", "cos")
+fn math_cos(x: Float) -> Float
+
+@external(erlang, "math", "asin")
+fn math_asin(x: Float) -> Float
+
+@external(erlang, "math", "acos")
+fn math_acos(x: Float) -> Float
+
+@external(erlang, "math", "floor")
+fn math_floor(x: Float) -> Float
 
 // CSS HELPERS -----------------------------------------------------------------
 

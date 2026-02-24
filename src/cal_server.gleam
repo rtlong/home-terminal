@@ -264,9 +264,43 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
           )
           state.write_cache(state.data_dir, events)
 
+          // ── Geocode home address for sunrise/sunset if not yet cached ──────────
+          let new_cal_config = case
+            envoy.get("GOOGLE_MAPS_API_KEY"),
+            state.cal_config.home_address,
+            state.cal_config.latitude == 0.0
+            && state.cal_config.longitude == 0.0
+          {
+            Ok(api_key), home_address, True if home_address != "" -> {
+              case travel.geocode_address(home_address, api_key) {
+                Ok(loc) -> {
+                  log.println(
+                    "[cal_server] geocoded home address: lat="
+                    <> string.inspect(loc.lat)
+                    <> " lng="
+                    <> string.inspect(loc.lng),
+                  )
+                  let updated =
+                    state.Config(
+                      ..state.cal_config,
+                      latitude: loc.lat,
+                      longitude: loc.lng,
+                    )
+                  state.write_config(state.data_dir, updated)
+                  updated
+                }
+                Error(err) -> {
+                  log.println("[cal_server] geocode failed: " <> err)
+                  state.cal_config
+                }
+              }
+            }
+            _, _, _ -> state.cal_config
+          }
+
           let #(new_travel_cache, new_leg_cache) = case
             envoy.get("GOOGLE_MAPS_API_KEY"),
-            state.cal_config.home_address
+            new_cal_config.home_address
           {
             Ok(api_key), home_address if home_address != "" -> {
               // ── Phase A: home→loc for each new unique location ──────────────
@@ -416,6 +450,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
             ..state,
             events: Ok(events),
             calendar_names: cal_names,
+            cal_config: new_cal_config,
             fetched_at: now_secs,
             travel_cache: new_travel_cache,
             leg_cache: new_leg_cache,
