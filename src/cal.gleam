@@ -1010,9 +1010,16 @@ fn view_timeline(
           _ -> {
             let label_attrs = case center_bar {
               True -> [
-                #("left", "25%"),
-                #("right", "25%"),
-                #("text-align", "center"),
+                // Right edge of center group ≈ 50% + half group width.
+                // Labels start just past that, left-aligned, running to right edge.
+                #(
+                  "left",
+                  "calc(50% + "
+                    <> px_str(total_lanes * lane_stride / 2 + 2)
+                    <> ")",
+                ),
+                #("right", "0"),
+                #("text-align", "left"),
               ]
               False ->
                 case from_right {
