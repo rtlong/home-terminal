@@ -1075,103 +1075,44 @@ fn view_timeline(
         )
       })
 
-    // Labels float past the group into the center area.
-    // Label deconfliction: within each lane, nudge a label down if it would
-    // overlap the previous label. All labels on a bar share the same horizontal
-    // text area regardless of which lane the strip is in, so we deconflict
-    // globally across all lanes with a single last_bottom cursor.
-    // gap_min: minimum gap between the bottom of one label and the top of the next.
-    let label_gap_min = 3
+    // Labels: one absolutely-positioned flex column per bar, containing normal-flow
+    // label divs. Each label gets a margin-top equal to the time gap since the
+    // previous seg's top_min (as a percentage of the window). The browser handles
+    // text wrapping, natural height, and stacking — no height estimation needed.
+    // If a label is taller than its time gap the next label just flows down below it.
+    //
+    // Horizontal extent: the column runs from label_edge (past the outermost strip)
+    // to the far edge by default. When an opposing-bar seg overlaps this seg's time
+    // range we constrain the label to its own half so the two don't collide.
+    // We test against seg.top_min..seg.top_min+seg.dur_min (the strip time range),
+    // which is exact and needs no height estimate.
+    let label_edge =
+      anchor_px + { total_lanes - 1 } * lane_stride + lane_w / 2 + 2
+
     let sorted_segs =
       list.sort(segs, fn(a, b) { int.compare(a.top_min, b.top_min) })
-    // Reserve space for each label so subsequent labels don't collide.
-    // Use seg.dur_min as the base reservation (so back-to-back events push each
-    // other's labels apart naturally), but clamp the range:
-    //   - floor 12min: ~1 line at 9px font; ensures even tiny travel segs leave room
-    //   - cap 90min: ~8 lines; prevents spanning events (dur_min up to 840)
-    //     from pushing all subsequent labels off the bottom of the screen.
-    // 90min covers the worst realistic case: a long wrapping event title can render
-    // to ~90px ≈ 95min at the typical window scale (800px over 840min).
-    let label_height_min = fn(seg: BarSegment) -> Int {
-      int.max(int.min(seg.dur_min, 90), 12)
-    }
-    let nudged =
-      list.fold(sorted_segs, #([], -999), fn(acc, seg) {
-        let #(placed, last_bottom) = acc
-        let actual = int.max(seg.top_min, last_bottom + label_gap_min)
-        let bottom = actual + label_height_min(seg)
-        #(list.append(placed, [#(actual, seg)]), bottom)
-      })
-      |> fn(p) { p.0 }
 
-    let label_els =
-      list.flat_map(nudged, fn(pair) {
-        let #(label_top, seg) = pair
+    // Whether any opposing seg exists at all — used to constrain the label
+    // column width so left and right labels don't collide in columns where
+    // both bars have events.
+    let has_opposing = !list.is_empty(opposing_segs)
+
+    // Build label divs as a flow list. Each carries a margin-top equal to the
+    // time gap between this seg's top_min and the previous seg's top_min
+    // (as a percentage of the window). The browser stacks them naturally —
+    // if a label is taller than its gap the next one just flows below it.
+    let label_children =
+      list.fold(sorted_segs, #([], 0), fn(acc, seg) {
+        let #(children, prev_top) = acc
         case seg.label {
-          "" -> []
+          "" -> #(children, seg.top_min)
           _ -> {
-            let label_attrs = case center_bar {
-              True -> [
-                // Right edge of center group ≈ 50% + half group width.
-                // Labels start just past that, left-aligned, running to right edge.
-                #(
-                  "left",
-                  "calc(50% + "
-                    <> px_str(total_lanes * lane_stride / 2 + 2)
-                    <> ")",
-                ),
-                #("right", "0"),
-                #("text-align", "left"),
-              ]
-              False -> {
-                // Label must clear the rightmost lane's strip right edge.
-                // Lane (total_lanes-1) center = anchor_px + (total_lanes-1)*lane_stride.
-                // Its right edge = center + lane_w/2.  Add 2px gap.
-                let label_edge =
-                  anchor_px + { total_lanes - 1 } * lane_stride + lane_w / 2 + 2
-                // Check whether any opposing-bar seg overlaps this label's time window.
-                // If so, constrain the label to its own half of the column so the two
-                // labels don't collide. Otherwise let it run to the far edge (right:0 /
-                // left:0), giving the text as much room as possible.
-                let label_h = label_height_min(seg)
-                let label_end = label_top + label_h
-                let opposing_overlap =
-                  list.any(opposing_segs, fn(opp) {
-                    let opp_end = opp.top_min + opp.dur_min
-                    // Overlapping if the label window and the opposing seg window intersect.
-                    label_top < opp_end && label_end > opp.top_min
-                  })
-                case from_right {
-                  False -> [
-                    #("left", px_str(label_edge)),
-                    #("right", case opposing_overlap {
-                      True -> "50%"
-                      False -> "0"
-                    }),
-                    #("text-align", "left"),
-                  ]
-                  True -> [
-                    #("left", case opposing_overlap {
-                      True -> "50%"
-                      False -> "0"
-                    }),
-                    #("right", px_str(label_edge)),
-                    #("text-align", "right"),
-                  ]
-                }
-              }
-            }
-            [
+            let gap_min = int.max(seg.top_min - prev_top, 0)
+            let label_div =
               html.div(
                 [
-                  attribute.class(
-                    "absolute select-none pointer-events-none overflow-hidden",
-                  ),
-                  attribute.styles([
-                    #("top", pct(label_top)),
-                    #("max-height", fpct(int_to_float(label_height_min(seg)))),
-                    ..label_attrs
-                  ]),
+                  attribute.class("select-none pointer-events-none min-w-0"),
+                  attribute.style("margin-top", fpct(int_to_float(gap_min))),
                 ],
                 [
                   html.p(
@@ -1198,11 +1139,56 @@ fn view_timeline(
                       )
                   },
                 ],
-              ),
-            ]
+              )
+            #(list.append(children, [label_div]), seg.top_min)
           }
         }
       })
+      |> fn(p) { p.0 }
+
+    // Wrap label children in a single absolutely-positioned flex column.
+    // When both bars have events (has_opposing), constrain to the near half
+    // of the column so left and right labels don't overlap horizontally.
+    let far_edge = case has_opposing {
+      True -> "50%"
+      False -> "0"
+    }
+    let label_col_attrs = case center_bar {
+      True -> [
+        attribute.style(
+          "left",
+          "calc(50% + " <> px_str(total_lanes * lane_stride / 2 + 2) <> ")",
+        ),
+        attribute.style("right", "0"),
+        attribute.style("text-align", "left"),
+      ]
+      False ->
+        case from_right {
+          False -> [
+            attribute.style("left", px_str(label_edge)),
+            attribute.style("right", far_edge),
+            attribute.style("text-align", "left"),
+          ]
+          True -> [
+            attribute.style("left", far_edge),
+            attribute.style("right", px_str(label_edge)),
+            attribute.style("text-align", "right"),
+          ]
+        }
+    }
+
+    let label_col =
+      html.div(
+        [
+          attribute.class(
+            "absolute top-0 bottom-0 flex flex-col select-none pointer-events-none overflow-hidden",
+          ),
+          ..label_col_attrs
+        ],
+        label_children,
+      )
+
+    let label_els = [label_col]
 
     list.append(seg_els, label_els)
   }
