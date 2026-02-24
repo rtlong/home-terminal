@@ -855,10 +855,18 @@ fn view_timeline(
       }
     })
 
-  let all_segs = list.append(event_segs, travel_segs)
+  let event_segs_for = fn(bar: BarPos) -> List(BarSegment) {
+    list.filter_map(event_segs, fn(pair) {
+      let #(b, seg) = pair
+      case b == bar {
+        True -> Ok(seg)
+        False -> Error(Nil)
+      }
+    })
+  }
 
-  let segs_for = fn(bar: BarPos) -> List(BarSegment) {
-    list.filter_map(all_segs, fn(pair) {
+  let travel_segs_for = fn(bar: BarPos) -> List(BarSegment) {
+    list.filter_map(travel_segs, fn(pair) {
       let #(b, seg) = pair
       case b == bar {
         True -> Ok(seg)
@@ -868,18 +876,19 @@ fn view_timeline(
   }
 
   // ── Lane assignment ────────────────────────────────────────────────────────
-  // Segments on the same bar that overlap in time are spread into side-by-side
-  // lanes. Uses a greedy interval-packing algorithm (same idea as all-day rows):
-  // sort by top_min, assign each segment to the first lane whose last segment
-  // ends at or before this segment's start.
-  let assign_lanes = fn(segs: List(BarSegment)) -> List(BarSegment) {
-    let sorted = list.sort(segs, fn(a, b) { int.compare(a.top_min, b.top_min) })
-    // lane_ends: List(#(lane_idx, end_min)) for currently occupied lanes
-    let #(assigned, lane_ends) =
+  // Event segs are packed into lanes by interval overlap.
+  // Travel segs inherit the lane of their parent event (matched by color).
+  // If no parent event matches, they go in lane 0.
+  let assign_lanes = fn(
+    event_segs: List(BarSegment),
+    travel_segs: List(BarSegment),
+  ) -> List(BarSegment) {
+    let sorted =
+      list.sort(event_segs, fn(a, b) { int.compare(a.top_min, b.top_min) })
+    let #(assigned_events, lane_ends) =
       list.fold(sorted, #([], []), fn(acc, seg) {
         let #(out, lane_ends) = acc
         let end_min = seg.top_min + seg.dur_min
-        // Find the first lane that is free (its end <= this seg's start)
         let maybe_lane =
           list.fold(lane_ends, Error(Nil), fn(found, pair) {
             case found {
@@ -914,14 +923,32 @@ fn view_timeline(
           }
         }
       })
-    // Second pass: set col_count = total lanes for all segments
-    let total_lanes = list.length(lane_ends)
-    list.map(assigned, fn(seg) { BarSegment(..seg, col_count: total_lanes) })
+    let total_lanes = int.max(list.length(lane_ends), 1)
+    let assigned_events =
+      list.map(assigned_events, fn(seg) {
+        BarSegment(..seg, col_count: total_lanes)
+      })
+    // Travel segs: match to parent event by color, inherit col/col_count.
+    let assigned_travel =
+      list.map(travel_segs, fn(seg) {
+        let col =
+          list.fold(assigned_events, 0, fn(found, ev) {
+            case ev.color == seg.color {
+              True -> ev.col
+              False -> found
+            }
+          })
+        BarSegment(..seg, col:, col_count: total_lanes)
+      })
+    list.append(assigned_events, assigned_travel)
   }
 
-  let left_segs = assign_lanes(segs_for(BarLeft))
-  let right_segs = assign_lanes(segs_for(BarRight))
-  let center_segs = assign_lanes(segs_for(BarCenter))
+  let left_segs =
+    assign_lanes(event_segs_for(BarLeft), travel_segs_for(BarLeft))
+  let right_segs =
+    assign_lanes(event_segs_for(BarRight), travel_segs_for(BarRight))
+  let center_segs =
+    assign_lanes(event_segs_for(BarCenter), travel_segs_for(BarCenter))
 
   // ── Layout constants ───────────────────────────────────────────────────────
   // lane_w: strip width in px. lane_stride: px between lane anchors.
