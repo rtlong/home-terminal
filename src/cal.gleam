@@ -687,35 +687,45 @@ pub fn view_gantt(
             True -> continuing_right
             False -> terminating_right
           }
-          // Label text (name + optional time), sitting above the axis line
-          let label_el = case label {
+          // Label box: solid background + border, attached to the axis line.
+          // Shows name and time (if non-quarter-hour) inline on the line.
+          let label_text = case label2, show_time {
+            t, True if t != "" -> label <> " " <> t
+            _, _ -> label
+          }
+          let label_box = case label {
             "" -> element.none()
             _ ->
               html.span(
                 [
                   attribute.class(
-                    "relative truncate pointer-events-none select-none",
+                    "shrink-0 pointer-events-none select-none leading-none",
                   ),
                   attribute.style("font-size", "8px"),
-                  attribute.style("color", color),
-                  attribute.style("opacity", "0.8"),
-                  attribute.style("line-height", "1"),
+                  attribute.style("color", "white"),
+                  attribute.style("background-color", color),
+                  attribute.style("border", "1px solid " <> color),
+                  attribute.style("opacity", "0.85"),
+                  attribute.style("border-radius", "2px"),
+                  attribute.style("padding", "1px 3px"),
                   attribute.style("white-space", "nowrap"),
-                  attribute.style("overflow", "hidden"),
-                  attribute.style("text-overflow", case show_time {
-                    True -> "ellipsis"
-                    False -> "clip"
-                  }),
                 ],
-                [
-                  html.text(case label2, show_time {
-                    t, True if t != "" -> label <> " " <> t
-                    _, _ -> label
-                  }),
-                ],
+                [html.text(label_text)],
               )
           }
-          // The axis line runs full-width; arrowheads and label are vertically centered.
+          // Axis row: left_cap — short line — label_box — line fills remainder — right_cap.
+          // All items are vertically centered on the axis.
+          let line_segment =
+            html.div(
+              [
+                attribute.style("flex", "1 0 0"),
+                attribute.style("height", "0"),
+                attribute.style("border-top", "1.5px solid " <> color),
+                attribute.style("opacity", "0.7"),
+                attribute.style("min-width", "4px"),
+              ],
+              [],
+            )
           html.div(
             [
               attribute.class(
@@ -724,42 +734,9 @@ pub fn view_gantt(
               attribute.style("flex", int.to_string(flex_val) <> " 0 0"),
               attribute.style("min-width", "0"),
               attribute.style("display", "flex"),
-              attribute.style("flex-direction", "column"),
-              attribute.style("justify-content", "center"),
-              attribute.style("align-items", "stretch"),
+              attribute.style("align-items", "center"),
             ],
-            [
-              // Label row above the line
-              html.div(
-                [
-                  attribute.style("display", "flex"),
-                  attribute.style("justify-content", "center"),
-                  attribute.style("padding-bottom", "1px"),
-                ],
-                [label_el],
-              ),
-              // Axis row: left cap + line + right cap
-              html.div(
-                [
-                  attribute.style("display", "flex"),
-                  attribute.style("align-items", "center"),
-                  attribute.style("min-width", "0"),
-                ],
-                [
-                  left_cap,
-                  html.div(
-                    [
-                      attribute.style("flex", "1 0 0"),
-                      attribute.style("height", "0"),
-                      attribute.style("border-top", "1.5px solid " <> color),
-                      attribute.style("opacity", "0.7"),
-                    ],
-                    [],
-                  ),
-                  right_cap,
-                ],
-              ),
-            ],
+            [left_cap, line_segment, label_box, line_segment, right_cap],
           )
         }
         // Normal (busy) events: solid filled bar with label.
@@ -913,8 +890,6 @@ pub fn view_gantt(
               attribute.class("flex flex-row"),
               attribute.style("grid-column", col_start <> " / " <> col_end),
               attribute.style("min-width", "0"),
-              attribute.style("margin-top", "2px"),
-              attribute.style("margin-bottom", "2px"),
             ],
             [render_event_bar(ev, ev_w)],
           )
