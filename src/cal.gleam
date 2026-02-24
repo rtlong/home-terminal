@@ -4,7 +4,6 @@ import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
 import gleam/order
-import gleam/result
 import gleam/string
 import gleam/time/calendar.{type Date, Date}
 import gleam/time/duration
@@ -85,25 +84,23 @@ pub type TravelBlock {
 /// Compute travel blocks for a day's timed events.
 ///
 /// For each located timed event, emits one DriveTo and one DriveFrom per
-/// person assigned to that event's calendar.
-/// `colors_for_event` returns one color per assigned person.
-/// `bar_for_event` maps each event to its bar position.
+/// assigned (bar, color) pair — so both-person events get travel on both bars.
+/// `bars_for_event` returns one #(BarPos, color) per assigned person.
 pub fn compute_travel_blocks(
   events: List(Event),
   leg_cache: LegCache,
   home_key: String,
   leg_key: fn(String, String) -> String,
-  colors_for_event: fn(Event) -> List(String),
-  bar_for_event: fn(Event) -> BarPos,
+  bars_for_event: fn(Event) -> List(#(BarPos, String)),
 ) -> List(TravelBlock) {
   list.flat_map(events, fn(e) {
     case e.location, e.start, e.end {
       loc, AtTime(start), AtTime(end) if loc != "" -> {
-        let colors = colors_for_event(e)
-        let bar = bar_for_event(e)
+        let pairs = bars_for_event(e)
         let to_secs = dict.get(leg_cache, leg_key(home_key, loc))
         let from_secs = dict.get(leg_cache, leg_key(loc, home_key))
-        list.flat_map(colors, fn(color) {
+        list.flat_map(pairs, fn(pair) {
+          let #(bar, color) = pair
           let to_block = case to_secs {
             Ok(secs) -> [
               DriveTo(
@@ -169,16 +166,14 @@ pub fn view_error(reason: String) -> Element(msg) {
 /// The main 7-day view. Shows events for today and the next 6 days.
 /// All columns share the same time window so timelines are aligned.
 /// `color_for` maps calendar_name → CSS color (used for all-day events).
-/// `colors_for_event` returns all person colors for an event (one per assigned person).
 /// `bars_for_event` returns one (BarPos, color) pair per assigned person — used for
-///   both rendering event segments and deciding travel block bars.
+///   rendering event segments and travel blocks on each person's bar.
 pub fn view_seven_days(
   events: List(Event),
   color_for: fn(String) -> String,
   travel_cache: Dict(String, TravelInfo),
   leg_cache: LegCache,
   home_address: String,
-  colors_for_event: fn(Event) -> List(String),
   bars_for_event: fn(Event) -> List(#(BarPos, String)),
 ) -> Element(msg) {
   let now = timestamp.system_time()
@@ -220,12 +215,7 @@ pub fn view_seven_days(
             leg_cache,
             addr,
             travel.leg_cache_key,
-            colors_for_event,
-            fn(e) {
-              list.map(bars_for_event(e), fn(pair) { pair.0 })
-              |> list.first
-              |> result.unwrap(BarCenter)
-            },
+            bars_for_event,
           )
       }
       #(day_timed, day_blocks)
@@ -620,6 +610,8 @@ pub type BarPos {
 }
 
 /// A segment on a bar: a vertical span with a color and optional label.
+/// `col` and `col_count` are assigned after overlap detection — overlapping
+/// segments within the same bar are spread into side-by-side lanes.
 type BarSegment {
   BarSegment(
     /// Minutes from window start.
@@ -633,6 +625,10 @@ type BarSegment {
     label: String,
     /// Secondary label line (time range for events, blank for travel).
     label2: String,
+    /// Lane within this bar (0 = primary, 1 = first overlap lane, …).
+    col: Int,
+    /// Total number of lanes in this bar's widest overlap group.
+    col_count: Int,
   )
 }
 
@@ -775,6 +771,8 @@ fn view_timeline(
                 thick: True,
                 label: e.summary <> loc_suffix,
                 label2: time_str,
+                col: 0,
+                col_count: 1,
               ),
             )
           })
@@ -807,6 +805,8 @@ fn view_timeline(
                   thick: False,
                   label: travel_text,
                   label2: "",
+                  col: 0,
+                  col_count: 1,
                 ),
               ))
           }
@@ -831,6 +831,8 @@ fn view_timeline(
                   thick: False,
                   label: travel_text <> " home",
                   label2: "",
+                  col: 0,
+                  col_count: 1,
                 ),
               ))
           }
@@ -850,46 +852,130 @@ fn view_timeline(
     })
   }
 
-  let left_segs = segs_for(BarLeft)
-  let right_segs = segs_for(BarRight)
-  let center_segs = segs_for(BarCenter)
+  // ── Lane assignment ────────────────────────────────────────────────────────
+  // Segments on the same bar that overlap in time are spread into side-by-side
+  // lanes. Uses a greedy interval-packing algorithm (same idea as all-day rows):
+  // sort by top_min, assign each segment to the first lane whose last segment
+  // ends at or before this segment's start.
+  let assign_lanes = fn(segs: List(BarSegment)) -> List(BarSegment) {
+    let sorted = list.sort(segs, fn(a, b) { int.compare(a.top_min, b.top_min) })
+    // lane_ends: List(#(lane_idx, end_min)) for currently occupied lanes
+    let #(assigned, lane_ends) =
+      list.fold(sorted, #([], []), fn(acc, seg) {
+        let #(out, lane_ends) = acc
+        let end_min = seg.top_min + seg.dur_min
+        // Find the first lane that is free (its end <= this seg's start)
+        let maybe_lane =
+          list.fold(lane_ends, Error(Nil), fn(found, pair) {
+            case found {
+              Ok(_) -> found
+              Error(_) -> {
+                let #(lane, last_end) = pair
+                case last_end <= seg.top_min {
+                  True -> Ok(lane)
+                  False -> Error(Nil)
+                }
+              }
+            }
+          })
+        case maybe_lane {
+          Ok(lane) -> {
+            let new_ends =
+              list.map(lane_ends, fn(pair) {
+                let #(l, _) = pair
+                case l == lane {
+                  True -> #(l, end_min)
+                  False -> pair
+                }
+              })
+            #(list.append(out, [BarSegment(..seg, col: lane)]), new_ends)
+          }
+          Error(_) -> {
+            let lane = list.length(lane_ends)
+            #(
+              list.append(out, [BarSegment(..seg, col: lane)]),
+              list.append(lane_ends, [#(lane, end_min)]),
+            )
+          }
+        }
+      })
+    // Second pass: set col_count = total lanes for all segments
+    let total_lanes = list.length(lane_ends)
+    list.map(assigned, fn(seg) { BarSegment(..seg, col_count: total_lanes) })
+  }
 
-  // ── Bar width constants ────────────────────────────────────────────────────
-  // Thick bar for events, thinner for travel.
-  let bar_w_thick = "10px"
-  let bar_w_travel = "7px"
+  let left_segs = assign_lanes(segs_for(BarLeft))
+  let right_segs = assign_lanes(segs_for(BarRight))
+  let center_segs = assign_lanes(segs_for(BarCenter))
+
+  // ── Layout constants ───────────────────────────────────────────────────────
+  // lane_w: strip width in px. lane_stride: px between lane anchors.
+  // Left bar anchor (from left): 24px — clears the hour-label gutter.
+  // Right bar anchor (from right): 8px.
+  let lane_w = 12
+  let lane_stride = 14
+  let left_anchor_px = 24
+  let right_anchor_px = 8
+
+  // px_str: integer → "Npx"
+  let px_str = fn(n: Int) -> String { int.to_string(n) <> "px" }
 
   // ── Render a bar + its labels ──────────────────────────────────────────────
-  // `side` is "left" or "right" or "center" for the bar position.
-  // `label_side` is "left" or "right" for the text-align / anchor of labels.
+  // `from_right`: True = bar anchored from right edge; False = from left edge.
+  // `anchor_px`: px from the anchor edge to the near side of lane 0.
+  // `center`: True = strips use calc(50% - offset) so the group is centered.
+  // Lanes expand inward. Labels float past the group into the column center.
   let render_bar = fn(
     segs: List(BarSegment),
-    bar_left: String,
-    bar_right: String,
-    label_left: String,
-    label_right: String,
-    label_align: String,
+    from_right: Bool,
+    anchor_px: Int,
+    center_bar: Bool,
   ) -> List(Element(msg)) {
-    // Segment elements (thick/thin strips on the bar)
+    let total_lanes =
+      list.fold(segs, 1, fn(acc, seg) { int.max(acc, seg.col_count) })
+    // The group spans anchor_px .. anchor_px + total_lanes*lane_stride from the edge.
+    let group_far_px = anchor_px + total_lanes * lane_stride
+
     let seg_els =
       list.map(segs, fn(seg) {
-        let w = case seg.thick {
-          True -> bar_w_thick
-          False -> bar_w_travel
+        let strip_w = case seg.thick {
+          True -> lane_w
+          False -> lane_w - 3
         }
         let opacity = case seg.thick {
-          True -> "0.85"
-          False -> "0.5"
+          True -> "0.9"
+          False -> "0.55"
+        }
+        let lane_offset = anchor_px + seg.col * lane_stride
+        // For center bar: position as calc(50% - half_group + lane_offset)
+        let pos_css = case center_bar {
+          True ->
+            "calc(50% - "
+            <> px_str(total_lanes * lane_stride / 2 - lane_offset)
+            <> ")"
+          False -> px_str(lane_offset)
         }
         html.div(
           [
-            attribute.class("absolute pointer-events-none"),
+            attribute.class("absolute pointer-events-none rounded-sm"),
             attribute.styles([
-              #("left", bar_left),
-              #("right", bar_right),
+              #(
+                case from_right {
+                  True -> "right"
+                  False -> "left"
+                },
+                pos_css,
+              ),
+              #(
+                case from_right {
+                  True -> "left"
+                  False -> "right"
+                },
+                "auto",
+              ),
               #("top", pct(seg.top_min)),
               #("height", fpct(int_to_float(seg.dur_min))),
-              #("width", w),
+              #("width", px_str(strip_w)),
               #("background-color", seg.color),
               #("opacity", opacity),
             ]),
@@ -898,64 +984,78 @@ fn view_timeline(
         )
       })
 
-    // Label deconfliction: sort by top_min, nudge downward to avoid overlaps.
-    // Minimum gap = 10 minutes in window-space (≈ one label height at typical zoom).
+    // Labels float past the group into the center area.
     let min_gap_min = 10
     let sorted_segs =
       list.sort(segs, fn(a, b) { int.compare(a.top_min, b.top_min) })
-
-    let nudged_labels =
+    let nudged =
       list.fold(sorted_segs, #([], -999), fn(acc, seg) {
         let #(placed, last_top) = acc
-        let ideal = seg.top_min
-        let actual = int.max(ideal, last_top + min_gap_min)
+        let actual = int.max(seg.top_min, last_top + min_gap_min)
         #(list.append(placed, [#(actual, seg)]), actual)
       })
       |> fn(p) { p.0 }
 
     let label_els =
-      list.flat_map(nudged_labels, fn(pair) {
+      list.flat_map(nudged, fn(pair) {
         let #(label_top, seg) = pair
         case seg.label {
           "" -> []
-          _ -> [
-            html.div(
-              [
-                attribute.class("absolute select-none pointer-events-none"),
-                attribute.styles([
-                  #("top", pct(label_top)),
-                  #("left", label_left),
-                  #("right", label_right),
-                  #("text-align", label_align),
-                ]),
-              ],
-              [
-                html.span(
-                  [
-                    attribute.class("leading-none font-medium"),
-                    attribute.style("font-size", "9px"),
-                    attribute.style(
-                      "color",
-                      "hsl(from " <> seg.color <> " h s 35%)",
-                    ),
-                  ],
-                  [html.text(seg.label)],
-                ),
-                case seg.label2 {
-                  "" -> element.none()
-                  t ->
-                    html.span(
-                      [
-                        attribute.class("leading-none block"),
-                        attribute.style("font-size", "9px"),
-                        attribute.style("color", "rgba(128,128,128,0.7)"),
-                      ],
-                      [html.text(t)],
-                    )
-                },
-              ],
-            ),
-          ]
+          _ -> {
+            let label_attrs = case center_bar {
+              True -> [
+                #("left", "25%"),
+                #("right", "25%"),
+                #("text-align", "center"),
+              ]
+              False ->
+                case from_right {
+                  False -> [
+                    #("left", px_str(group_far_px + 2)),
+                    #("right", "50%"),
+                    #("text-align", "left"),
+                  ]
+                  True -> [
+                    #("left", "50%"),
+                    #("right", px_str(group_far_px + 2)),
+                    #("text-align", "right"),
+                  ]
+                }
+            }
+            [
+              html.div(
+                [
+                  attribute.class("absolute select-none pointer-events-none"),
+                  attribute.styles([#("top", pct(label_top)), ..label_attrs]),
+                ],
+                [
+                  html.p(
+                    [
+                      attribute.class("leading-tight font-medium m-0"),
+                      attribute.style("font-size", "9px"),
+                      attribute.style(
+                        "color",
+                        "hsl(from " <> seg.color <> " h s 35%)",
+                      ),
+                    ],
+                    [html.text(seg.label)],
+                  ),
+                  case seg.label2 {
+                    "" -> element.none()
+                    t ->
+                      html.p(
+                        [
+                          attribute.class("leading-tight m-0"),
+                          attribute.style("font-size", "9px"),
+                          attribute.style("color", "rgba(128,128,128,0.7)"),
+                        ],
+                        [html.text(t)],
+                      )
+                  },
+                ],
+              ),
+            ]
+          }
         }
       })
 
@@ -963,16 +1063,9 @@ fn view_timeline(
   }
 
   // ── Render the three bars ──────────────────────────────────────────────────
-  // Bars are inset from column edges so they sit visually inside the day.
-  // Left bar: 8px from left edge. Right bar: 8px from right edge.
-  // Center bar: centered.
-  let bar_inset = "8px"
-  let left_els =
-    render_bar(left_segs, bar_inset, "auto", bar_w_thick, "50%", "left")
-  let right_els =
-    render_bar(right_segs, "auto", bar_inset, "50%", bar_w_thick, "right")
-  let center_els =
-    render_bar(center_segs, "calc(50% - 3px)", "auto", "0", "0", "center")
+  let left_els = render_bar(left_segs, False, left_anchor_px, False)
+  let right_els = render_bar(right_segs, True, right_anchor_px, False)
+  let center_els = render_bar(center_segs, False, 0, True)
 
   html.div(
     [attribute.class("relative flex-1 min-h-0 overflow-hidden")],
