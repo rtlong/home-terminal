@@ -88,8 +88,8 @@ pub fn generate(
     dict.fold(groups, dict.new(), fn(acc, key, cal_names) {
       let target_hue = group_target_hue(key, person_hues, all_people, base_hue)
       let n = list.length(cal_names)
-      // Fan width: spread evenly up to ±30° total (so each step ≤ 15°).
-      let spread = float.min(60.0, int_to_float(n) *. 15.0)
+      // Fan width: spread evenly up to ±16° total (so each step ≤ 8°).
+      let spread = float.min(32.0, int_to_float(n) *. 8.0)
       let step = case n {
         1 -> 0.0
         _ -> spread /. int_to_float(n - 1)
