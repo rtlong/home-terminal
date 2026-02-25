@@ -389,6 +389,7 @@ fn view_settings(model: Model) -> Element(Msg) {
   }
 
   html.div([attribute.class("p-6 overflow-y-auto h-full flex flex-col gap-8")], [
+    view_color_wheel(cfg, pal),
     view_people_settings(cfg),
     html.div([], [
       html.h2(
@@ -575,6 +576,194 @@ fn on_person_color_change(person: String) -> attribute.Attribute(Msg) {
     use color <- decode.subfield(["target", "value"], decode.string)
     decode.success(UserChangedPersonColor(person:, color:))
   })
+}
+
+// COLOR WHEEL VISUALIZER ------------------------------------------------------
+
+/// Render a circular hue-wheel showing person hue markers and calendar dots.
+///
+/// Layout (all px, centered at cx=cy=100 in a 200×200 container):
+///   outer_r = 90  — outer edge of the gradient ring
+///   ring_w  = 18  — thickness of the gradient ring
+///   inner_r = 72  — inner edge of the ring (= outer_r - ring_w)
+///   person_r = 81 — radius at which person dots sit (mid-ring)
+///   cal_r    = 63 — radius just inside the ring for calendar dots
+fn view_color_wheel(cfg: state.Config, pal: palette.Palette) -> Element(Msg) {
+  let size = 200
+  let cx = 100.0
+  let cy = 100.0
+  let outer_r = 90.0
+  let ring_w = 18.0
+  let inner_r = outer_r -. ring_w
+  let person_r = inner_r +. ring_w /. 2.0
+  let cal_r = inner_r -. 10.0
+  let dot_size_person = 14
+  let dot_size_cal = 8
+
+  // Place a dot at (cx + r*cos(θ), cy + r*sin(θ)) where θ = hue-90° in radians
+  // (subtract 90° so hue=0 (red) sits at 12-o'clock, matching colour-wheel convention).
+  let dot_pos = fn(hue: Float, r: Float) -> #(Float, Float) {
+    let theta = { hue -. 90.0 } *. 0.017453292519943295
+    #(cx +. r *. math_cos(theta), cy +. r *. math_sin(theta))
+  }
+
+  // Person dots + labels
+  let person_els =
+    list.flat_map(cfg.people, fn(person) {
+      case dict.get(cfg.people_colors, person) {
+        Error(_) -> []
+        Ok(hue) -> {
+          let #(px, py) = dot_pos(hue, person_r)
+          let color = "oklch(0.65 0.19 " <> float_to_str(hue) <> ")"
+          let half = int.to_float(dot_size_person) /. 2.0
+          // Label: nudge outward from center
+          let lx = cx +. { px -. cx } *. 1.55
+          let ly = cy +. { py -. cy } *. 1.55
+          let anchor = case px >=. cx {
+            True -> "start"
+            False -> "end"
+          }
+          [
+            // Dot
+            html.div(
+              [
+                attribute.style("position", "absolute"),
+                attribute.style("left", float_px(px -. half)),
+                attribute.style("top", float_px(py -. half)),
+                attribute.style("width", int.to_string(dot_size_person) <> "px"),
+                attribute.style(
+                  "height",
+                  int.to_string(dot_size_person) <> "px",
+                ),
+                attribute.style("border-radius", "50%"),
+                attribute.style("background-color", color),
+                attribute.style("border", "2px solid oklch(1 0 0 / 60%)"),
+                attribute.style("box-sizing", "border-box"),
+              ],
+              [],
+            ),
+            // Label
+            html.span(
+              [
+                attribute.style("position", "absolute"),
+                attribute.style("left", float_px(lx)),
+                attribute.style("top", float_px(ly -. 5.0)),
+                attribute.style("font-size", "9px"),
+                attribute.style("font-weight", "600"),
+                attribute.style("color", color),
+                attribute.style("white-space", "nowrap"),
+                attribute.style("transform", "translate(-50%, -50%)"),
+                attribute.style("text-align", anchor),
+                attribute.style("pointer-events", "none"),
+                attribute.style("user-select", "none"),
+              ],
+              [html.text(person)],
+            ),
+          ]
+        }
+      }
+    })
+
+  // Calendar dots
+  let cal_els =
+    list.flat_map(dict.to_list(pal.calendar_colors), fn(pair) {
+      let #(cal_name, color_css) = pair
+      case palette.parse_hue(color_css) {
+        Error(_) -> []
+        Ok(hue) -> {
+          let #(px, py) = dot_pos(hue, cal_r)
+          let half = int.to_float(dot_size_cal) /. 2.0
+          [
+            html.div(
+              [
+                attribute.style("position", "absolute"),
+                attribute.style("left", float_px(px -. half)),
+                attribute.style("top", float_px(py -. half)),
+                attribute.style("width", int.to_string(dot_size_cal) <> "px"),
+                attribute.style("height", int.to_string(dot_size_cal) <> "px"),
+                attribute.style("border-radius", "50%"),
+                attribute.style("background-color", color_css),
+                attribute.style("title", cal_name),
+                attribute.style("border", "1px solid oklch(1 0 0 / 30%)"),
+                attribute.style("box-sizing", "border-box"),
+              ],
+              [],
+            ),
+          ]
+        }
+      }
+    })
+
+  // Build the conic-gradient stop list: one stop per 10° for a smooth wheel.
+  let stops =
+    list.map(int_range(0, 36), fn(i) {
+      let deg = i * 10
+      "oklch(0.65 0.19 "
+      <> int.to_string(deg)
+      <> "deg) "
+      <> int.to_string(deg)
+      <> "deg"
+    })
+    |> string.join(", ")
+  let conic = "conic-gradient(" <> stops <> ")"
+
+  let size_px = int.to_string(size) <> "px"
+
+  html.div(
+    [
+      attribute.style("position", "relative"),
+      attribute.style("width", size_px),
+      attribute.style("height", size_px),
+      attribute.style("flex-shrink", "0"),
+    ],
+    list.flatten([
+      // Gradient ring
+      [
+        html.div(
+          [
+            attribute.style("position", "absolute"),
+            attribute.style("inset", "0"),
+            attribute.style("border-radius", "50%"),
+            attribute.style("background", conic),
+          ],
+          [],
+        ),
+      ],
+      // Inner cutout (donut hole)
+      [
+        html.div(
+          [
+            attribute.style("position", "absolute"),
+            attribute.style("left", float_px(cx -. inner_r)),
+            attribute.style("top", float_px(cy -. inner_r)),
+            attribute.style("width", float_px(inner_r *. 2.0)),
+            attribute.style("height", float_px(inner_r *. 2.0)),
+            attribute.style("border-radius", "50%"),
+            attribute.style("background-color", "var(--color-bg)"),
+          ],
+          [],
+        ),
+      ],
+      cal_els,
+      person_els,
+    ]),
+  )
+}
+
+fn int_range(from: Int, to: Int) -> List(Int) {
+  int.range(from: from, to: to + 1, with: [], run: fn(acc, i) { [i, ..acc] })
+  |> list.reverse
+}
+
+// Math FFI (same as palette.gleam — duplicated to avoid cross-module FFI sharing)
+@external(erlang, "math", "cos")
+fn math_cos(x: Float) -> Float
+
+@external(erlang, "math", "sin")
+fn math_sin(x: Float) -> Float
+
+fn float_px(f: Float) -> String {
+  float_to_str(f) <> "px"
 }
 
 // HELPERS ---------------------------------------------------------------------

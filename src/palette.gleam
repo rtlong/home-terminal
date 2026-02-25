@@ -199,6 +199,12 @@ pub fn generate(
   Palette(calendar_colors: cal_colors, theme_vars:, night_color:)
 }
 
+/// Extract the hue angle from an "oklch(L C H)" string.
+/// Public so the settings wheel can position dots by hue.
+pub fn parse_hue(css: String) -> Result(Float, Nil) {
+  parse_oklch_hue(css)
+}
+
 /// Return the CSS oklch color string for a calendar's travel tint.
 /// Lower lightness and chroma than the bar — same hue family.
 pub fn travel_color(bar_css: String) -> String {
