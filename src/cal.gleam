@@ -841,7 +841,8 @@ pub fn view_gantt(
       let ev_bars = list.filter(members, is_thick)
       let travel_bars = list.filter(members, fn(b) { !is_thick(b) })
       case travel_bars, ev_bars {
-        // Group has travel: render a border envelope with the event inside.
+        // Group has travel: render a tinted envelope with transparent spacers
+        // for travel portions and the solid event bar inside.
         [_, ..], [ev, ..] -> {
           let ev_left = ev.1
           let ev_right = ev.1 + int.min(ev.2, total_min - ev.1)
@@ -849,7 +850,6 @@ pub fn view_gantt(
           let drive_to_w = ev_left - g_left
           let ev_w = ev_right - ev_left
           let drive_from_w = g_right - ev_right
-          // Transparent spacers for travel portions; solid bar for event.
           let inner_els =
             list.flatten([
               case drive_to_w > 0 {
@@ -888,8 +888,10 @@ pub fn view_gantt(
                 "flex flex-row pointer-events-none select-none rounded-sm",
               ),
               attribute.style("grid-column", col_start <> " / " <> col_end),
-              attribute.style("outline", "1.5px solid " <> color),
-              attribute.style("outline-offset", "-1px"),
+              attribute.style(
+                "background-color",
+                "hsl(from " <> color <> " h s var(--travel-bg-l))",
+              ),
               attribute.style("min-width", "0"),
               attribute.style("overflow", "hidden"),
             ],

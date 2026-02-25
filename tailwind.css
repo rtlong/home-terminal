@@ -59,16 +59,22 @@
 }
 
 /* ─── Event background lightness ─────────────────────────────────────────────
-   Used by bgcolor() in cal.gleam: hsl(from <color> h s var(--event-bg-l))
-   Not a Tailwind token — just a plain CSS variable.
+   --event-bg-l: lightness for event bar backgrounds (dark fill, white text).
+   --travel-bg-l: lightness for travel envelope tints — needs to be clearly
+     visible against the page background while remaining a tint (not full
+     saturation). Dark mode: higher than event bg so it reads; light mode:
+     lower than event bg so it reads against white.
+   Not Tailwind tokens — plain CSS variables used inline in cal.gleam.
    ─────────────────────────────────────────────────────────────────────────── */
 
 :root, :host {
   --event-bg-l: 15%;
+  --travel-bg-l: 32%;
 }
 
 @media (prefers-color-scheme: light) {
   :root, :host {
     --event-bg-l: 88%;
+    --travel-bg-l: 78%;
   }
 }
