@@ -437,25 +437,28 @@ fn view_people_settings(cfg: state.Config) -> Element(Msg) {
               |> result.unwrap(250.0)
             let swatch_color = "oklch(0.65 0.19 " <> float_to_str(hue) <> ")"
             html.div([attribute.class("flex items-center gap-3")], [
-              // Styled swatch that reflects the generated color.
-              html.div(
-                [
+              // Layered swatch: the real <input type="color"> fills the area
+              // nearly invisible (opacity ~0) so clicks open the picker.
+              // A pointer-events-none div above shows the true oklch color.
+              html.div([attribute.class("relative w-7 h-7 shrink-0")], [
+                html.input([
+                  attribute.type_("color"),
                   attribute.class(
-                    "relative w-7 h-7 rounded overflow-hidden cursor-pointer border border-border-dim",
+                    "absolute inset-0 w-full h-full rounded cursor-pointer border-0 p-0",
                   ),
-                  attribute.style("background-color", swatch_color),
-                ],
-                [
-                  // Invisible <input type="color"> overlaid on the swatch.
-                  html.input([
-                    attribute.type_("color"),
-                    attribute.class("absolute inset-0 opacity-0 cursor-pointer"),
-                    attribute.style("width", "100%"),
-                    attribute.style("height", "100%"),
-                    on_person_color_change(person),
-                  ]),
-                ],
-              ),
+                  attribute.style("opacity", "0.001"),
+                  on_person_color_change(person),
+                ]),
+                html.div(
+                  [
+                    attribute.class(
+                      "absolute inset-0 rounded border border-border-dim pointer-events-none",
+                    ),
+                    attribute.style("background-color", swatch_color),
+                  ],
+                  [],
+                ),
+              ]),
               html.span([attribute.class("text-sm text-text")], [
                 html.text(person),
               ]),
