@@ -487,8 +487,9 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
     }
 
     UpdatePersonColor(person:, color:) -> {
-      let new_colors =
-        dict.insert(state.cal_config.people_colors, person, color)
+      // color arrives as a hex string from <input type="color">; extract hue.
+      let hue = state.hue_from_hex(color)
+      let new_colors = dict.insert(state.cal_config.people_colors, person, hue)
       let new_cal_config =
         state.Config(..state.cal_config, people_colors: new_colors)
       state.write_config(state.data_dir, new_cal_config)

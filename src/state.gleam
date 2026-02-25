@@ -15,6 +15,7 @@ import envoy
 import gleam/bit_array
 import gleam/dict.{type Dict}
 import gleam/dynamic/decode
+import gleam/float
 import gleam/int
 import gleam/json
 import gleam/list
@@ -27,7 +28,7 @@ import gleam/time/timestamp
 
 /// Per-calendar display configuration.
 pub type CalendarConfig {
-  CalendarConfig(visible: Bool, color: String)
+  CalendarConfig(visible: Bool)
 }
 
 /// Top-level application config, persisted to config.json.
@@ -40,9 +41,9 @@ pub type Config {
     people: List(String),
     /// Maps calendar display-name → list of people who share that calendar.
     calendar_people: Dict(String, List(String)),
-    /// Maps person name → CSS color string for travel block tinting.
-    /// e.g. {"Ryan": "#4a88cc", "Alex": "#e06ea0"}
-    people_colors: Dict(String, String),
+    /// Maps person name → hue angle (0–360°) for color generation.
+    /// e.g. {"Ryan": 187.0, "Alex": 300.0}
+    people_colors: Dict(String, Float),
     /// Per-calendar display settings (visibility, color).
     calendars: Dict(String, CalendarConfig),
     /// Geographic coordinates for sunrise/sunset calculation.
@@ -67,7 +68,7 @@ pub fn empty_config() -> Config {
 
 /// Default config for a calendar not yet seen in config.json.
 pub fn default_calendar_config() -> CalendarConfig {
-  CalendarConfig(visible: True, color: "#4a88cc")
+  CalendarConfig(visible: True)
 }
 
 // DATA DIR --------------------------------------------------------------------
@@ -286,7 +287,6 @@ fn encode_config(config: Config) -> json.Json {
         name,
         json.object([
           #("visible", json.bool(cal_cfg.visible)),
-          #("color", json.string(cal_cfg.color)),
         ]),
       )
     })
@@ -299,8 +299,8 @@ fn encode_config(config: Config) -> json.Json {
   let people_colors_entries =
     dict.to_list(config.people_colors)
     |> list.map(fn(pair) {
-      let #(person, color) = pair
-      #(person, json.string(color))
+      let #(person, hue) = pair
+      #(person, json.float(hue))
     })
   json.object([
     #("home_address", json.string(config.home_address)),
@@ -368,10 +368,17 @@ fn config_decoder() -> decode.Decoder(Config) {
     dict.new(),
     decode.dict(decode.string, decode.list(decode.string)),
   )
+  // people_colors may be stored as Float (new) or String hex (legacy).
+  // We try Float first; if that fails try String and extract the hue.
   use people_colors <- decode.optional_field(
     "people_colors",
     dict.new(),
-    decode.dict(decode.string, decode.string),
+    decode.one_of(decode.dict(decode.string, decode.float), [
+      decode.dict(decode.string, decode.string)
+      |> decode.map(fn(d) {
+        dict.map_values(d, fn(_, hex) { hue_from_hex_string(hex) })
+      }),
+    ]),
   )
   use calendars <- decode.optional_field(
     "calendars",
@@ -393,8 +400,7 @@ fn config_decoder() -> decode.Decoder(Config) {
 
 fn calendar_config_decoder() -> decode.Decoder(CalendarConfig) {
   use visible <- decode.field("visible", decode.bool)
-  use color <- decode.field("color", decode.string)
-  decode.success(CalendarConfig(visible:, color:))
+  decode.success(CalendarConfig(visible:))
 }
 
 // DATE PARSING ----------------------------------------------------------------
@@ -419,6 +425,66 @@ fn pad2(n: Int) -> String {
 
 fn pad4(n: Int) -> String {
   string.pad_start(string.inspect(n), 4, "0")
+}
+
+// COLOR MIGRATION -------------------------------------------------------------
+
+/// Extract a hue angle (0–360°) from a hex color string like "#cb00e6".
+/// Public so cal_server can call it when a user picks a new person color.
+pub fn hue_from_hex(hex: String) -> Float {
+  hue_from_hex_string(hex)
+}
+
+/// Extract a hue angle (0–360°) from a legacy hex color string like "#cb00e6".
+/// Converts the hex to RGB, then to HSL, and returns the H component in degrees.
+/// Falls back to 250.0 (blue) if the string can't be parsed.
+fn hue_from_hex_string(hex: String) -> Float {
+  let s = case string.starts_with(hex, "#") {
+    True -> string.drop_start(hex, 1)
+    False -> hex
+  }
+  case string.length(s) == 6 {
+    False -> 250.0
+    True -> {
+      let r_str = string.slice(s, 0, 2)
+      let g_str = string.slice(s, 2, 2)
+      let b_str = string.slice(s, 4, 2)
+      case
+        int.base_parse(r_str, 16),
+        int.base_parse(g_str, 16),
+        int.base_parse(b_str, 16)
+      {
+        Ok(r), Ok(g), Ok(b) -> rgb_to_hue(r, g, b)
+        _, _, _ -> 250.0
+      }
+    }
+  }
+}
+
+/// Compute the HSL hue (0–360°) from 8-bit RGB values.
+fn rgb_to_hue(r: Int, g: Int, b: Int) -> Float {
+  let rf = int.to_float(r) /. 255.0
+  let gf = int.to_float(g) /. 255.0
+  let bf = int.to_float(b) /. 255.0
+  let cmax = float.max(rf, float.max(gf, bf))
+  let cmin = float.min(rf, float.min(gf, bf))
+  let delta = cmax -. cmin
+  case delta == 0.0 {
+    True -> 0.0
+    False -> {
+      let raw = case cmax == rf, cmax == gf {
+        True, _ ->
+          { { gf -. bf } /. delta }
+          +. case gf <. bf {
+            True -> 6.0
+            False -> 0.0
+          }
+        False, True -> { { bf -. rf } /. delta } +. 2.0
+        False, False -> { { rf -. gf } /. delta } +. 4.0
+      }
+      raw *. 60.0
+    }
+  }
 }
 
 // FILE I/O FFI ----------------------------------------------------------------

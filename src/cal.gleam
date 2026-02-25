@@ -12,6 +12,7 @@ import gleam/time/timestamp.{type Timestamp}
 import lustre/attribute
 import lustre/element.{type Element}
 import lustre/element/html
+import palette
 import travel
 
 // TYPES -----------------------------------------------------------------------
@@ -887,22 +888,7 @@ pub fn view_gantt(
                 "flex flex-row pointer-events-none select-none rounded-sm",
               ),
               attribute.style("grid-column", col_start <> " / " <> col_end),
-              attribute.style("background-color", "hsl(from " <> color <> " h
-                  calc(
-                    clamp(
-                      var(--travel-bg-s-min),
-                      s + var(--travel-bg-s),
-                      100
-                    )
-                  )
-                  calc(
-                    clamp(
-                      var(--travel-bg-l-min),
-                      l + var(--travel-bg-l),
-                      100
-                    )
-                  )
-                )"),
+              attribute.style("background-color", palette.travel_color(color)),
               attribute.style("min-width", "0"),
               attribute.style("overflow", "hidden"),
             ],

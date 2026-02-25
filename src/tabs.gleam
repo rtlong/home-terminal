@@ -17,6 +17,7 @@ import lustre/effect.{type Effect}
 import lustre/element.{type Element}
 import lustre/element/html
 import lustre/event
+import palette
 import state
 
 // COMPONENT -------------------------------------------------------------------
@@ -94,7 +95,6 @@ pub opaque type Msg {
   CalendarUpdated(cal_server.CalendarData)
   GotRegistration(cal_server.Registration)
   UserToggledCalendar(name: String, visible: Bool)
-  UserChangedColor(name: String, color: String)
   UserToggledCalendarPerson(cal_name: String, person: String, assigned: Bool)
   UserChangedPersonColor(person: String, color: String)
   Tick
@@ -117,17 +117,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     )
 
     UserToggledCalendar(name:, visible:) -> {
-      let current =
-        state.get_calendar_config(model.calendar_data.cal_config, name)
-      let new_cfg = state.CalendarConfig(..current, visible: visible)
-      cal_server.update_calendar_config(model.server, name, new_cfg)
-      #(model, effect.none())
-    }
-
-    UserChangedColor(name:, color:) -> {
-      let current =
-        state.get_calendar_config(model.calendar_data.cal_config, name)
-      let new_cfg = state.CalendarConfig(..current, color: color)
+      let new_cfg = state.CalendarConfig(visible: visible)
       cal_server.update_calendar_config(model.server, name, new_cfg)
       #(model, effect.none())
     }
@@ -272,8 +262,17 @@ fn view_active_tab(model: Model) -> Element(Msg) {
         Error(reason) -> cal.view_error(reason)
         Ok(events) -> {
           let cfg = model.calendar_data.cal_config
+          // Generate palette from person hues and calendar→people mapping.
+          let pal =
+            palette.generate(
+              cfg.people_colors,
+              cfg.people,
+              cfg.calendar_people,
+              model.calendar_data.calendar_names,
+            )
           let color_for = fn(cal_name: String) -> String {
-            state.get_calendar_config(cfg, cal_name).color
+            dict.get(pal.calendar_colors, cal_name)
+            |> result.unwrap("oklch(0.65 0.19 250)")
           }
           let visible_events =
             list.filter(events, fn(e) {
@@ -284,14 +283,11 @@ fn view_active_tab(model: Model) -> Element(Msg) {
           // Assigned to one person → BarLeft (person 0) or BarRight (person 1).
           // Assigned to both people → BarCenter (one strip in the middle).
           let people = cfg.people
-          let cal_color = fn(e: cal.Event) {
-            state.get_calendar_config(cfg, e.calendar_name).color
-          }
           let bars_for_event = fn(e: cal.Event) -> List(#(cal.BarPos, String)) {
             let assigned =
               dict.get(cfg.calendar_people, e.calendar_name)
               |> result.unwrap([])
-            let color = cal_color(e)
+            let color = color_for(e.calendar_name)
             case assigned, people {
               // Unassigned
               [], _ -> [#(cal.BarCenter, color)]
@@ -311,6 +307,8 @@ fn view_active_tab(model: Model) -> Element(Msg) {
           html.div(
             [attribute.class("flex flex-col flex-1 min-h-0 overflow-hidden")],
             [
+              // Inject palette-derived theme CSS variables.
+              html.style([], pal.theme_vars),
               view_fetch_stamp(model.calendar_data.fetched_at),
               cal.view_gantt(
                 visible_events,
@@ -377,6 +375,19 @@ fn view_settings(model: Model) -> Element(Msg) {
     names -> list.sort(names, string.compare)
   }
 
+  // Generate palette so we can show generated color swatches in calendar rows.
+  let pal =
+    palette.generate(
+      cfg.people_colors,
+      cfg.people,
+      cfg.calendar_people,
+      model.calendar_data.calendar_names,
+    )
+  let color_for = fn(cal_name: String) -> String {
+    dict.get(pal.calendar_colors, cal_name)
+    |> result.unwrap("oklch(0.65 0.19 250)")
+  }
+
   html.div([attribute.class("p-6 overflow-y-auto h-full flex flex-col gap-8")], [
     view_people_settings(cfg),
     html.div([], [
@@ -390,7 +401,9 @@ fn view_settings(model: Model) -> Element(Msg) {
       ),
       html.ul(
         [attribute.class("flex flex-col gap-2")],
-        list.map(cal_names, fn(name) { view_calendar_row(name, cfg, people) }),
+        list.map(cal_names, fn(name) {
+          view_calendar_row(name, cfg, people, color_for(name))
+        }),
       ),
     ]),
   ])
@@ -417,18 +430,32 @@ fn view_people_settings(cfg: state.Config) -> Element(Msg) {
         html.div(
           [attribute.class("flex flex-col gap-2")],
           list.map(people, fn(person) {
-            let color =
+            // hue is a Float angle (0–360). Show a swatch using oklch and an
+            // <input type="color"> for picking (browser will extract the hue).
+            let hue =
               dict.get(cfg.people_colors, person)
-              |> result.unwrap("#888888")
+              |> result.unwrap(250.0)
+            let swatch_color = "oklch(0.65 0.19 " <> float_to_str(hue) <> ")"
             html.div([attribute.class("flex items-center gap-3")], [
-              html.input([
-                attribute.type_("color"),
-                attribute.value(color),
-                attribute.class(
-                  "w-7 h-7 rounded cursor-pointer border-0 bg-transparent p-0",
-                ),
-                on_person_color_change(person),
-              ]),
+              // Styled swatch that reflects the generated color.
+              html.div(
+                [
+                  attribute.class(
+                    "relative w-7 h-7 rounded overflow-hidden cursor-pointer border border-border-dim",
+                  ),
+                  attribute.style("background-color", swatch_color),
+                ],
+                [
+                  // Invisible <input type="color"> overlaid on the swatch.
+                  html.input([
+                    attribute.type_("color"),
+                    attribute.class("absolute inset-0 opacity-0 cursor-pointer"),
+                    attribute.style("width", "100%"),
+                    attribute.style("height", "100%"),
+                    on_person_color_change(person),
+                  ]),
+                ],
+              ),
               html.span([attribute.class("text-sm text-text")], [
                 html.text(person),
               ]),
@@ -443,21 +470,20 @@ fn view_calendar_row(
   name: String,
   cfg: state.Config,
   people: List(String),
+  generated_color: String,
 ) -> Element(Msg) {
   let cal_cfg = state.get_calendar_config(cfg, name)
   let assigned_people = dict.get(cfg.calendar_people, name) |> result.unwrap([])
 
-  // Color picker: native <input type="color"> styled as a small swatch.
-  // The `change` event fires with { target: { value: "#rrggbb" } }.
-  let color_input =
-    html.input([
-      attribute.type_("color"),
-      attribute.value(cal_cfg.color),
-      attribute.class(
-        "w-7 h-7 rounded cursor-pointer border-0 bg-transparent p-0",
-      ),
-      on_color_change(name),
-    ])
+  // Generated color swatch (read-only) — shows what color was assigned.
+  let color_swatch =
+    html.div(
+      [
+        attribute.class("w-7 h-7 rounded shrink-0"),
+        attribute.style("background-color", generated_color),
+      ],
+      [],
+    )
 
   // Visibility toggle checkbox.
   // The `change` event fires with { target: { checked: Bool } }.
@@ -509,7 +535,7 @@ fn view_calendar_row(
     ],
     [
       html.div([attribute.class("flex items-center gap-3")], [
-        color_input,
+        color_swatch,
         html.span([attribute.class("flex-1 text-sm text-text")], [
           html.text(name),
         ]),
@@ -518,15 +544,6 @@ fn view_calendar_row(
       person_chips,
     ],
   )
-}
-
-/// Decode an `input[type=color]` change event → UserChangedColor.
-/// The browser fires: Event { target: { value: "#rrggbb" } }
-fn on_color_change(name: String) -> attribute.Attribute(Msg) {
-  event.on("change", {
-    use value <- decode.subfield(["target", "value"], decode.string)
-    decode.success(UserChangedColor(name:, color: value))
-  })
 }
 
 /// Decode a checkbox change event → UserToggledCalendar.
@@ -555,4 +572,13 @@ fn on_person_color_change(person: String) -> attribute.Attribute(Msg) {
     use color <- decode.subfield(["target", "value"], decode.string)
     decode.success(UserChangedPersonColor(person:, color:))
   })
+}
+
+// HELPERS ---------------------------------------------------------------------
+
+/// Format a Float hue angle as a short decimal string for CSS.
+fn float_to_str(f: Float) -> String {
+  // Use gleam's string representation and trim excess decimals.
+  // float.to_string gives e.g. "187.0" which is valid in oklch().
+  string.inspect(f)
 }

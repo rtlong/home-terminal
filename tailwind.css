@@ -61,29 +61,19 @@
 
 /* ─── Event background lightness ─────────────────────────────────────────────
    --event-bg-l: lightness for event bar backgrounds (dark fill, white text).
-   --travel-bg-l: lightness for travel envelope tints — needs to be clearly
-     visible against the page background while remaining a tint (not full
-     saturation). Dark mode: higher than event bg so it reads; light mode:
-     lower than event bg so it reads against white.
    Not Tailwind tokens — plain CSS variables used inline in cal.gleam.
+   Travel tints are now computed in palette.gleam using oklch() — no CSS
+   variables needed.
    ─────────────────────────────────────────────────────────────────────────── */
 
 :root,
 :host {
     --event-bg-l: 15%;
-    --travel-bg-l-min: 25;
-    --travel-bg-l: -20;
-    --travel-bg-s-min: 10;
-    --travel-bg-s: 0;
 }
 
 @media (prefers-color-scheme: light) {
     :root,
     :host {
         --event-bg-l: 88%;
-        --travel-bg-l-min: 25;
-        --travel-bg-l: 78;
-        --travel-bg-s-min: 10;
-        --travel-bg-s: 78;
     }
 }
