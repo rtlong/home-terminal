@@ -719,7 +719,7 @@ pub fn view_gantt(
                   attribute.style("color", "white"),
                   attribute.style("background-color", color),
                   attribute.style("border", "1px solid " <> color),
-                  attribute.style("opacity", "0.85"),
+                  // attribute.style("opacity", "0.85"),
                   attribute.style("border-radius", "2px"),
                   attribute.style("padding", "1px 3px"),
                   attribute.style("white-space", "nowrap"),
@@ -735,7 +735,7 @@ pub fn view_gantt(
                 attribute.style("flex", "1 0 0"),
                 attribute.style("height", "0"),
                 attribute.style("border-top", "1.5px solid " <> color),
-                attribute.style("opacity", "0.7"),
+                // attribute.style("opacity", "0.7"),
                 attribute.style("min-width", "4px"),
               ],
               [],
@@ -807,7 +807,6 @@ pub fn view_gantt(
                 attribute.style("flex", int.to_string(flex_val) <> " 0 0"),
                 attribute.style("min-width", "0"),
                 attribute.style("background-color", color),
-                attribute.style("opacity", "0.85"),
                 attribute.style("color", "white"),
               ],
               extra_style,
@@ -888,10 +887,22 @@ pub fn view_gantt(
                 "flex flex-row pointer-events-none select-none rounded-sm",
               ),
               attribute.style("grid-column", col_start <> " / " <> col_end),
-              attribute.style(
-                "background-color",
-                "hsl(from " <> color <> " h s var(--travel-bg-l))",
-              ),
+              attribute.style("background-color", "hsl(from " <> color <> " h
+                  calc(
+                    clamp(
+                      var(--travel-bg-s-min),
+                      s + var(--travel-bg-s),
+                      100
+                    )
+                  )
+                  calc(
+                    clamp(
+                      var(--travel-bg-l-min),
+                      l + var(--travel-bg-l),
+                      100
+                    )
+                  )
+                )"),
               attribute.style("min-width", "0"),
               attribute.style("overflow", "hidden"),
             ],
@@ -1063,7 +1074,7 @@ pub fn view_gantt(
           )
         html.div(
           [
-            attribute.class("absolute inset-0 pointer-events-none"),
+            attribute.class("absolute inset-0 -z-1 pointer-events-none"),
             attribute.style(
               "background",
               "linear-gradient(to right, "

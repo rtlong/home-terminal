@@ -13,49 +13,50 @@
    ─────────────────────────────────────────────────────────────────────────── */
 
 @theme {
-  /* Backgrounds — dark defaults */
-  --color-bg:        var(--color-gray-950);
-  --color-surface:   var(--color-gray-900);
-  --color-surface-2: var(--color-gray-800);
+    /* Backgrounds — dark defaults */
+    --color-bg: var(--color-gray-950);
+    --color-surface: var(--color-gray-900);
+    --color-surface-2: var(--color-gray-800);
 
-  /* Text — dark defaults */
-  --color-text:       var(--color-gray-100);
-  --color-text-muted: var(--color-gray-400);
-  --color-text-faint: var(--color-gray-600);
+    /* Text — dark defaults */
+    --color-text: var(--color-gray-100);
+    --color-text-muted: var(--color-gray-400);
+    --color-text-faint: var(--color-gray-600);
 
-  /* Borders — dark defaults */
-  --color-border:     var(--color-gray-800);
-  --color-border-dim: var(--color-gray-700);
+    /* Borders — dark defaults */
+    --color-border: var(--color-gray-800);
+    --color-border-dim: var(--color-gray-700);
 
-  /* Accent (emerald) — dark defaults */
-  --color-accent:            var(--color-emerald-400);
-  --color-accent-dim:        var(--color-emerald-600);
-  --color-accent-border:     var(--color-emerald-500);
-  --color-accent-border-dim: var(--color-emerald-800);
+    /* Accent (emerald) — dark defaults */
+    --color-accent: var(--color-emerald-400);
+    --color-accent-dim: var(--color-emerald-600);
+    --color-accent-border: var(--color-emerald-500);
+    --color-accent-border-dim: var(--color-emerald-800);
 }
 
 /* Light mode overrides — inside @layer theme so they're at the same
    cascade layer level as the @theme defaults above. */
 @layer theme {
-  @media (prefers-color-scheme: light) {
-    :root, :host {
-      --color-bg:        var(--color-gray-50);
-      --color-surface:   var(--color-white);
-      --color-surface-2: var(--color-gray-100);
+    @media (prefers-color-scheme: light) {
+        :root,
+        :host {
+            --color-bg: var(--color-gray-50);
+            --color-surface: var(--color-white);
+            --color-surface-2: var(--color-gray-100);
 
-      --color-text:       var(--color-gray-900);
-      --color-text-muted: var(--color-gray-500);
-      --color-text-faint: var(--color-gray-400);
+            --color-text: var(--color-gray-900);
+            --color-text-muted: var(--color-gray-500);
+            --color-text-faint: var(--color-gray-400);
 
-      --color-border:     var(--color-gray-200);
-      --color-border-dim: var(--color-gray-300);
+            --color-border: var(--color-gray-200);
+            --color-border-dim: var(--color-gray-300);
 
-      --color-accent:            var(--color-emerald-600);
-      --color-accent-dim:        var(--color-emerald-400);
-      --color-accent-border:     var(--color-emerald-500);
-      --color-accent-border-dim: var(--color-emerald-200);
+            --color-accent: var(--color-emerald-600);
+            --color-accent-dim: var(--color-emerald-400);
+            --color-accent-border: var(--color-emerald-500);
+            --color-accent-border-dim: var(--color-emerald-200);
+        }
     }
-  }
 }
 
 /* ─── Event background lightness ─────────────────────────────────────────────
@@ -67,14 +68,22 @@
    Not Tailwind tokens — plain CSS variables used inline in cal.gleam.
    ─────────────────────────────────────────────────────────────────────────── */
 
-:root, :host {
-  --event-bg-l: 15%;
-  --travel-bg-l: 32%;
+:root,
+:host {
+    --event-bg-l: 15%;
+    --travel-bg-l-min: 25;
+    --travel-bg-l: -20;
+    --travel-bg-s-min: 10;
+    --travel-bg-s: 0;
 }
 
 @media (prefers-color-scheme: light) {
-  :root, :host {
-    --event-bg-l: 88%;
-    --travel-bg-l: 78%;
-  }
+    :root,
+    :host {
+        --event-bg-l: 88%;
+        --travel-bg-l-min: 25;
+        --travel-bg-l: 78;
+        --travel-bg-s-min: 10;
+        --travel-bg-s: 78;
+    }
 }
