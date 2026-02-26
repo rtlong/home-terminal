@@ -1230,8 +1230,8 @@ pub fn view_gantt(
       [
         attribute.class("flex flex-row flex-1"),
         attribute.style("border-bottom", case is_today {
-          True -> "3px solid oklch(0 0 0 / 55%)"
-          False -> "2px solid oklch(0 0 0 / 40%)"
+          True -> "4px solid oklch(0 0 0 / 65%)"
+          False -> "3px solid oklch(0 0 0 / 50%)"
         }),
         attribute.class(case is_today {
           True -> "bg-surface-2/20"
