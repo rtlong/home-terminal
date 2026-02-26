@@ -946,12 +946,36 @@ pub fn view_gantt(
       True ->
         html.div(
           [
-            attribute.class(
-              "absolute top-0 bottom-0 w-px bg-accent-border/70 z-20 pointer-events-none",
-            ),
+            attribute.class("absolute top-0 bottom-0 z-20 pointer-events-none"),
             attribute.style("left", xpct(now_offset)),
+            attribute.style("transform", "translateX(-50%)"),
+            attribute.style("display", "flex"),
+            attribute.style("flex-direction", "column"),
+            attribute.style("align-items", "center"),
           ],
-          [],
+          [
+            // Circle cap at top
+            html.div(
+              [
+                attribute.style("width", "8px"),
+                attribute.style("height", "8px"),
+                attribute.style("border-radius", "50%"),
+                attribute.style("background-color", "var(--color-accent-border)"),
+                attribute.style("flex-shrink", "0"),
+              ],
+              [],
+            ),
+            // Vertical line
+            html.div(
+              [
+                attribute.style("width", "2px"),
+                attribute.style("flex", "1"),
+                attribute.style("background-color", "var(--color-accent-border)"),
+                attribute.style("opacity", "0.9"),
+              ],
+              [],
+            ),
+          ],
         )
     }
 
