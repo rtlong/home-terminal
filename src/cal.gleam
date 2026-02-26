@@ -933,7 +933,7 @@ pub fn view_gantt(
             "minmax(" <> int.to_string(bar_px) <> "px, auto)",
           ),
           attribute.style("row-gap", "2px"),
-          attribute.style("border-bottom", "1px solid oklch(0 0 0 / 8%)"),
+          attribute.style("border-bottom", "1px solid oklch(0 0 0 / 5%)"),
         ],
         list.map(groups, render_group),
       )
@@ -1230,8 +1230,8 @@ pub fn view_gantt(
       [
         attribute.class("flex flex-row flex-1"),
         attribute.style("border-bottom", case is_today {
-          True -> "2px solid oklch(0 0 0 / 40%)"
-          False -> "1px solid oklch(0 0 0 / 30%)"
+          True -> "3px solid oklch(0 0 0 / 55%)"
+          False -> "2px solid oklch(0 0 0 / 40%)"
         }),
         attribute.class(case is_today {
           True -> "bg-surface-2/20"
