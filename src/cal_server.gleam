@@ -122,6 +122,13 @@ pub fn start(
         <> string.inspect(dict.size(travel_caches.leg_cache))
         <> " leg_cache entries from disk",
       )
+      // Derive calendar names from cached events so the palette can assign
+      // colors immediately on startup, before the first live CalDAV fetch.
+      let initial_calendar_names =
+        cached
+        |> list.map(fn(e) { e.calendar_name })
+        |> list.unique
+        |> list.sort(string.compare)
       let actor_state =
         State(
           self: self_subject,
@@ -129,7 +136,7 @@ pub fn start(
           data_dir: data_dir,
           clients: [],
           events: initial_events,
-          calendar_names: [],
+          calendar_names: initial_calendar_names,
           cal_config: cal_config,
           fetched_at: 0,
           travel_cache: travel_caches.travel_cache,
