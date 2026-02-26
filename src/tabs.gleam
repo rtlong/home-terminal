@@ -334,14 +334,27 @@ fn view_fetch_stamp(fetched_at: Int) -> Element(Msg) {
   let label = case fetched_at {
     0 -> "not yet fetched"
     secs -> {
-      let now_secs =
-        timestamp.to_unix_seconds_and_nanoseconds(timestamp.system_time()).0
-      let age_secs = now_secs - secs
-      case age_secs {
-        s if s < 60 -> "updated just now"
-        s if s < 3600 -> "updated " <> int.to_string(s / 60) <> " min ago"
-        s -> "updated " <> int.to_string(s / 3600) <> " hr ago"
+      let ts =
+        timestamp.from_unix_seconds_and_nanoseconds(secs, 0)
+      let local_offset = calendar.local_offset()
+      let #(_, time) = timestamp.to_calendar(ts, local_offset)
+      let hour = time.hours
+      let minute = time.minutes
+      let is_pm = hour >= 12
+      let display_hour = case hour % 12 {
+        0 -> 12
+        h -> h
       }
+      let ampm = case is_pm {
+        True -> "PM"
+        False -> "AM"
+      }
+      "updated at "
+      <> int.to_string(display_hour)
+      <> ":"
+      <> string.pad_start(int.to_string(minute), 2, "0")
+      <> " "
+      <> ampm
     }
   }
   html.div(

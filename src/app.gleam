@@ -134,6 +134,12 @@ fn serve_html() -> Response(ResponseData) {
           window.location.reload();
         }
         connected = true;
+        document.body.removeAttribute('data-disconnected');
+      });
+      ws.addEventListener('close', function() {
+        if (connected) {
+          document.body.setAttribute('data-disconnected', '');
+        }
       });
     }
     return ws;
@@ -152,6 +158,25 @@ fn serve_html() -> Response(ResponseData) {
       ]),
       html.body([attribute.class("bg-bg text-text min-h-screen")], [
         server_component.element([server_component.route("/ws")], []),
+        html.div(
+          [
+            attribute.id("disconnected-badge"),
+            attribute.class(
+              "fixed bottom-2 right-2 px-2 py-0.5 rounded text-xs font-medium select-none pointer-events-none",
+            ),
+            attribute.style(
+              "background-color",
+              "oklch(0.4 0.05 0 / 70%)",
+            ),
+            attribute.style("color", "oklch(0.75 0.05 0)"),
+            attribute.style("display", "none"),
+          ],
+          [html.text("disconnected")],
+        ),
+        html.style(
+          [],
+          "body[data-disconnected] #disconnected-badge { display: block !important; }",
+        ),
       ]),
     ])
     |> element.to_document_string_tree
