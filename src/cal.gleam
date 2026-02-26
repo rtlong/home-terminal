@@ -344,7 +344,7 @@ pub fn view_gantt(
                 attribute.style("grid-column", int.to_string(min + 1)),
                 attribute.style("grid-row", tick_row),
                 attribute.style("align-self", "end"),
-                attribute.style("font-size", "8px"),
+                attribute.style("font-size", "11px"),
                 attribute.style("padding-left", "2px"),
                 attribute.style("padding-bottom", "1px"),
                 attribute.style("white-space", "nowrap"),
@@ -368,7 +368,7 @@ pub fn view_gantt(
                 attribute.style("grid-column", "1"),
                 attribute.style("grid-row", tick_row),
                 attribute.style("align-self", "end"),
-                attribute.style("font-size", "8px"),
+                attribute.style("font-size", "11px"),
                 attribute.style("padding-left", "2px"),
                 attribute.style("padding-bottom", "1px"),
                 attribute.style("white-space", "nowrap"),
@@ -387,7 +387,7 @@ pub fn view_gantt(
 
   // Height in px of the hour-tick header strip at the top of each day's time grid.
   // Event bars live below this strip, so ticks never overlap bars.
-  let tick_header_px = 10
+  let tick_header_px = 14
 
   // Render one day row.
   let view_gantt_day = fn(
@@ -574,7 +574,7 @@ pub fn view_gantt(
     let all_bars = list.append(event_bars, travel_bars)
 
     // Fixed pixel height for every bar lane.
-    let bar_px = 20
+    let bar_px = 26
 
     // CSS grid column template — reuse the one built in the outer scope.
     let grid_cols = grid_cols_str
@@ -716,7 +716,7 @@ pub fn view_gantt(
                   attribute.class(
                     "shrink-0 pointer-events-none select-none leading-none",
                   ),
-                  attribute.style("font-size", "8px"),
+                  attribute.style("font-size", "11px"),
                   attribute.style("color", "white"),
                   attribute.style("background-color", color),
                   attribute.style("border", "1px solid " <> color),
@@ -780,7 +780,7 @@ pub fn view_gantt(
               html.span(
                 [
                   attribute.class("font-medium leading-tight"),
-                  attribute.style("font-size", "9px"),
+                  attribute.style("font-size", "13px"),
                   attribute.style("padding-left", "3px"),
                 ],
                 [html.text(label)],
@@ -792,7 +792,7 @@ pub fn view_gantt(
                   html.span(
                     [
                       attribute.class("leading-none opacity-70"),
-                      attribute.style("font-size", "8px"),
+                      attribute.style("font-size", "11px"),
                     ],
                     [html.text(" " <> t)],
                   )
@@ -988,7 +988,7 @@ pub fn view_gantt(
             attribute.class(
               "inline-block px-1 rounded text-white leading-tight truncate",
             ),
-            attribute.style("font-size", "9px"),
+            attribute.style("font-size", "13px"),
             attribute.style("background-color", color),
           ],
           [html.text(e.summary)],
@@ -1003,7 +1003,7 @@ pub fn view_gantt(
             True -> "font-bold text-accent-border leading-tight"
             False -> "font-medium text-text-muted leading-tight"
           }),
-          attribute.style("font-size", "10px"),
+          attribute.style("font-size", "14px"),
         ],
         [html.text(weekday_name(day) <> " " <> format_date(day))],
       )
@@ -1017,7 +1017,7 @@ pub fn view_gantt(
         html.span(
           [
             attribute.class("leading-none select-none"),
-            attribute.style("font-size", "9px"),
+            attribute.style("font-size", "12px"),
             attribute.style("color", "oklch(0.60 0.08 55)"),
           ],
           [html.text(rise_str <> " " <> set_str)],
@@ -1033,7 +1033,7 @@ pub fn view_gantt(
           attribute.class(
             "shrink-0 flex flex-col gap-0.5 pt-0.5 pr-1 select-none overflow-hidden",
           ),
-          attribute.style("width", "10rem"),
+          attribute.style("width", "11rem"),
         ],
         list.flatten([[date_label], [sun_label_el], all_day_chips]),
       )
@@ -1144,7 +1144,7 @@ pub fn view_gantt(
                     attribute.style("grid-column", col),
                     attribute.style("grid-row", "1"),
                     attribute.style("align-self", "end"),
-                    attribute.style("font-size", "8px"),
+                    attribute.style("font-size", "11px"),
                     attribute.style("color", color),
                     attribute.style("padding-left", "2px"),
                     attribute.style("padding-bottom", "1px"),

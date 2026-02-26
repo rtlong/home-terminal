@@ -661,7 +661,7 @@ fn view_color_wheel(cfg: state.Config, pal: palette.Palette) -> Element(Msg) {
                 attribute.style("position", "absolute"),
                 attribute.style("left", float_px(lx)),
                 attribute.style("top", float_px(ly -. 5.0)),
-                attribute.style("font-size", "9px"),
+      attribute.style("font-size", "11px"),
                 attribute.style("font-weight", "600"),
                 attribute.style("color", color),
                 attribute.style("white-space", "nowrap"),
