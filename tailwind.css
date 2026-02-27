@@ -1,11 +1,13 @@
 @import "tailwindcss";
 
 /* ─── Design tokens ──────────────────────────────────────────────────────────
-   Dark mode only — this is a wall-display / home terminal.
+   Dark mode by default; light mode via [data-theme="light"] attribute.
+   Theme is controlled by HA integration (dark_mode switch).
    The app controls its own appearance; client prefers-color-scheme is ignored.
 
    @theme defines the tokens and registers utility classes
-   (bg-bg, text-text, etc.).
+   (bg-bg, text-text, etc.). Palette's inline <style> overrides these with
+   hue-derived values.
    ─────────────────────────────────────────────────────────────────────────── */
 
 @theme {
@@ -39,6 +41,10 @@
     --event-bg-l: 15%;
 }
 
+[data-theme="light"] {
+    --event-bg-l: 92%;
+}
+
 /* ─── Custom checkbox styling ────────────────────────────────────────────────
    Native checkboxes are near-invisible unchecked on dark backgrounds.
    Use appearance-none + explicit border/bg + SVG checkmark via background-image.
@@ -63,4 +69,13 @@ input[type="checkbox"].styled-checkbox:checked {
     background-size: 75% 75%;
     background-repeat: no-repeat;
     background-position: center;
+}
+
+/* Light mode checkbox border adjustment */
+[data-theme="light"] input[type="checkbox"].styled-checkbox {
+    border-color: oklch(0.55 0.02 265);
+}
+
+[data-theme="light"] input[type="checkbox"].styled-checkbox:checked {
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 10 10' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1.5 5l2.5 2.5 4.5-4.5' stroke='%23fff' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }

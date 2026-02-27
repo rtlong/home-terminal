@@ -149,6 +149,46 @@ pub fn generate(
           <> fmt_hue(accent_hue)
           <> ");",
         "}",
+        "",
+        // Light mode — activated by data-theme="light" attribute on the root div
+        "[data-theme=light] {",
+        "  --color-bg:            oklch(0.97 0.008 "
+          <> fmt_hue(base_hue)
+          <> ");",
+        "  --color-surface:       oklch(0.93 0.010 "
+          <> fmt_hue(base_hue)
+          <> ");",
+        "  --color-surface-2:     oklch(0.88 0.012 "
+          <> fmt_hue(base_hue)
+          <> ");",
+        "  --color-text:          oklch(0.18 0.015 "
+          <> fmt_hue(base_hue)
+          <> ");",
+        "  --color-text-muted:    oklch(0.45 0.015 "
+          <> fmt_hue(base_hue)
+          <> ");",
+        "  --color-text-faint:    oklch(0.62 0.012 "
+          <> fmt_hue(base_hue)
+          <> ");",
+        "  --color-border:        oklch(0.82 0.010 "
+          <> fmt_hue(base_hue)
+          <> ");",
+        "  --color-border-dim:    oklch(0.75 0.012 "
+          <> fmt_hue(base_hue)
+          <> ");",
+        "  --color-accent:        oklch(0.55 0.22  "
+          <> fmt_hue(accent_hue)
+          <> ");",
+        "  --color-accent-dim:    oklch(0.45 0.18  "
+          <> fmt_hue(accent_hue)
+          <> ");",
+        "  --color-accent-border: oklch(0.50 0.20  "
+          <> fmt_hue(accent_hue)
+          <> ");",
+        "  --color-accent-border-dim: oklch(0.70 0.10 "
+          <> fmt_hue(accent_hue)
+          <> ");",
+        "}",
       ],
       "\n",
     )
