@@ -214,12 +214,26 @@ fn init_mqtt(
 
   use <- require_connected(connect_result, config)
 
+  // Recover previous state from retained MQTT messages before publishing our own
+  let #(display_power, dark_mode) =
+    recover_retained_state(client, updates_subject, prefix)
+
+  log.println(
+    "[ha_client] recovered state: display_power="
+    <> bool_to_on_off(display_power)
+    <> " dark_mode="
+    <> bool_to_on_off(dark_mode),
+  )
+
+  // Apply display power side-effect to ensure hardware matches restored state
+  set_display_power(config, display_power)
+
   let initial_state =
     State(
       config:,
       mqtt_client: client,
-      display_power: True,
-      dark_mode: True,
+      display_power:,
+      dark_mode:,
       clients: [],
       self:,
     )
@@ -256,6 +270,105 @@ fn require_connected(
       log.println("[ha_client] MQTT connection timed out")
       Error("MQTT connection timed out")
     }
+  }
+}
+
+/// Subscribe to our own state topics, read any retained messages from the
+/// broker, and unsubscribe. Returns the recovered (display_power, dark_mode)
+/// values, defaulting to True if no retained message exists (first boot).
+fn recover_retained_state(
+  client: mqtt_actor.Client,
+  updates_subject: Subject(mqtt.Update),
+  prefix: String,
+) -> #(Bool, Bool) {
+  let display_power_topic = prefix <> "/display_power/state"
+  let dark_mode_topic = prefix <> "/dark_mode/state"
+
+  // Subscribe to our own state topics to receive retained messages
+  let sub_result =
+    mqtt_actor.subscribe(client, [
+      mqtt.SubscribeRequest(display_power_topic, mqtt.AtLeastOnce),
+      mqtt.SubscribeRequest(dark_mode_topic, mqtt.AtLeastOnce),
+    ])
+
+  case sub_result {
+    Error(err) -> {
+      log.println(
+        "[ha_client] failed to subscribe to state topics for recovery: "
+        <> string.inspect(err),
+      )
+      #(True, True)
+    }
+    Ok(_subscriptions) -> {
+      // After SUBACK, the broker sends retained messages as PUBLISH packets.
+      // Wait up to 2 seconds to collect them (we expect 0-2 messages).
+      let selector =
+        process.new_selector()
+        |> process.select(updates_subject)
+
+      let state = collect_retained_messages(selector, #(None, None), prefix, 2)
+
+      // Unsubscribe from state topics — they're our output, not input
+      let _ =
+        mqtt_actor.unsubscribe(client, [display_power_topic, dark_mode_topic])
+
+      let display_power = option.unwrap(state.0, True)
+      let dark_mode = option.unwrap(state.1, True)
+      #(display_power, dark_mode)
+    }
+  }
+}
+
+/// Collect up to `remaining` retained messages from the selector, with a
+/// 2-second timeout per message. Returns (display_power, dark_mode) as Options.
+fn collect_retained_messages(
+  selector: process.Selector(mqtt.Update),
+  acc: #(Option(Bool), Option(Bool)),
+  prefix: String,
+  remaining: Int,
+) -> #(Option(Bool), Option(Bool)) {
+  case remaining {
+    0 -> acc
+    _ -> {
+      case process.selector_receive(from: selector, within: 2000) {
+        Error(Nil) -> {
+          // Timeout — no more retained messages
+          acc
+        }
+        Ok(mqtt.ReceivedMessage(topic:, payload:, retained: True)) -> {
+          let value =
+            bit_array.to_string(payload)
+            |> result.unwrap("")
+            |> string.uppercase
+          let on = value == "ON"
+
+          let new_acc = case
+            topic == prefix <> "/display_power/state",
+            topic == prefix <> "/dark_mode/state"
+          {
+            True, _ -> #(Some(on), acc.1)
+            _, True -> #(acc.0, Some(on))
+            _, _ -> acc
+          }
+          collect_retained_messages(selector, new_acc, prefix, remaining - 1)
+        }
+        Ok(mqtt.ReceivedMessage(retained: False, ..)) -> {
+          // Non-retained message; skip but keep waiting
+          collect_retained_messages(selector, acc, prefix, remaining)
+        }
+        Ok(mqtt.ConnectionStateChanged(_)) -> {
+          // Ignore connection state changes during recovery
+          collect_retained_messages(selector, acc, prefix, remaining)
+        }
+      }
+    }
+  }
+}
+
+fn bool_to_on_off(value: Bool) -> String {
+  case value {
+    True -> "ON"
+    False -> "OFF"
   }
 }
 
@@ -475,10 +588,7 @@ fn publish_state(
   topic: String,
   on: Bool,
 ) -> Nil {
-  let payload = case on {
-    True -> "ON"
-    False -> "OFF"
-  }
+  let payload = bool_to_on_off(on)
   mqtt_actor.publish(
     client,
     mqtt.PublishData(
