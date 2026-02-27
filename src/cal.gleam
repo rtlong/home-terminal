@@ -923,8 +923,8 @@ pub fn view_gantt(
     let icon_attrs = [
       attribute.style("color", "oklch(0.85 0.08 55)"),
       attribute.style("flex-shrink", "0"),
-      attribute.attribute("width", "12"),
-      attribute.attribute("height", "12"),
+      attribute.style("width", "12px"),
+      attribute.style("height", "12px"),
       attribute.attribute("stroke-width", "2.5"),
     ]
     let sun_label_el = case sun_times {
@@ -1272,8 +1272,8 @@ pub fn view_gantt(
               ],
               [
                 icons.sunset([
-                  attribute.attribute("width", "10"),
-                  attribute.attribute("height", "10"),
+                  attribute.style("width", "10px"),
+                  attribute.style("height", "10px"),
                   attribute.attribute("stroke-width", "2.5"),
                   attribute.style("flex-shrink", "0"),
                 ]),
