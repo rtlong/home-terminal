@@ -12,6 +12,7 @@ import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/string
+import ha_client
 import log
 import lustre
 import lustre/attribute
@@ -55,12 +56,35 @@ pub fn main() {
   let assert Ok(config) = cal_dav.config_from_env()
   let assert Ok(cal_server) = cal_server.start(config, data_dir)
 
+  // Optionally start Home Assistant MQTT integration.
+  let ha = case ha_client.config_from_env() {
+    Ok(ha_config) -> {
+      log.println("[app] HA integration enabled, connecting to MQTT...")
+      case ha_client.start(ha_config) {
+        Ok(client) -> {
+          log.println("[app] HA client started successfully")
+          Some(client)
+        }
+        Error(err) -> {
+          log.println(
+            "[app] HA client failed to start: " <> string.inspect(err),
+          )
+          None
+        }
+      }
+    }
+    Error(reason) -> {
+      log.println("[app] HA integration disabled: " <> reason)
+      None
+    }
+  }
+
   let handler = fn(request: Request(Connection)) -> Response(ResponseData) {
     case request.path_segments(request) {
       [] -> serve_html()
       ["app.css"] -> serve_static_file("priv/static/app.css", "text/css")
       ["lustre", "runtime.mjs"] -> serve_runtime()
-      ["ws"] -> serve_tabs(request, cal_server)
+      ["ws"] -> serve_tabs(request, cal_server, ha)
       _ -> response.set_body(response.new(404), mist.Bytes(bytes_tree.new()))
     }
   }
@@ -224,10 +248,11 @@ fn serve_runtime() -> Response(ResponseData) {
 fn serve_tabs(
   request: Request(Connection),
   cal_server: cal_server.Server,
+  ha: Option(ha_client.HaClient),
 ) -> Response(ResponseData) {
   mist.websocket(
     request:,
-    on_init: fn(conn) { init_tabs_socket(conn, cal_server) },
+    on_init: fn(conn) { init_tabs_socket(conn, cal_server, ha) },
     handler: loop_tabs_socket,
     on_close: close_tabs_socket,
   )
@@ -249,10 +274,11 @@ type TabsSocketInit =
 fn init_tabs_socket(
   _conn: mist.WebsocketConnection,
   cal_server: cal_server.Server,
+  ha: Option(ha_client.HaClient),
 ) -> TabsSocketInit {
   let assert Ok(component) =
     tabs.component()
-    |> lustre.start_server_component(cal_server)
+    |> lustre.start_server_component(tabs.Flags(cal_server:, ha:))
 
   let self = process.new_subject()
   let selector =

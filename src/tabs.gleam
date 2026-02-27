@@ -7,10 +7,12 @@ import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import gleam/time/calendar
 import gleam/time/timestamp
+import ha_client
 import lustre.{type App}
 import lustre/attribute
 import lustre/effect.{type Effect}
@@ -22,13 +24,15 @@ import state
 
 // COMPONENT -------------------------------------------------------------------
 
+/// Flags passed to the component on startup.
+pub type Flags {
+  Flags(cal_server: Server, ha: Option(ha_client.HaClient))
+}
+
 /// Per-connection server component. Owns tab selection state and the calendar
 /// event cache for this connection. Calendar data is pushed in by cal_server
 /// via a registered callback.
-///
-/// Takes a cal_server.Server as its start argument so it knows where to
-/// subscribe for updates.
-pub fn component() -> App(Server, Model, Msg) {
+pub fn component() -> App(Flags, Model, Msg) {
   lustre.application(init, update, view)
 }
 
@@ -45,6 +49,8 @@ pub type Model {
     calendar_data: cal_server.CalendarData,
     registration: cal_server.Registration,
     server: Server,
+    display_power: Bool,
+    dark_mode: Bool,
   )
 }
 
@@ -58,7 +64,8 @@ fn tick_effect() -> Effect(Msg) {
   })
 }
 
-fn init(server: Server) -> #(Model, Effect(Msg)) {
+fn init(flags: Flags) -> #(Model, Effect(Msg)) {
+  let server = flags.cal_server
   let cal_effect =
     effect.select(fn(dispatch, _subject: process.Subject(Msg)) {
       let registration =
@@ -66,7 +73,19 @@ fn init(server: Server) -> #(Model, Effect(Msg)) {
       dispatch(GotRegistration(registration))
       process.new_selector()
     })
-  let effect = effect.batch([cal_effect, tick_effect()])
+
+  // Register with HA client if available
+  let ha_effect = case flags.ha {
+    Some(ha) ->
+      effect.from(fn(dispatch) {
+        ha_client.register(ha, fn(ha_state) {
+          dispatch(HaStateChanged(ha_state))
+        })
+      })
+    None -> effect.none()
+  }
+
+  let effect = effect.batch([cal_effect, ha_effect, tick_effect()])
 
   let placeholder = cal_server.placeholder_registration()
 
@@ -83,6 +102,8 @@ fn init(server: Server) -> #(Model, Effect(Msg)) {
       ),
       registration: placeholder,
       server: server,
+      display_power: True,
+      dark_mode: True,
     )
 
   #(model, effect)
@@ -94,6 +115,7 @@ pub opaque type Msg {
   UserSelectedTab(Tab)
   CalendarUpdated(cal_server.CalendarData)
   GotRegistration(cal_server.Registration)
+  HaStateChanged(ha_client.HaState)
   UserToggledCalendar(name: String, visible: Bool)
   UserToggledCalendarPerson(cal_name: String, person: String, assigned: Bool)
   UserChangedPersonColor(person: String, color: String)
@@ -113,6 +135,15 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
     CalendarUpdated(data) -> #(
       Model(..model, calendar_data: data),
+      effect.none(),
+    )
+
+    HaStateChanged(ha_state) -> #(
+      Model(
+        ..model,
+        display_power: ha_state.display_power,
+        dark_mode: ha_state.dark_mode,
+      ),
       effect.none(),
     )
 
@@ -151,11 +182,27 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 // VIEW ------------------------------------------------------------------------
 
 fn view(model: Model) -> Element(Msg) {
-  html.div([attribute.class("flex flex-col h-screen")], [
+  let theme_attr = case model.dark_mode {
+    True -> attribute.attribute("data-theme", "dark")
+    False -> attribute.attribute("data-theme", "light")
+  }
+  html.div([attribute.class("flex flex-col h-screen"), theme_attr], [
     view_tab_bar(model.active_tab),
     html.div([attribute.class("flex-1 flex flex-col min-h-0 overflow-hidden")], [
       view_active_tab(model),
     ]),
+    // Full-screen black overlay when display is powered off
+    case model.display_power {
+      True -> element.none()
+      False ->
+        html.div(
+          [
+            attribute.class("fixed inset-0 z-50"),
+            attribute.style("background-color", "black"),
+          ],
+          [],
+        )
+    },
   ])
 }
 
