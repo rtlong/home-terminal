@@ -837,7 +837,7 @@ pub fn view_gantt(
     let now_offset = now_min - window.start_min
     let now_in_night = case sun_times {
       Error(_) -> False
-      Ok(st) -> now_min < st.civil_dawn || now_min >= st.civil_dusk
+      Ok(st) -> now_min < st.civil_dawn || now_min >= st.sunset
     }
     // In night zones use a bright accent so it remains visible on dark bg.
     let now_color = case now_in_night {
@@ -1089,12 +1089,14 @@ pub fn view_gantt(
     // Per-day gridline and tick-label generation, so we can vary colors in
     // night zones (when sun_times is available).
     //
-    // A minute is "in night" if it falls outside [civil_dawn, civil_dusk].
-    // We use absolute minutes-since-midnight for the comparison.
+    // A minute is "in night" if it falls outside [civil_dawn, sunset].
+    // We switch at sunset (not civil_dusk) because the background gradient
+    // already becomes dark enough at sunset that dark gridlines/labels are
+    // unreadable from there onward.
     let is_night_min = fn(abs_min: Int) -> Bool {
       case sun_times {
         Error(_) -> False
-        Ok(st) -> abs_min < st.civil_dawn || abs_min >= st.civil_dusk
+        Ok(st) -> abs_min < st.civil_dawn || abs_min >= st.sunset
       }
     }
     // Gridline colors: dark on light (day), light on dark (night).
