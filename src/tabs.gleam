@@ -186,10 +186,21 @@ fn view(model: Model) -> Element(Msg) {
     True -> attribute.attribute("data-theme", "dark")
     False -> attribute.attribute("data-theme", "light")
   }
-  html.div([attribute.class("flex flex-col h-screen"), theme_attr], [
+  let cfg = model.calendar_data.cal_config
+  // Generate palette at the top level so theme CSS vars are always present.
+  let pal =
+    palette.generate(
+      cfg.people_colors,
+      cfg.people,
+      cfg.calendar_people,
+      model.calendar_data.calendar_names,
+    )
+  html.div([attribute.class("flex flex-col h-screen bg-bg text-text"), theme_attr], [
+    // Inject palette-derived theme CSS variables at root level.
+    html.style([], pal.theme_vars),
     view_tab_bar(model.active_tab),
     html.div([attribute.class("flex-1 flex flex-col min-h-0 overflow-hidden")], [
-      view_active_tab(model),
+      view_active_tab(model, pal),
     ]),
     // Full-screen black overlay when display is powered off
     case model.display_power {
@@ -301,7 +312,7 @@ fn view_tab_button(label: String, tab: Tab, active: Tab) -> Element(Msg) {
   ])
 }
 
-fn view_active_tab(model: Model) -> Element(Msg) {
+fn view_active_tab(model: Model, pal: palette.Palette) -> Element(Msg) {
   case model.active_tab {
     CalendarTab ->
       case model.calendar_data.events {
@@ -309,14 +320,6 @@ fn view_active_tab(model: Model) -> Element(Msg) {
         Error(reason) -> cal.view_error(reason)
         Ok(events) -> {
           let cfg = model.calendar_data.cal_config
-          // Generate palette from person hues and calendar→people mapping.
-          let pal =
-            palette.generate(
-              cfg.people_colors,
-              cfg.people,
-              cfg.calendar_people,
-              model.calendar_data.calendar_names,
-            )
           let color_for = fn(cal_name: String) -> String {
             dict.get(pal.calendar_colors, cal_name)
             |> result.unwrap("oklch(0.65 0.19 250)")
@@ -325,10 +328,6 @@ fn view_active_tab(model: Model) -> Element(Msg) {
             list.filter(events, fn(e) {
               state.get_calendar_config(cfg, e.calendar_name).visible
             })
-          // Map each event to (BarPos, color). Color is always the calendar color.
-          // Unassigned → BarCenter.
-          // Assigned to one person → BarLeft (person 0) or BarRight (person 1).
-          // Assigned to both people → BarCenter (one strip in the middle).
           let people = cfg.people
           let bars_for_event = fn(e: cal.Event) -> List(#(cal.BarPos, String)) {
             let assigned =
@@ -336,11 +335,8 @@ fn view_active_tab(model: Model) -> Element(Msg) {
               |> result.unwrap([])
             let color = color_for(e.calendar_name)
             case assigned, people {
-              // Unassigned
               [], _ -> [#(cal.BarCenter, color)]
-              // Assigned to both people → center strip
               [_, _, ..], [_, _, ..] -> [#(cal.BarCenter, color)]
-              // Assigned to one person → their bar
               [person, ..], _ -> {
                 let bar = case people {
                   [p0, ..] if person == p0 -> cal.BarLeft
@@ -354,8 +350,6 @@ fn view_active_tab(model: Model) -> Element(Msg) {
           html.div(
             [attribute.class("flex flex-col flex-1 min-h-0 overflow-hidden")],
             [
-              // Inject palette-derived theme CSS variables.
-              html.style([], pal.theme_vars),
               view_fetch_stamp(model.calendar_data.fetched_at),
               cal.view_gantt(
                 visible_events,
@@ -373,7 +367,7 @@ fn view_active_tab(model: Model) -> Element(Msg) {
         }
       }
 
-    SettingsTab -> view_settings(model)
+    SettingsTab -> view_settings(model, pal)
   }
 }
 
@@ -414,7 +408,7 @@ fn view_fetch_stamp(fetched_at: Int) -> Element(Msg) {
 
 // SETTINGS VIEW ---------------------------------------------------------------
 
-fn view_settings(model: Model) -> Element(Msg) {
+fn view_settings(model: Model, pal: palette.Palette) -> Element(Msg) {
   let cfg = model.calendar_data.cal_config
   let people = cfg.people
 
@@ -432,14 +426,6 @@ fn view_settings(model: Model) -> Element(Msg) {
     names -> list.sort(names, string.compare)
   }
 
-  // Generate palette so we can show generated color swatches in calendar rows.
-  let pal =
-    palette.generate(
-      cfg.people_colors,
-      cfg.people,
-      cfg.calendar_people,
-      model.calendar_data.calendar_names,
-    )
   let color_for = fn(cal_name: String) -> String {
     dict.get(pal.calendar_colors, cal_name)
     |> result.unwrap("oklch(0.65 0.19 250)")
