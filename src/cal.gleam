@@ -932,7 +932,7 @@ pub fn view_gantt(
       Ok(st) ->
         html.div(
           [
-            attribute.class("flex flex-col gap-px select-none leading-none"),
+            attribute.class("flex flex-row gap-2 select-none leading-none items-center"),
             attribute.style("font-size", "11px"),
             attribute.style("color", "oklch(0.85 0.08 55)"),
           ],
