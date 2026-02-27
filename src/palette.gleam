@@ -149,47 +149,6 @@ pub fn generate(
           <> fmt_hue(accent_hue)
           <> ");",
         "}",
-        // Light mode overrides
-        "@media (prefers-color-scheme: light) {",
-        "  :root, :host {",
-        "    --color-bg:            oklch(0.97 0.008 "
-          <> fmt_hue(base_hue)
-          <> ");",
-        "    --color-surface:       oklch(1.00 0.004 "
-          <> fmt_hue(base_hue)
-          <> ");",
-        "    --color-surface-2:     oklch(0.93 0.010 "
-          <> fmt_hue(base_hue)
-          <> ");",
-        "    --color-text:          oklch(0.18 0.020 "
-          <> fmt_hue(base_hue)
-          <> ");",
-        "    --color-text-muted:    oklch(0.45 0.016 "
-          <> fmt_hue(base_hue)
-          <> ");",
-        "    --color-text-faint:    oklch(0.62 0.012 "
-          <> fmt_hue(base_hue)
-          <> ");",
-        "    --color-border:        oklch(0.86 0.012 "
-          <> fmt_hue(base_hue)
-          <> ");",
-        "    --color-border-dim:    oklch(0.78 0.014 "
-          <> fmt_hue(base_hue)
-          <> ");",
-        "    --color-accent:        oklch(0.50 0.20  "
-          <> fmt_hue(accent_hue)
-          <> ");",
-        "    --color-accent-dim:    oklch(0.70 0.16  "
-          <> fmt_hue(accent_hue)
-          <> ");",
-        "    --color-accent-border: oklch(0.55 0.18  "
-          <> fmt_hue(accent_hue)
-          <> ");",
-        "    --color-accent-border-dim: oklch(0.88 0.08 "
-          <> fmt_hue(accent_hue)
-          <> ");",
-        "  }",
-        "}",
       ],
       "\n",
     )

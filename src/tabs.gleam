@@ -236,7 +236,7 @@ fn view_clock() -> Element(Msg) {
       ],
       [html.text(time_str)],
     ),
-    html.span([attribute.class("text-lg font-medium text-text-muted")], [
+    html.span([attribute.class("text-lg font-medium text-text")], [
       html.text(date_str),
     ]),
   ])
@@ -360,9 +360,9 @@ fn view_fetch_stamp(fetched_at: Int) -> Element(Msg) {
   html.div(
     [
       attribute.class(
-        "shrink-0 px-3 py-0.5 text-right text-text-muted select-none",
+        "shrink-0 px-3 py-0.5 text-right text-text select-none",
       ),
-      attribute.style("font-size", "9px"),
+      attribute.style("font-size", "11px"),
     ],
     [html.text(label)],
   )
@@ -507,7 +507,7 @@ fn view_calendar_row(
   let toggle =
     html.input([
       attribute.type_("checkbox"),
-      attribute.class("w-4 h-4 rounded accent-emerald-500 cursor-pointer"),
+      attribute.class("w-4 h-4 styled-checkbox"),
       attribute.checked(cal_cfg.visible),
       on_toggle_change(name),
     ])
@@ -529,13 +529,11 @@ fn view_calendar_row(
             [
               html.input([
                 attribute.type_("checkbox"),
-                attribute.class(
-                  "w-3.5 h-3.5 rounded accent-accent cursor-pointer",
-                ),
+                attribute.class("w-3.5 h-3.5 styled-checkbox"),
                 attribute.checked(is_assigned),
                 on_person_toggle_change(name, person),
               ]),
-              html.span([attribute.class("text-xs text-text-muted")], [
+              html.span([attribute.class("text-xs text-text")], [
                 html.text(person),
               ]),
             ],

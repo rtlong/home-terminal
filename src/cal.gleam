@@ -910,8 +910,8 @@ pub fn view_gantt(
       html.span(
         [
           attribute.class(case is_today {
-            True -> "font-bold text-accent-border leading-tight"
-            False -> "font-medium text-text-muted leading-tight"
+            True -> "font-bold text-text leading-tight"
+            False -> "font-medium text-text leading-tight"
           }),
           attribute.style("font-size", "14px"),
         ],
@@ -928,7 +928,7 @@ pub fn view_gantt(
           [
             attribute.class("leading-none select-none"),
             attribute.style("font-size", "12px"),
-            attribute.style("color", "oklch(0.72 0.08 55)"),
+            attribute.style("color", "oklch(0.85 0.08 55)"),
           ],
           [html.text(rise_str <> " " <> set_str)],
         )

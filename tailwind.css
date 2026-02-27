@@ -38,3 +38,29 @@
 :host {
     --event-bg-l: 15%;
 }
+
+/* ─── Custom checkbox styling ────────────────────────────────────────────────
+   Native checkboxes are near-invisible unchecked on dark backgrounds.
+   Use appearance-none + explicit border/bg + SVG checkmark via background-image.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+input[type="checkbox"].styled-checkbox {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 2px solid oklch(0.55 0.02 265);
+    border-radius: 3px;
+    background-color: transparent;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+    transition: border-color 0.1s, background-color 0.1s;
+}
+
+input[type="checkbox"].styled-checkbox:checked {
+    background-color: var(--color-emerald-500);
+    border-color: var(--color-emerald-500);
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 10 10' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1.5 5l2.5 2.5 4.5-4.5' stroke='%23fff' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-size: 75% 75%;
+    background-repeat: no-repeat;
+    background-position: center;
+}
