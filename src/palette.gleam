@@ -148,6 +148,33 @@ pub fn generate(
         "  --color-accent-border-dim: oklch(0.30 0.10 "
           <> fmt_hue(accent_hue)
           <> ");",
+        // Tick header band: light bg with dark text in dark mode
+        "  --color-tick-band-bg:  oklch(0.82 0.025 "
+          <> fmt_hue(base_hue)
+          <> ");",
+        "  --color-tick-band-text: oklch(0.22 0.02 "
+          <> fmt_hue(base_hue)
+          <> ");",
+        // NOW badge: vivid accent to stand out in the tick band
+        "  --color-now-badge-bg:  oklch(0.55 0.20 "
+          <> fmt_hue(accent_hue)
+          <> ");",
+        "  --color-now-badge-text: oklch(0.98 0.005 "
+          <> fmt_hue(accent_hue)
+          <> ");",
+        // Gridlines: white-with-opacity on dark backgrounds
+        "  --color-gridline-q:    oklch(1 0 0 / 10%);",
+        "  --color-gridline-q-n:  oklch(1 0 0 / 14%);",
+        "  --color-gridline-h:    oklch(1 0 0 / 22%);",
+        "  --color-gridline-h-n:  oklch(1 0 0 / 30%);",
+        "  --color-gridline-edge: oklch(1 0 0 / 20%);",
+        // Sunrise/sunset gutter label color
+        "  --color-sun-label:     oklch(0.85 0.08 55);",
+        // Sunrise/sunset dashed markers in timeline
+        "  --color-sun-rise-line: oklch(0.62 0.14 58 / 60%);",
+        "  --color-sun-set-line:  oklch(0.92 0.03 80 / 60%);",
+        // Row separator
+        "  --color-row-border:    oklch(1 0 0 / 8%);",
         "}",
         "",
         // Light mode — activated by data-theme="light" attribute on the root div
@@ -188,6 +215,33 @@ pub fn generate(
         "  --color-accent-border-dim: oklch(0.70 0.10 "
           <> fmt_hue(accent_hue)
           <> ");",
+        // Tick header band: dark bg with light text in light mode
+        "  --color-tick-band-bg:  oklch(0.25 0.035 "
+          <> fmt_hue(base_hue)
+          <> ");",
+        "  --color-tick-band-text: oklch(0.88 0.015 "
+          <> fmt_hue(base_hue)
+          <> ");",
+        // NOW badge: vivid accent to stand out in the tick band
+        "  --color-now-badge-bg:  oklch(0.70 0.22 "
+          <> fmt_hue(accent_hue)
+          <> ");",
+        "  --color-now-badge-text: oklch(0.15 0.03 "
+          <> fmt_hue(accent_hue)
+          <> ");",
+        // Gridlines: black-with-opacity on light backgrounds
+        "  --color-gridline-q:    oklch(0 0 0 / 8%);",
+        "  --color-gridline-q-n:  oklch(0 0 0 / 12%);",
+        "  --color-gridline-h:    oklch(0 0 0 / 18%);",
+        "  --color-gridline-h-n:  oklch(0 0 0 / 25%);",
+        "  --color-gridline-edge: oklch(0 0 0 / 18%);",
+        // Sunrise/sunset gutter label — darker amber for light bg
+        "  --color-sun-label:     oklch(0.48 0.12 55);",
+        // Sunrise/sunset dashed markers in timeline
+        "  --color-sun-rise-line: oklch(0.50 0.14 58 / 60%);",
+        "  --color-sun-set-line:  oklch(0.45 0.08 80 / 50%);",
+        // Row separator
+        "  --color-row-border:    oklch(0 0 0 / 8%);",
         "}",
       ],
       "\n",

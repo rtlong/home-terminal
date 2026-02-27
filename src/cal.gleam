@@ -826,7 +826,7 @@ pub fn view_gantt(
             "minmax(" <> int.to_string(bar_px) <> "px, auto)",
           ),
           attribute.style("row-gap", "2px"),
-          attribute.style("border-bottom", "1px solid oklch(1 0 0 / 8%)"),
+          attribute.style("border-bottom", "1px solid var(--color-row-border)"),
           attribute.style("position", "relative"),
           attribute.style("z-index", "1"),
         ],
@@ -860,8 +860,8 @@ pub fn view_gantt(
             attribute.style("z-index", "3"),
             attribute.style("font-size", "10px"),
             attribute.style("font-weight", "700"),
-            attribute.style("background-color", now_line_color),
-            attribute.style("color", "oklch(0.08 0.02 145)"),
+            attribute.style("background-color", "var(--color-now-badge-bg)"),
+            attribute.style("color", "var(--color-now-badge-text)"),
             attribute.style("border-radius", "3px"),
             attribute.style("padding", "1px 4px"),
             attribute.style("white-space", "nowrap"),
@@ -911,8 +911,8 @@ pub fn view_gantt(
       html.span(
         [
           attribute.class(case is_today {
-            True -> "font-bold text-text leading-tight"
-            False -> "font-medium text-text leading-tight"
+            True -> "font-bold leading-tight"
+            False -> "font-medium leading-tight"
           }),
           attribute.style("font-size", "14px"),
         ],
@@ -921,7 +921,7 @@ pub fn view_gantt(
 
     // Sunrise/sunset rows for left gutter — icon + time on each line.
     let icon_attrs = [
-      attribute.style("color", "oklch(0.85 0.08 55)"),
+      attribute.style("color", "var(--color-sun-label)"),
       attribute.style("flex-shrink", "0"),
       attribute.style("width", "12px"),
       attribute.style("height", "12px"),
@@ -934,7 +934,7 @@ pub fn view_gantt(
           [
             attribute.class("flex flex-row gap-2 select-none leading-none items-center"),
             attribute.style("font-size", "11px"),
-            attribute.style("color", "oklch(0.85 0.08 55)"),
+            attribute.style("color", "var(--color-sun-label)"),
           ],
           [
             html.div([attribute.class("flex items-center gap-0.5")], [
@@ -949,17 +949,35 @@ pub fn view_gantt(
         )
     }
 
-    // Left gutter: date label + all-day chips. Width is wider to allow chips
-    // to display more text before truncating.
+    // Left gutter: header band (matching tick band height) + date label + all-day chips.
+    // Width is wider to allow chips to display more text before truncating.
+    let gutter_header =
+      html.div(
+        [
+          attribute.class("shrink-0 flex items-center px-1 select-none"),
+          attribute.style("height", int.to_string(tick_header_px) <> "px"),
+          attribute.style("background-color", "var(--color-tick-band-bg)"),
+          attribute.style("color", "var(--color-tick-band-text)"),
+        ],
+        [date_label],
+      )
     let left_gutter =
       html.div(
         [
           attribute.class(
-            "shrink-0 flex flex-col gap-0.5 pt-0.5 pr-1 select-none overflow-hidden",
+            "shrink-0 flex flex-col select-none overflow-hidden",
           ),
           attribute.style("width", "11rem"),
         ],
-        list.flatten([[date_label], [sun_label_el], all_day_chips]),
+        list.flatten([
+          [gutter_header],
+          [
+            html.div(
+              [attribute.class("flex flex-col gap-0.5 pt-0.5 pr-1")],
+              list.flatten([[sun_label_el], all_day_chips]),
+            ),
+          ],
+        ]),
       )
 
     // Day/night gradient background based on sunrise/sunset times.
@@ -1037,8 +1055,8 @@ pub fn view_gantt(
             True -> {
               let col = int.to_string(rel + 1)
               let color = case is_rise {
-                True -> "oklch(0.62 0.14 58)"
-                False -> "oklch(0.92 0.03 80)"
+                True -> "var(--color-sun-rise-line)"
+                False -> "var(--color-sun-set-line)"
               }
               [
                 html.div(
@@ -1049,7 +1067,7 @@ pub fn view_gantt(
                     attribute.style("align-self", "stretch"),
                     attribute.style(
                       "border-left",
-                      "1px dashed " <> color <> "99",
+                      "1px dashed " <> color,
                     ),
                   ],
                   [],
@@ -1091,12 +1109,11 @@ pub fn view_gantt(
         Ok(st) -> abs_min < st.civil_dawn || abs_min >= st.sunset
       }
     }
-    // Dark theme: all gridlines are white-with-opacity (light on dark).
-    // Night zone gets slightly stronger lines since the background is darker.
-    let qline_day = "oklch(1 0 0 / 10%)"
-    let qline_night = "oklch(1 0 0 / 14%)"
-    let hline_day = "oklch(1 0 0 / 22%)"
-    let hline_night = "oklch(1 0 0 / 30%)"
+    // Gridlines: theme-aware via CSS vars. Night zone gets stronger lines.
+    let qline_day = "var(--color-gridline-q)"
+    let qline_night = "var(--color-gridline-q-n)"
+    let hline_day = "var(--color-gridline-h)"
+    let hline_night = "var(--color-gridline-h-n)"
 
     let first_hour = case window.start_min % 60 {
       0 -> window.start_min / 60
@@ -1182,8 +1199,8 @@ pub fn view_gantt(
     // Tick header band background and hour labels.
     // The band is a dark inverse-color strip; labels are light, centered over
     // their respective gridline column via translateX(-50%).
-    let tick_band_bg = "oklch(0.18 0.04 265)"
-    let tick_label_color = "oklch(0.82 0.03 265)"
+    let tick_band_bg = "var(--color-tick-band-bg)"
+    let tick_label_color = "var(--color-tick-band-text)"
 
     let tick_header_labels =
       list.flatten([
@@ -1292,7 +1309,7 @@ pub fn view_gantt(
           attribute.class(
             "relative flex-1 flex flex-col min-w-0 overflow-hidden",
           ),
-          attribute.style("border-left", "1px solid oklch(1 0 0 / 20%)"),
+          attribute.style("border-left", "1px solid var(--color-gridline-edge)"),
         ],
         list.flatten([
           // Now indicator — absolute, spans full height.
