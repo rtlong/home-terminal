@@ -825,7 +825,7 @@ pub fn view_gantt(
             "minmax(" <> int.to_string(bar_px) <> "px, auto)",
           ),
           attribute.style("row-gap", "2px"),
-          attribute.style("border-bottom", "1px solid oklch(0 0 0 / 5%)"),
+          attribute.style("border-bottom", "1px solid oklch(1 0 0 / 8%)"),
           attribute.style("position", "relative"),
           attribute.style("z-index", "1"),
         ],
@@ -928,7 +928,7 @@ pub fn view_gantt(
           [
             attribute.class("leading-none select-none"),
             attribute.style("font-size", "12px"),
-            attribute.style("color", "oklch(0.60 0.08 55)"),
+            attribute.style("color", "oklch(0.72 0.08 55)"),
           ],
           [html.text(rise_str <> " " <> set_str)],
         )
@@ -1077,10 +1077,12 @@ pub fn view_gantt(
         Ok(st) -> abs_min < st.civil_dawn || abs_min >= st.sunset
       }
     }
-    let qline_day = "oklch(0 0 0 / 8%)"
-    let qline_night = "oklch(1 1 0 / 10%)"
-    let hline_day = "oklch(0 0 0 / 30%)"
-    let hline_night = "oklch(1 1 0 / 30%)"
+    // Dark theme: all gridlines are white-with-opacity (light on dark).
+    // Night zone gets slightly stronger lines since the background is darker.
+    let qline_day = "oklch(1 0 0 / 10%)"
+    let qline_night = "oklch(1 0 0 / 14%)"
+    let hline_day = "oklch(1 0 0 / 22%)"
+    let hline_night = "oklch(1 0 0 / 30%)"
 
     let first_hour = case window.start_min % 60 {
       0 -> window.start_min / 60
@@ -1167,7 +1169,7 @@ pub fn view_gantt(
     // The band is a dark inverse-color strip; labels are light, centered over
     // their respective gridline column via translateX(-50%).
     let tick_band_bg = "oklch(0.18 0.04 265)"
-    let tick_label_color = "oklch(0.72 0.03 265)"
+    let tick_label_color = "oklch(0.82 0.03 265)"
 
     let tick_header_labels =
       list.flatten([
@@ -1266,7 +1268,7 @@ pub fn view_gantt(
           attribute.class(
             "relative flex-1 flex flex-col min-w-0 overflow-hidden",
           ),
-          attribute.style("border-left", "1px solid oklch(0 0 0 / 20%)"),
+          attribute.style("border-left", "1px solid oklch(1 0 0 / 20%)"),
         ],
         list.flatten([
           // Now indicator — absolute, spans full height.
@@ -1324,7 +1326,7 @@ pub fn view_gantt(
       [
         attribute.class("flex flex-row flex-1"),
         attribute.class(case is_today {
-          True -> "bg-surface-2/20"
+          True -> "bg-surface-2/40"
           False -> ""
         }),
       ],

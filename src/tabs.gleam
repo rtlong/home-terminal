@@ -360,7 +360,7 @@ fn view_fetch_stamp(fetched_at: Int) -> Element(Msg) {
   html.div(
     [
       attribute.class(
-        "shrink-0 px-3 py-0.5 text-right text-text-faint select-none",
+        "shrink-0 px-3 py-0.5 text-right text-text-muted select-none",
       ),
       attribute.style("font-size", "9px"),
     ],
