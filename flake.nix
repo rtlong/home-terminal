@@ -40,6 +40,7 @@
                   pkgs.watchexec
                   pkgs.tailwindcss_4
                   pkgs.overmind
+                  pkgs.deno
                 ];
 
                 # On a file change: build then tell overmind to restart beam.

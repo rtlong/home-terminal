@@ -9,6 +9,7 @@ import gleam/string
 import gleam/time/calendar.{type Date, Date}
 import gleam/time/duration
 import gleam/time/timestamp.{type Timestamp}
+import icons
 import lustre/attribute
 import lustre/element.{type Element}
 import lustre/element/html
@@ -844,7 +845,9 @@ pub fn view_gantt(
       False -> "var(--color-accent-border)"
     }
     // NOW pill badge — rendered inside the tick header band (z-index 3, above sunset).
-    let now_badge_el = case is_today && now_offset >= 0 && now_offset <= total_min {
+    let now_badge_el = case
+      is_today && now_offset >= 0 && now_offset <= total_min
+    {
       False -> element.none()
       True ->
         html.div(
@@ -873,9 +876,7 @@ pub fn view_gantt(
       True ->
         html.div(
           [
-            attribute.class(
-              "absolute pointer-events-none",
-            ),
+            attribute.class("absolute pointer-events-none"),
             attribute.style("left", xpct(now_offset)),
             attribute.style("top", int.to_string(tick_header_px) <> "px"),
             attribute.style("bottom", "0"),
@@ -918,21 +919,34 @@ pub fn view_gantt(
         [html.text(weekday_name(day) <> " " <> format_date(day))],
       )
 
-    // Sunrise/sunset line for left gutter: "↑6:28a ↓5:28p"
+    // Sunrise/sunset rows for left gutter — icon + time on each line.
+    let icon_attrs = [
+      attribute.style("color", "oklch(0.85 0.08 55)"),
+      attribute.style("flex-shrink", "0"),
+      attribute.attribute("width", "12"),
+      attribute.attribute("height", "12"),
+      attribute.attribute("stroke-width", "2.5"),
+    ]
     let sun_label_el = case sun_times {
       Error(_) -> element.none()
-      Ok(st) -> {
-        let rise_str = "↑" <> format_time_min(st.sunrise)
-        let set_str = "↓" <> format_time_min(st.sunset)
-        html.span(
+      Ok(st) ->
+        html.div(
           [
-            attribute.class("leading-none select-none"),
-            attribute.style("font-size", "12px"),
+            attribute.class("flex flex-col gap-px select-none leading-none"),
+            attribute.style("font-size", "11px"),
             attribute.style("color", "oklch(0.85 0.08 55)"),
           ],
-          [html.text(rise_str <> " " <> set_str)],
+          [
+            html.div([attribute.class("flex items-center gap-0.5")], [
+              icons.sunrise(icon_attrs),
+              html.text(format_time_min(st.sunrise)),
+            ]),
+            html.div([attribute.class("flex items-center gap-0.5")], [
+              icons.sunset(icon_attrs),
+              html.text(format_time_min(st.sunset)),
+            ]),
+          ],
         )
-      }
     }
 
     // Left gutter: date label + all-day chips. Width is wider to allow chips
@@ -1182,19 +1196,16 @@ pub fn view_gantt(
               Ok(
                 html.span(
                   [
-                    attribute.class("pointer-events-none select-none leading-none"),
+                    attribute.class(
+                      "pointer-events-none select-none leading-none",
+                    ),
                     attribute.style("position", "absolute"),
                     attribute.style(
                       "left",
-                      float_pct(
-                        int_to_float(min) /. total_f *. 100.0,
-                      ),
+                      float_pct(int_to_float(min) /. total_f *. 100.0),
                     ),
                     attribute.style("top", "50%"),
-                    attribute.style(
-                      "transform",
-                      "translate(-50%, -50%)",
-                    ),
+                    attribute.style("transform", "translate(-50%, -50%)"),
                     attribute.style("font-size", "11px"),
                     attribute.style("color", tick_label_color),
                     attribute.style("white-space", "nowrap"),
@@ -1211,7 +1222,9 @@ pub fn view_gantt(
             [
               html.span(
                 [
-                  attribute.class("pointer-events-none select-none leading-none"),
+                  attribute.class(
+                    "pointer-events-none select-none leading-none",
+                  ),
                   attribute.style("position", "absolute"),
                   attribute.style("left", "2px"),
                   attribute.style("top", "50%"),
@@ -1253,8 +1266,19 @@ pub fn view_gantt(
                 attribute.style("border-radius", "3px"),
                 attribute.style("padding", "1px 4px"),
                 attribute.style("white-space", "nowrap"),
+                attribute.style("display", "flex"),
+                attribute.style("align-items", "center"),
+                attribute.style("gap", "2px"),
               ],
-              [html.text("↓" <> format_time_min(st.sunset))],
+              [
+                icons.sunset([
+                  attribute.attribute("width", "10"),
+                  attribute.attribute("height", "10"),
+                  attribute.attribute("stroke-width", "2.5"),
+                  attribute.style("flex-shrink", "0"),
+                ]),
+                html.text(format_time_min(st.sunset)),
+              ],
             )
         }
       }
@@ -1293,7 +1317,11 @@ pub fn view_gantt(
                   {
                     // Inject NOW badge into the band's children list.
                     let band_children =
-                      list.flatten([tick_header_labels, [sunset_badge_el], [now_badge_el]])
+                      list.flatten([
+                        tick_header_labels,
+                        [sunset_badge_el],
+                        [now_badge_el],
+                      ])
                     html.div(
                       [
                         attribute.class(

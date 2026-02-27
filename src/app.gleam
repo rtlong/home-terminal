@@ -164,10 +164,7 @@ fn serve_html() -> Response(ResponseData) {
             attribute.class(
               "fixed bottom-2 right-2 px-2 py-0.5 rounded text-xs font-medium select-none pointer-events-none",
             ),
-            attribute.style(
-              "background-color",
-              "oklch(0.4 0.05 0 / 70%)",
-            ),
+            attribute.style("background-color", "oklch(0.4 0.05 0 / 70%)"),
             attribute.style("color", "oklch(0.75 0.05 0)"),
             attribute.style("display", "none"),
           ],

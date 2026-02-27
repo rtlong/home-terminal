@@ -334,8 +334,7 @@ fn view_fetch_stamp(fetched_at: Int) -> Element(Msg) {
   let label = case fetched_at {
     0 -> "not yet fetched"
     secs -> {
-      let ts =
-        timestamp.from_unix_seconds_and_nanoseconds(secs, 0)
+      let ts = timestamp.from_unix_seconds_and_nanoseconds(secs, 0)
       let local_offset = calendar.local_offset()
       let #(_, time) = timestamp.to_calendar(ts, local_offset)
       let hour = time.hours
@@ -359,9 +358,7 @@ fn view_fetch_stamp(fetched_at: Int) -> Element(Msg) {
   }
   html.div(
     [
-      attribute.class(
-        "shrink-0 px-3 py-0.5 text-right text-text select-none",
-      ),
+      attribute.class("shrink-0 px-3 py-0.5 text-right text-text select-none"),
       attribute.style("font-size", "11px"),
     ],
     [html.text(label)],
@@ -659,7 +656,7 @@ fn view_color_wheel(cfg: state.Config, pal: palette.Palette) -> Element(Msg) {
                 attribute.style("position", "absolute"),
                 attribute.style("left", float_px(lx)),
                 attribute.style("top", float_px(ly -. 5.0)),
-      attribute.style("font-size", "11px"),
+                attribute.style("font-size", "11px"),
                 attribute.style("font-weight", "600"),
                 attribute.style("color", color),
                 attribute.style("white-space", "nowrap"),

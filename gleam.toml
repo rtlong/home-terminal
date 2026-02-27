@@ -16,3 +16,7 @@ gleam_time = ">= 1.7.0 and < 2.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"
+lucide_lustre = ">= 2.0.3 and < 3.0.0"
+
+[lucide_lustre]
+output_module = "icons"
