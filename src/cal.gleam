@@ -13,6 +13,7 @@ import icons
 import lustre/attribute
 import lustre/element.{type Element}
 import lustre/element/html
+import lustre/element/svg
 import palette
 import travel
 
@@ -640,9 +641,10 @@ pub fn view_gantt(
           let is_xm_start = left_min > 0 && right_min >= total_min
           let is_xm_end = left_min <= 0 && right_min < total_min
 
-          // Tapered label for end-day: label pill with a CSS triangle on
-          // its right side that points into the line, making it visually
-          // clear the label identifies the line that follows.
+          // End-day tapered label: the label pill sits flush at the left
+          // edge (no arrow cap or line fragment before it), then an SVG
+          // wedge tapers smoothly from the label's full height down to the
+          // 1.5px axis line.  The SVG is ~20px wide for a gradual taper.
           let tapered_label_box = case label {
             "" -> element.none()
             _ -> {
@@ -669,17 +671,37 @@ pub fn view_gantt(
                     ],
                     [html.text(label_text)],
                   ),
-                  // Right-pointing triangle that tapers into the axis line
-                  html.div(
+                  // SVG taper: the label box's top and bottom edges each
+                  // curve inward to meet the 1.5px axis line, like the
+                  // rectangle itself is tapering off.  Uses quadratic
+                  // bezier curves so the transition is smooth rather than
+                  // a sharp arrowhead.
+                  // viewBox 60×16: left edge is full label height, right
+                  // edge is a 1.5px sliver at the vertical centre.
+                  // Top edge: straight from (0,0) partway, then curves
+                  // down to (60,7.25).  Bottom edge mirrors upward.
+                  svg.svg(
                     [
-                      attribute.style("width", "0"),
-                      attribute.style("height", "0"),
-                      attribute.style("border-top", "8px solid transparent"),
-                      attribute.style("border-bottom", "8px solid transparent"),
-                      attribute.style("border-left", "6px solid " <> color),
+                      attribute.attribute("viewBox", "0 0 60 16"),
+                      attribute.attribute("width", "60"),
+                      attribute.attribute("height", "16"),
+                      attribute.attribute("preserveAspectRatio", "none"),
                       attribute.style("flex-shrink", "0"),
+                      attribute.style("display", "block"),
                     ],
-                    [],
+                    [
+                      svg.path([
+                        attribute.attribute(
+                          "d",
+                          // Start at top-left, go right along top edge,
+                          // then curve down to the line centre at the
+                          // right edge.  Line across the 1.5px gap, then
+                          // curve back up along the bottom to bottom-left.
+                          "M0,0 L10,0 Q60,0 60,7.25 L60,8.75 Q60,16 10,16 L0,16 Z",
+                        ),
+                        attribute.attribute("fill", color),
+                      ]),
+                    ],
                   ),
                 ],
               )
@@ -687,8 +709,8 @@ pub fn view_gantt(
           }
 
           let axis_children = case is_xm_end, is_xm_start {
-            // End-day: label with taper at left, then line to right cap
-            True, _ -> [left_cap, tapered_label_box, line_segment, right_cap]
+            // End-day: label flush at left edge, SVG taper, then line
+            True, _ -> [tapered_label_box, line_segment, right_cap]
             // Start-day: label at left, then line to right cap
             _, True -> [left_cap, label_box, line_segment, right_cap]
             // Normal: centered label
