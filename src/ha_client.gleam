@@ -99,10 +99,14 @@ pub fn start(config: Config) -> Result(HaClient, actor.StartError) {
     actor.new_with_initialiser(15_000, fn(self) {
       case init_mqtt(self, config) {
         Ok(#(state, updates_subject)) -> {
-          // Build a selector that maps mqtt.Update messages into our Msg type
-          // so the actor receives them directly in handle_message.
-          let mqtt_selector =
+          // Build a selector that includes BOTH:
+          // 1. The actor's own subject (for RegisterClient, Reconnect, etc.)
+          // 2. The MQTT updates subject (mapped into Msg)
+          // actor.selecting REPLACES the default selector, so we must
+          // include the actor's subject explicitly.
+          let selector =
             process.new_selector()
+            |> process.select(self)
             |> process.select_map(updates_subject, fn(update) {
               case update {
                 mqtt.ReceivedMessage(topic:, payload:, ..) ->
@@ -112,7 +116,7 @@ pub fn start(config: Config) -> Result(HaClient, actor.StartError) {
               }
             })
           actor.initialised(state)
-          |> actor.selecting(mqtt_selector)
+          |> actor.selecting(selector)
           |> actor.returning(self)
           |> Ok
         }
