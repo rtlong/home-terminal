@@ -1020,7 +1020,7 @@ pub fn view_gantt(
               let col = int.to_string(rel + 1)
               let color = case is_rise {
                 True -> "oklch(0.62 0.14 58)"
-                False -> "oklch(0.52 0.12 32)"
+                False -> "oklch(0.92 0.03 80)"
               }
               // Vertical dashed line spanning both grid rows
               let line =
