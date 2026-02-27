@@ -123,12 +123,15 @@ pub fn start(
       )
       let cal_config = state.read_config(data_dir)
       let travel_caches = state.read_travel_caches(data_dir)
+      let ical_cache = state.read_ical_cache(data_dir)
       log.println(
         "[cal_server] loaded "
         <> string.inspect(dict.size(travel_caches.travel_cache))
         <> " travel_cache entries, "
         <> string.inspect(dict.size(travel_caches.leg_cache))
-        <> " leg_cache entries from disk",
+        <> " leg_cache entries, "
+        <> string.inspect(dict.size(ical_cache.last_fetched))
+        <> " ical feed caches from disk",
       )
       // Derive calendar names from cached events so the palette can assign
       // colors immediately on startup, before the first live CalDAV fetch.
@@ -149,8 +152,8 @@ pub fn start(
           fetched_at: 0,
           travel_cache: travel_caches.travel_cache,
           leg_cache: travel_caches.leg_cache,
-          ical_last_fetched: dict.new(),
-          ical_cached_events: dict.new(),
+          ical_last_fetched: ical_cache.last_fetched,
+          ical_cached_events: ical_cache.cached_events,
         )
       actor.initialised(actor_state) |> actor.returning(self_subject) |> Ok
     })
@@ -483,6 +486,11 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
             new_travel_cache,
             new_leg_cache,
           )
+          state.write_ical_cache(
+            state.data_dir,
+            ics_result.last_fetched,
+            ics_result.cached_events,
+          )
 
           State(
             ..state,
@@ -498,6 +506,11 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
         }
         Error(err) -> {
           log.println("[cal_server] fetch error: " <> err)
+          state.write_ical_cache(
+            state.data_dir,
+            ics_result.last_fetched,
+            ics_result.cached_events,
+          )
           State(
             ..state,
             events: Error(err),

@@ -267,6 +267,89 @@ fn travel_info_decoder() -> decode.Decoder(TravelInfo) {
   ))
 }
 
+// ICAL FEED CACHE -------------------------------------------------------------
+
+/// Persisted iCal feed cache: last-fetched timestamps and cached events per URL.
+pub type IcalFeedCache {
+  IcalFeedCache(
+    last_fetched: Dict(String, Int),
+    cached_events: Dict(String, List(Event)),
+  )
+}
+
+/// Read iCal feed cache from ical_cache.json. Returns empty caches if absent.
+pub fn read_ical_cache(dir: String) -> IcalFeedCache {
+  let path = dir <> "/ical_cache.json"
+  case file_read(path) {
+    Error(_) ->
+      IcalFeedCache(last_fetched: dict.new(), cached_events: dict.new())
+    Ok(bits) ->
+      case bit_array.to_string(bits) {
+        Error(_) ->
+          IcalFeedCache(last_fetched: dict.new(), cached_events: dict.new())
+        Ok(text) ->
+          case json.parse(text, ical_feed_cache_decoder()) {
+            Ok(ic) -> ic
+            Error(_) ->
+              IcalFeedCache(
+                last_fetched: dict.new(),
+                cached_events: dict.new(),
+              )
+          }
+      }
+  }
+}
+
+/// Write iCal feed cache to ical_cache.json.
+pub fn write_ical_cache(
+  dir: String,
+  last_fetched: Dict(String, Int),
+  cached_events: Dict(String, List(Event)),
+) -> Nil {
+  let _ = filelib_ensure_dir(dir <> "/placeholder")
+  let json_str =
+    json.to_string(encode_ical_feed_cache(last_fetched, cached_events))
+  let _ =
+    file_write(dir <> "/ical_cache.json", bit_array.from_string(json_str))
+  Nil
+}
+
+fn encode_ical_feed_cache(
+  last_fetched: Dict(String, Int),
+  cached_events: Dict(String, List(Event)),
+) -> json.Json {
+  let lf_entries =
+    dict.to_list(last_fetched)
+    |> list.map(fn(pair) {
+      let #(url, secs) = pair
+      #(url, json.int(secs))
+    })
+  let ce_entries =
+    dict.to_list(cached_events)
+    |> list.map(fn(pair) {
+      let #(url, events) = pair
+      #(url, json.array(events, encode_event))
+    })
+  json.object([
+    #("last_fetched", json.object(lf_entries)),
+    #("cached_events", json.object(ce_entries)),
+  ])
+}
+
+fn ical_feed_cache_decoder() -> decode.Decoder(IcalFeedCache) {
+  use last_fetched <- decode.optional_field(
+    "last_fetched",
+    dict.new(),
+    decode.dict(decode.string, decode.int),
+  )
+  use cached_events <- decode.optional_field(
+    "cached_events",
+    dict.new(),
+    decode.dict(decode.string, decode.list(event_decoder())),
+  )
+  decode.success(IcalFeedCache(last_fetched:, cached_events:))
+}
+
 // CONFIG ----------------------------------------------------------------------
 
 /// Read config from config.json. Returns empty config if absent or corrupt.
