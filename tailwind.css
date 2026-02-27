@@ -1,79 +1,40 @@
 @import "tailwindcss";
 
 /* ─── Design tokens ──────────────────────────────────────────────────────────
-   Dark mode is the default (this is a wall-display / home terminal).
-   Light mode overrides via @media (prefers-color-scheme: light).
+   Dark mode only — this is a wall-display / home terminal.
+   The app controls its own appearance; client prefers-color-scheme is ignored.
 
-   @theme defines the dark defaults and registers the custom tokens so
-   Tailwind generates utility classes (bg-bg, text-text, etc.).
-
-   The light overrides use a plain @layer theme { @media ... { :root {} } }
-   block — same cascade layer as the defaults, so media query specificity
-   works correctly without unlayered styles stomping on them.
+   @theme defines the tokens and registers utility classes
+   (bg-bg, text-text, etc.).
    ─────────────────────────────────────────────────────────────────────────── */
 
 @theme {
-    /* Backgrounds — dark defaults */
+    /* Backgrounds */
     --color-bg: var(--color-gray-950);
     --color-surface: var(--color-gray-900);
     --color-surface-2: var(--color-gray-800);
 
-    /* Text — dark defaults */
+    /* Text */
     --color-text: var(--color-gray-100);
     --color-text-muted: var(--color-gray-400);
     --color-text-faint: var(--color-gray-600);
 
-    /* Borders — dark defaults */
+    /* Borders */
     --color-border: var(--color-gray-800);
     --color-border-dim: var(--color-gray-700);
 
-    /* Accent (emerald) — dark defaults */
+    /* Accent (emerald) */
     --color-accent: var(--color-emerald-400);
     --color-accent-dim: var(--color-emerald-600);
     --color-accent-border: var(--color-emerald-500);
     --color-accent-border-dim: var(--color-emerald-800);
 }
 
-/* Light mode overrides — inside @layer theme so they're at the same
-   cascade layer level as the @theme defaults above. */
-@layer theme {
-    @media (prefers-color-scheme: light) {
-        :root,
-        :host {
-            --color-bg: var(--color-gray-50);
-            --color-surface: var(--color-white);
-            --color-surface-2: var(--color-gray-100);
-
-            --color-text: var(--color-gray-900);
-            --color-text-muted: var(--color-gray-500);
-            --color-text-faint: var(--color-gray-400);
-
-            --color-border: var(--color-gray-200);
-            --color-border-dim: var(--color-gray-300);
-
-            --color-accent: var(--color-emerald-600);
-            --color-accent-dim: var(--color-emerald-400);
-            --color-accent-border: var(--color-emerald-500);
-            --color-accent-border-dim: var(--color-emerald-200);
-        }
-    }
-}
-
 /* ─── Event background lightness ─────────────────────────────────────────────
    --event-bg-l: lightness for event bar backgrounds (dark fill, white text).
-   Not Tailwind tokens — plain CSS variables used inline in cal.gleam.
-   Travel tints are now computed in palette.gleam using oklch() — no CSS
-   variables needed.
    ─────────────────────────────────────────────────────────────────────────── */
 
 :root,
 :host {
     --event-bg-l: 15%;
-}
-
-@media (prefers-color-scheme: light) {
-    :root,
-    :host {
-        --event-bg-l: 88%;
-    }
 }

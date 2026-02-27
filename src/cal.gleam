@@ -277,9 +277,9 @@ pub fn view_gantt(
   // A type alias for gantt bar tuples: (bar, left_min, width_min, color, thick, label, label2)
   // We use a record-less 7-tuple throughout.
 
-  // Height in px of the hour-tick header strip at the top of each day's time grid.
-  // Event bars live below this strip, so ticks never overlap bars.
-  let tick_header_px = 14
+  // Height in px of the inverse-color tick header band at the top of each day.
+  // Tall enough for pill badges (NOW, sunset time).
+  let tick_header_px = 20
 
   // Render one day row.
   let view_gantt_day = fn(
@@ -839,46 +839,53 @@ pub fn view_gantt(
       Error(_) -> False
       Ok(st) -> now_min < st.civil_dawn || now_min >= st.sunset
     }
-    // In night zones use a bright accent so it remains visible on dark bg.
-    let now_color = case now_in_night {
+    let now_line_color = case now_in_night {
       True -> "oklch(0.85 0.15 145)"
       False -> "var(--color-accent-border)"
     }
+    // NOW pill badge — rendered inside the tick header band (z-index 3, above sunset).
+    let now_badge_el = case is_today && now_offset >= 0 && now_offset <= total_min {
+      False -> element.none()
+      True ->
+        html.div(
+          [
+            attribute.class("pointer-events-none select-none leading-none"),
+            attribute.style("position", "absolute"),
+            attribute.style("left", xpct(now_offset)),
+            attribute.style("top", "50%"),
+            attribute.style("transform", "translate(-50%, -50%)"),
+            attribute.style("z-index", "3"),
+            attribute.style("font-size", "10px"),
+            attribute.style("font-weight", "700"),
+            attribute.style("background-color", now_line_color),
+            attribute.style("color", "oklch(0.08 0.02 145)"),
+            attribute.style("border-radius", "3px"),
+            attribute.style("padding", "1px 4px"),
+            attribute.style("white-space", "nowrap"),
+            attribute.style("letter-spacing", "0.04em"),
+          ],
+          [html.text("NOW")],
+        )
+    }
+    // Vertical line only — starts at top of event area (below header band).
     let now_el = case is_today && now_offset >= 0 && now_offset <= total_min {
       False -> element.none()
       True ->
         html.div(
           [
-            attribute.class("absolute top-0 bottom-0 z-20 pointer-events-none"),
+            attribute.class(
+              "absolute pointer-events-none",
+            ),
             attribute.style("left", xpct(now_offset)),
+            attribute.style("top", int.to_string(tick_header_px) <> "px"),
+            attribute.style("bottom", "0"),
+            attribute.style("width", "2px"),
             attribute.style("transform", "translateX(-50%)"),
-            attribute.style("display", "flex"),
-            attribute.style("flex-direction", "column"),
-            attribute.style("align-items", "center"),
+            attribute.style("background-color", now_line_color),
+            attribute.style("opacity", "0.9"),
+            attribute.style("z-index", "20"),
           ],
-          [
-            // Circle cap at top
-            html.div(
-              [
-                attribute.style("width", "8px"),
-                attribute.style("height", "8px"),
-                attribute.style("border-radius", "50%"),
-                attribute.style("background-color", now_color),
-                attribute.style("flex-shrink", "0"),
-              ],
-              [],
-            ),
-            // Vertical line
-            html.div(
-              [
-                attribute.style("width", "2px"),
-                attribute.style("flex", "1"),
-                attribute.style("background-color", now_color),
-                attribute.style("opacity", "0.9"),
-              ],
-              [],
-            ),
-          ],
+          [],
         )
     }
 
@@ -1004,15 +1011,12 @@ pub fn view_gantt(
       }
     }
 
-    // Sunrise/sunset markers: a vertical dashed line spanning full height,
-    // with a small "↑6:28a" / "↓5:28p" label sitting in the tick-header row.
-    // Reuses the same grid as the hour gridlines so column positions match exactly.
+    // Sunrise/sunset markers: dashed vertical lines in the event area only.
+    // Labels are now in the header band (sunset badge) or gutter (sunrise).
     let sun_markers_el = case sun_times {
       Error(_) -> element.none()
       Ok(st) -> {
-        let make_marker = fn(abs_min: Int, label: String, is_rise: Bool) -> List(
-          Element(msg),
-        ) {
+        let make_line = fn(abs_min: Int, is_rise: Bool) -> List(Element(msg)) {
           let rel = abs_min - window.start_min
           case rel > 0 && rel < total_min {
             False -> []
@@ -1022,13 +1026,12 @@ pub fn view_gantt(
                 True -> "oklch(0.62 0.14 58)"
                 False -> "oklch(0.92 0.03 80)"
               }
-              // Vertical dashed line spanning both grid rows
-              let line =
+              [
                 html.div(
                   [
                     attribute.class("pointer-events-none"),
                     attribute.style("grid-column", col),
-                    attribute.style("grid-row", "1 / 3"),
+                    attribute.style("grid-row", "2"),
                     attribute.style("align-self", "stretch"),
                     attribute.style(
                       "border-left",
@@ -1036,40 +1039,19 @@ pub fn view_gantt(
                     ),
                   ],
                   [],
-                )
-              // Tick-row label: arrow + time, sitting at bottom of header strip
-              let tick =
-                html.span(
-                  [
-                    attribute.class(
-                      "leading-none pointer-events-none select-none",
-                    ),
-                    attribute.style("grid-column", col),
-                    attribute.style("grid-row", "1"),
-                    attribute.style("align-self", "end"),
-                    attribute.style("font-size", "11px"),
-                    attribute.style("color", color),
-                    attribute.style("padding-left", "2px"),
-                    attribute.style("padding-bottom", "1px"),
-                    attribute.style("white-space", "nowrap"),
-                    attribute.style("z-index", "2"),
-                  ],
-                  [html.text(label)],
-                )
-              [line, tick]
+                ),
+              ]
             }
           }
         }
-        let rise_label = "↑" <> format_time_min(st.sunrise)
-        let set_label = "↓" <> format_time_min(st.sunset)
-        let all_markers =
+        let lines =
           list.flatten([
-            make_marker(st.sunrise, rise_label, True),
-            make_marker(st.sunset, set_label, False),
+            make_line(st.sunrise, True),
+            make_line(st.sunset, False),
           ])
-        case all_markers {
+        case lines {
           [] -> element.none()
-          markers ->
+          _ ->
             html.div(
               [
                 attribute.class("absolute inset-0 pointer-events-none"),
@@ -1080,42 +1062,33 @@ pub fn view_gantt(
                   int.to_string(tick_header_px) <> "px 1fr",
                 ),
               ],
-              markers,
+              lines,
             )
         }
       }
     }
 
-    // Per-day gridline and tick-label generation, so we can vary colors in
-    // night zones (when sun_times is available).
-    //
-    // A minute is "in night" if it falls outside [civil_dawn, sunset].
-    // We switch at sunset (not civil_dusk) because the background gradient
-    // already becomes dark enough at sunset that dark gridlines/labels are
-    // unreadable from there onward.
+    // Per-day gridline generation. Lines only span row 2 (event area) so they
+    // don't cut through the tick header band (which has its own background).
+    // Lines in the event area are still night-aware for readability.
     let is_night_min = fn(abs_min: Int) -> Bool {
       case sun_times {
         Error(_) -> False
         Ok(st) -> abs_min < st.civil_dawn || abs_min >= st.sunset
       }
     }
-    // Gridline colors: dark on light (day), light on dark (night).
     let qline_day = "oklch(0 0 0 / 8%)"
     let qline_night = "oklch(1 1 0 / 10%)"
-    let hline_day = "oklch(0 0 0 / 35%)"
-    let hline_night = "oklch(1 1 0 / 35%)"
-    let label_day = "var(--color-text-muted)"
-    let label_night = "oklch(0.65 0.02 0)"
+    let hline_day = "oklch(0 0 0 / 30%)"
+    let hline_night = "oklch(1 1 0 / 30%)"
 
-    // Two separate overlay grids — one for lines (behind bars), one for tick
-    // labels (above bars). Both use identical grid columns so alignment matches.
-    let tick_row = "1"
     let first_hour = case window.start_min % 60 {
       0 -> window.start_min / 60
       _ -> window.start_min / 60 + 1
     }
     let last_hour = window.end_min / 60
 
+    // Gridlines span only the event area (grid-row 2), not the header band.
     let grid_line_divs =
       list.flatten([
         // Quarter-hour lines
@@ -1135,7 +1108,7 @@ pub fn view_gantt(
                     [
                       attribute.class("pointer-events-none"),
                       attribute.style("grid-column", int.to_string(min + 1)),
-                      attribute.style("grid-row", "1 / 3"),
+                      attribute.style("grid-row", "2"),
                       attribute.style("align-self", "stretch"),
                       attribute.style("border-left", "1px solid " <> color),
                     ],
@@ -1162,7 +1135,7 @@ pub fn view_gantt(
                   [
                     attribute.class("pointer-events-none"),
                     attribute.style("grid-column", int.to_string(min + 1)),
-                    attribute.style("grid-row", "1 / 3"),
+                    attribute.style("grid-row", "2"),
                     attribute.style("align-self", "stretch"),
                     attribute.style("border-left", "1px solid " <> color),
                   ],
@@ -1174,72 +1147,7 @@ pub fn view_gantt(
         }),
       ])
 
-    let grid_tick_labels =
-      list.flatten([
-        // Hour tick labels
-        list.filter_map(int_range(first_hour, last_hour), fn(h) {
-          let abs_min = h * 60
-          let min = abs_min - window.start_min
-          case min > 0 && min < total_min {
-            False -> Error(Nil)
-            True -> {
-              let color = case is_night_min(abs_min) {
-                True -> label_night
-                False -> label_day
-              }
-              Ok(
-                html.span(
-                  [
-                    attribute.class(
-                      "leading-none pointer-events-none select-none",
-                    ),
-                    attribute.style("grid-column", int.to_string(min + 1)),
-                    attribute.style("grid-row", tick_row),
-                    attribute.style("align-self", "end"),
-                    attribute.style("font-size", "11px"),
-                    attribute.style("color", color),
-                    attribute.style("padding-left", "2px"),
-                    attribute.style("padding-bottom", "1px"),
-                    attribute.style("white-space", "nowrap"),
-                  ],
-                  [html.text(format_hour(h))],
-                ),
-              )
-            }
-          }
-        }),
-        // First-hour label (column 1, no line)
-        case window.start_min % 60 {
-          0 -> {
-            let h = window.start_min / 60
-            let color = case is_night_min(h * 60) {
-              True -> label_night
-              False -> label_day
-            }
-            [
-              html.span(
-                [
-                  attribute.class(
-                    "leading-none pointer-events-none select-none",
-                  ),
-                  attribute.style("grid-column", "1"),
-                  attribute.style("grid-row", tick_row),
-                  attribute.style("align-self", "end"),
-                  attribute.style("font-size", "11px"),
-                  attribute.style("color", color),
-                  attribute.style("padding-left", "2px"),
-                  attribute.style("padding-bottom", "1px"),
-                  attribute.style("white-space", "nowrap"),
-                ],
-                [html.text(format_hour(h))],
-              ),
-            ]
-          }
-          _ -> []
-        },
-      ])
-
-    // Lines overlay: z-index 0 (behind event bars at z-index 1).
+    // Lines overlay: z-index 0, behind event bars (z-index 1).
     let grid_line_overlay =
       html.div(
         [
@@ -1255,21 +1163,100 @@ pub fn view_gantt(
         grid_line_divs,
       )
 
-    // Labels overlay: z-index 2 (above event bars at z-index 1).
-    let grid_tick_overlay =
-      html.div(
-        [
-          attribute.class("absolute inset-0 pointer-events-none"),
-          attribute.style("display", "grid"),
-          attribute.style("grid-template-columns", grid_cols_str),
-          attribute.style(
-            "grid-template-rows",
-            int.to_string(tick_header_px) <> "px 1fr",
-          ),
-          attribute.style("z-index", "2"),
-        ],
-        grid_tick_labels,
-      )
+    // Tick header band background and hour labels.
+    // The band is a dark inverse-color strip; labels are light, centered over
+    // their respective gridline column via translateX(-50%).
+    let tick_band_bg = "oklch(0.18 0.04 265)"
+    let tick_label_color = "oklch(0.72 0.03 265)"
+
+    let tick_header_labels =
+      list.flatten([
+        // Mid-window hour labels: centered over the gridline.
+        list.filter_map(int_range(first_hour, last_hour), fn(h) {
+          let min = h * 60 - window.start_min
+          case min > 0 && min < total_min {
+            False -> Error(Nil)
+            True ->
+              Ok(
+                html.span(
+                  [
+                    attribute.class("pointer-events-none select-none leading-none"),
+                    attribute.style("position", "absolute"),
+                    attribute.style(
+                      "left",
+                      float_pct(
+                        int_to_float(min) /. total_f *. 100.0,
+                      ),
+                    ),
+                    attribute.style("top", "50%"),
+                    attribute.style(
+                      "transform",
+                      "translate(-50%, -50%)",
+                    ),
+                    attribute.style("font-size", "11px"),
+                    attribute.style("color", tick_label_color),
+                    attribute.style("white-space", "nowrap"),
+                  ],
+                  [html.text(format_hour(h))],
+                ),
+              )
+          }
+        }),
+        // First-hour label: left-aligned at the start edge.
+        case window.start_min % 60 {
+          0 -> {
+            let h = window.start_min / 60
+            [
+              html.span(
+                [
+                  attribute.class("pointer-events-none select-none leading-none"),
+                  attribute.style("position", "absolute"),
+                  attribute.style("left", "2px"),
+                  attribute.style("top", "50%"),
+                  attribute.style("transform", "translateY(-50%)"),
+                  attribute.style("font-size", "11px"),
+                  attribute.style("color", tick_label_color),
+                  attribute.style("white-space", "nowrap"),
+                ],
+                [html.text(format_hour(h))],
+              ),
+            ]
+          }
+          _ -> []
+        },
+      ])
+
+    // Sunset badge — pill with dark-warm bg, rendered in header band.
+    let sunset_badge_el = case sun_times {
+      Error(_) -> element.none()
+      Ok(st) -> {
+        let rel = st.sunset - window.start_min
+        case rel > 0 && rel < total_min {
+          False -> element.none()
+          True ->
+            html.div(
+              [
+                attribute.class("pointer-events-none select-none leading-none"),
+                attribute.style("position", "absolute"),
+                attribute.style(
+                  "left",
+                  float_pct(int_to_float(rel) /. total_f *. 100.0),
+                ),
+                attribute.style("top", "50%"),
+                attribute.style("transform", "translate(-50%, -50%)"),
+                attribute.style("z-index", "2"),
+                attribute.style("font-size", "10px"),
+                attribute.style("background-color", "oklch(0.38 0.09 55)"),
+                attribute.style("color", "oklch(0.92 0.06 70)"),
+                attribute.style("border-radius", "3px"),
+                attribute.style("padding", "1px 4px"),
+                attribute.style("white-space", "nowrap"),
+              ],
+              [html.text("↓" <> format_time_min(st.sunset))],
+            )
+        }
+      }
+    }
 
     // Time grid: sub-rows fill vertical space equally via flex-1.
     // Hour ticks and now-indicator are absolute overlays inside time_grid.
@@ -1291,24 +1278,35 @@ pub fn view_gantt(
             html.div(
               [attribute.class("relative flex-1 flex flex-col min-w-0")],
               list.flatten([
-                // Day/night gradient (behind everything).
+                // Day/night gradient (behind everything, absolute).
                 [sun_gradient_el],
-                // Gridlines behind event bars (z-index 0).
+                // Gridlines behind event bars (z-index 0, absolute).
                 [grid_line_overlay],
-                // Sunrise/sunset markers overlay.
+                // Sunrise/sunset markers overlay (absolute).
                 [sun_markers_el],
-                // Spacer that holds the tick label row height in flow.
+                // Tick header band: dark bg, hour labels, sunset badge.
+                // Flow element — reserves height and sits above sub-rows.
+                // NOW badge is injected here too.
                 [
-                  html.div(
-                    [
-                      attribute.class("shrink-0 pointer-events-none"),
-                      attribute.style(
-                        "height",
-                        int.to_string(tick_header_px) <> "px",
-                      ),
-                    ],
-                    [],
-                  ),
+                  {
+                    // Inject NOW badge into the band's children list.
+                    let band_children =
+                      list.flatten([tick_header_labels, [sunset_badge_el], [now_badge_el]])
+                    html.div(
+                      [
+                        attribute.class(
+                          "shrink-0 relative pointer-events-none overflow-hidden",
+                        ),
+                        attribute.style(
+                          "height",
+                          int.to_string(tick_header_px) <> "px",
+                        ),
+                        attribute.style("background-color", tick_band_bg),
+                        attribute.style("z-index", "3"),
+                      ],
+                      band_children,
+                    )
+                  },
                 ],
                 // Event sub-rows (z-index 1, above gridlines).
                 [
@@ -1316,8 +1314,6 @@ pub fn view_gantt(
                   view_sub_row(BarCenter),
                   view_sub_row(BarRight),
                 ],
-                // Tick labels above event bars (z-index 2).
-                [grid_tick_overlay],
               ]),
             ),
           ],
@@ -1327,10 +1323,6 @@ pub fn view_gantt(
     html.div(
       [
         attribute.class("flex flex-row flex-1"),
-        attribute.style("border-bottom", case is_today {
-          True -> "4px solid oklch(0 0 0 / 65%)"
-          False -> "3px solid oklch(0 0 0 / 50%)"
-        }),
         attribute.class(case is_today {
           True -> "bg-surface-2/20"
           False -> ""
