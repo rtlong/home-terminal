@@ -1302,7 +1302,7 @@ pub fn view_gantt(
           // sub-rows start below the label strip without a separate tick element.
           [
             html.div(
-              [attribute.class("relative flex-1 flex flex-col min-w-0")],
+              [attribute.class("relative isolate flex-1 flex flex-col min-w-0")],
               list.flatten([
                 // Day/night gradient (behind everything, absolute).
                 [sun_gradient_el],
