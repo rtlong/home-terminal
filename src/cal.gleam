@@ -621,19 +621,82 @@ pub fn view_gantt(
                 [html.text(label_text)],
               )
           }
-          // Axis row: left_cap — short line — label_box — line fills remainder — right_cap.
-          // All items are vertically centered on the axis.
+          // Axis row layout depends on cross-midnight segment type.
+          // Normal:    left_cap — line — label — line — right_cap  (centered)
+          // Start-day: left_cap — label — line — right_cap         (left-aligned)
+          // End-day:   left_cap — label▸ — line — right_cap        (left-aligned, tapered)
           let line_segment =
             html.div(
               [
                 attribute.style("flex", "1 0 0"),
                 attribute.style("height", "0"),
                 attribute.style("border-top", "1.5px solid " <> color),
-                // attribute.style("opacity", "0.7"),
                 attribute.style("min-width", "4px"),
               ],
               [],
             )
+
+          // Detect cross-midnight segment type from position data.
+          let is_xm_start = left_min > 0 && right_min >= total_min
+          let is_xm_end = left_min <= 0 && right_min < total_min
+
+          // Tapered label for end-day: label pill with a CSS triangle on
+          // its right side that points into the line, making it visually
+          // clear the label identifies the line that follows.
+          let tapered_label_box = case label {
+            "" -> element.none()
+            _ -> {
+              let label_text = case label2, show_time {
+                t, True if t != "" -> label <> " " <> t
+                _, _ -> label
+              }
+              html.div(
+                [
+                  attribute.class(
+                    "shrink-0 pointer-events-none select-none flex items-center",
+                  ),
+                ],
+                [
+                  html.span(
+                    [
+                      attribute.class("shrink-0 leading-none"),
+                      attribute.style("font-size", "11px"),
+                      attribute.style("color", "white"),
+                      attribute.style("background-color", color),
+                      attribute.style("border-radius", "2px 0 0 2px"),
+                      attribute.style("padding", "1px 0 1px 3px"),
+                      attribute.style("white-space", "nowrap"),
+                    ],
+                    [html.text(label_text)],
+                  ),
+                  // Right-pointing triangle that tapers into the axis line
+                  html.div(
+                    [
+                      attribute.style("width", "0"),
+                      attribute.style("height", "0"),
+                      attribute.style("border-top", "8px solid transparent"),
+                      attribute.style("border-bottom", "8px solid transparent"),
+                      attribute.style("border-left", "6px solid " <> color),
+                      attribute.style("flex-shrink", "0"),
+                    ],
+                    [],
+                  ),
+                ],
+              )
+            }
+          }
+
+          let axis_children = case is_xm_end, is_xm_start {
+            // End-day: label with taper at left, then line to right cap
+            True, _ -> [left_cap, tapered_label_box, line_segment, right_cap]
+            // Start-day: label at left, then line to right cap
+            _, True -> [left_cap, label_box, line_segment, right_cap]
+            // Normal: centered label
+            _, _ -> [
+              left_cap, line_segment, label_box, line_segment, right_cap,
+            ]
+          }
+
           html.div(
             [
               attribute.class(
@@ -644,7 +707,7 @@ pub fn view_gantt(
               attribute.style("display", "flex"),
               attribute.style("align-items", "center"),
             ],
-            [left_cap, line_segment, label_box, line_segment, right_cap],
+            axis_children,
           )
         }
         // Normal (busy) events: solid filled bar with label.
