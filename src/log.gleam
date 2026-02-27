@@ -1,6 +1,6 @@
 // Simple file logger.
 //
-// Appends timestamped lines to ~/.local/share/home-terminal/app.log via FFI.
+// Appends timestamped lines to $XDG_STATE_HOME/home-terminal/app.log via FFI.
 // The log path is set once at startup by calling set_path/1.
 // Falls back to io.println if no path has been set (e.g. in tests).
 
@@ -23,7 +23,7 @@ pub fn println(line: String) -> Nil {
 }
 
 pub fn default_path() -> String {
-  state.data_dir() <> "/app.log"
+  state.state_dir() <> "/app.log"
 }
 
 @external(erlang, "log_ffi", "set_path")

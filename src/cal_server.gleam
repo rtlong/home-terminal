@@ -75,7 +75,10 @@ type State {
   State(
     self: Subject(Msg),
     dav_config: cal_dav.Config,
-    data_dir: String,
+    /// XDG_CONFIG_HOME/home-terminal — for config.json.
+    config_dir: String,
+    /// XDG_CACHE_HOME/home-terminal — for cache.json, travel_cache.json, ical_cache.json.
+    cache_dir: String,
     clients: List(Client),
     events: Result(List(Event), String),
     calendar_names: List(String),
@@ -105,13 +108,14 @@ pub opaque type Registration {
 /// Start the calendar server.
 pub fn start(
   dav_config: cal_dav.Config,
-  data_dir: String,
+  config_dir: String,
+  cache_dir: String,
 ) -> Result(Server, actor.StartError) {
   let result =
     actor.new_with_initialiser(5000, fn(self_subject) {
       process.send(self_subject, PollTimerFired)
       // Load cached events so clients get data immediately, before the first fetch.
-      let cached = state.read_cache(data_dir)
+      let cached = state.read_cache(cache_dir)
       let initial_events = case cached {
         [] -> Error("Loading…")
         events -> Ok(events)
@@ -121,9 +125,9 @@ pub fn start(
         <> string.inspect(list.length(cached))
         <> " events from cache",
       )
-      let cal_config = state.read_config(data_dir)
-      let travel_caches = state.read_travel_caches(data_dir)
-      let ical_cache = state.read_ical_cache(data_dir)
+      let cal_config = state.read_config(config_dir)
+      let travel_caches = state.read_travel_caches(cache_dir)
+      let ical_cache = state.read_ical_cache(cache_dir)
       log.println(
         "[cal_server] loaded "
         <> string.inspect(dict.size(travel_caches.travel_cache))
@@ -144,7 +148,8 @@ pub fn start(
         State(
           self: self_subject,
           dav_config: dav_config,
-          data_dir: data_dir,
+          config_dir: config_dir,
+          cache_dir: cache_dir,
           clients: [],
           events: initial_events,
           calendar_names: initial_calendar_names,
@@ -303,7 +308,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
             <> string.inspect(list.length(cal_names))
             <> " calendars",
           )
-          state.write_cache(state.data_dir, events)
+          state.write_cache(state.cache_dir, events)
 
           // ── Geocode home address for sunrise/sunset if not yet cached ──────────
           let new_cal_config = case
@@ -327,7 +332,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
                       latitude: loc.lat,
                       longitude: loc.lng,
                     )
-                  state.write_config(state.data_dir, updated)
+                  state.write_config(state.config_dir, updated)
                   updated
                 }
                 Error(err) -> {
@@ -482,12 +487,12 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
           }
 
           state.write_travel_caches(
-            state.data_dir,
+            state.cache_dir,
             new_travel_cache,
             new_leg_cache,
           )
           state.write_ical_cache(
-            state.data_dir,
+            state.cache_dir,
             ics_result.last_fetched,
             ics_result.cached_events,
           )
@@ -507,7 +512,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
         Error(err) -> {
           log.println("[cal_server] fetch error: " <> err)
           state.write_ical_cache(
-            state.data_dir,
+            state.cache_dir,
             ics_result.last_fetched,
             ics_result.cached_events,
           )
@@ -527,7 +532,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
       let new_calendars = dict.insert(state.cal_config.calendars, name, config)
       let new_cal_config =
         state.Config(..state.cal_config, calendars: new_calendars)
-      state.write_config(state.data_dir, new_cal_config)
+      state.write_config(state.config_dir, new_cal_config)
       let new_state = State(..state, cal_config: new_cal_config)
       broadcast(new_state)
       actor.continue(new_state)
@@ -538,7 +543,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
         dict.insert(state.cal_config.calendar_people, cal_name, people)
       let new_cal_config =
         state.Config(..state.cal_config, calendar_people: new_cal_people)
-      state.write_config(state.data_dir, new_cal_config)
+      state.write_config(state.config_dir, new_cal_config)
       let new_state = State(..state, cal_config: new_cal_config)
       broadcast(new_state)
       actor.continue(new_state)
@@ -550,7 +555,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
       let new_colors = dict.insert(state.cal_config.people_colors, person, hue)
       let new_cal_config =
         state.Config(..state.cal_config, people_colors: new_colors)
-      state.write_config(state.data_dir, new_cal_config)
+      state.write_config(state.config_dir, new_cal_config)
       let new_state = State(..state, cal_config: new_cal_config)
       broadcast(new_state)
       actor.continue(new_state)

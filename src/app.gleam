@@ -47,14 +47,14 @@ pub fn main() {
   trap_sigterm()
 
   // Set up file logging before anything else.
-  let data_dir = state.data_dir()
   log.set_path(log.default_path())
   log.println("[app] starting")
 
   // Load CalDAV credentials and start the shared calendar server.
   // Crash hard on misconfiguration rather than silently serving stale data.
   let assert Ok(config) = cal_dav.config_from_env()
-  let assert Ok(cal_server) = cal_server.start(config, data_dir)
+  let assert Ok(cal_server) =
+    cal_server.start(config, state.config_dir(), state.cache_dir())
 
   // Optionally start Home Assistant MQTT integration.
   let ha = case ha_client.config_from_env() {

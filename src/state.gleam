@@ -1,12 +1,20 @@
 // Local persistent state for home-terminal.
 //
-// Two files live under the XDG data directory
-// (~/.local/share/home-terminal/ or $XDG_DATA_HOME/home-terminal/):
+// Files are stored under XDG Base Directory locations:
 //
-//   cache.json   — last-known CalDAV event list; shown immediately on restart
-//   config.json  — per-calendar display settings (visibility, color)
+//   XDG_CONFIG_HOME/home-terminal/  (~/.config/home-terminal/)
+//     config.json        — user configuration (people, calendars, iCal URLs)
 //
-// Both files are optional: a missing file is treated as empty/default state.
+//   XDG_CACHE_HOME/home-terminal/   (~/.cache/home-terminal/)
+//     cache.json         — last-known event list; shown immediately on restart
+//     travel_cache.json  — Google Maps travel time lookups
+//     ical_cache.json    — external iCal feed timestamps + cached events
+//
+//   XDG_STATE_HOME/home-terminal/   (~/.local/state/home-terminal/)
+//     app.log            — application log
+//
+// All files are optional: missing files are treated as empty/default state.
+// Cache files can be safely deleted; they are rebuilt on the next poll cycle.
 
 // IMPORTS ---------------------------------------------------------------------
 
@@ -128,20 +136,43 @@ fn unit_to_seconds(unit: String) -> Int {
   }
 }
 
-// DATA DIR --------------------------------------------------------------------
+// XDG DIRECTORIES -------------------------------------------------------------
 
-/// Resolve the data directory path using XDG spec.
-/// Falls back to ~/.local/share/home-terminal if XDG_DATA_HOME is not set.
-pub fn data_dir() -> String {
-  let base = case envoy.get("XDG_DATA_HOME") {
-    Ok(xdg) -> xdg
-    Error(_) ->
-      case envoy.get("HOME") {
-        Ok(home) -> home <> "/.local/share"
-        Error(_) -> "/tmp"
-      }
+const app_name = "home-terminal"
+
+fn home_dir() -> String {
+  case envoy.get("HOME") {
+    Ok(home) -> home
+    Error(_) -> "/tmp"
   }
-  base <> "/home-terminal"
+}
+
+/// XDG_CONFIG_HOME/home-terminal — user-editable configuration (config.json).
+pub fn config_dir() -> String {
+  let base = case envoy.get("XDG_CONFIG_HOME") {
+    Ok(xdg) -> xdg
+    Error(_) -> home_dir() <> "/.config"
+  }
+  base <> "/" <> app_name
+}
+
+/// XDG_CACHE_HOME/home-terminal — non-essential cached data (cache.json,
+/// travel_cache.json, ical_cache.json). Safe to delete; rebuilt on next poll.
+pub fn cache_dir() -> String {
+  let base = case envoy.get("XDG_CACHE_HOME") {
+    Ok(xdg) -> xdg
+    Error(_) -> home_dir() <> "/.cache"
+  }
+  base <> "/" <> app_name
+}
+
+/// XDG_STATE_HOME/home-terminal — persistent runtime state (app.log).
+pub fn state_dir() -> String {
+  let base = case envoy.get("XDG_STATE_HOME") {
+    Ok(xdg) -> xdg
+    Error(_) -> home_dir() <> "/.local/state"
+  }
+  base <> "/" <> app_name
 }
 
 // CACHE -----------------------------------------------------------------------
