@@ -173,6 +173,8 @@ pub fn generate(
         // Sunrise/sunset dashed markers in timeline
         "  --color-sun-rise-line: oklch(0.62 0.14 58 / 60%);",
         "  --color-sun-set-line:  oklch(0.92 0.03 80 / 60%);",
+        // Moon phase gutter label color — cool silver/blue
+        "  --color-moon-label:    oklch(0.78 0.04 250);",
         // Row separator
         "  --color-row-border:    oklch(1 0 0 / 8%);",
         "}",
@@ -240,6 +242,8 @@ pub fn generate(
         // Sunrise/sunset dashed markers in timeline
         "  --color-sun-rise-line: oklch(0.50 0.14 58 / 60%);",
         "  --color-sun-set-line:  oklch(0.45 0.08 80 / 50%);",
+        // Moon phase gutter label color — cool slate/blue
+        "  --color-moon-label:    oklch(0.42 0.04 250);",
         // Row separator
         "  --color-row-border:    oklch(0 0 0 / 8%);",
         "}",

@@ -248,6 +248,16 @@ pub fn view_gantt(
       }
     })
 
+  // Compute moon phase info for each day (when lat/lon are configured).
+  let day_moon_info =
+    list.map(days, fn(day) {
+      case latitude == 0.0 && longitude == 0.0 {
+        True -> Error(Nil)
+        False ->
+          Ok(compute_moon_info(day, latitude, longitude, utc_offset_hours))
+      }
+    })
+
   // Percentage helpers relative to the time window.
   let xpct = fn(min: Int) -> String {
     float_pct(int_to_float(min) /. total_f *. 100.0)
@@ -291,6 +301,7 @@ pub fn view_gantt(
     day_blocks: List(TravelBlock),
     all_day_events: List(Event),
     sun_times: Result(SunTimes, Nil),
+    moon_info: Result(MoonInfo, Nil),
   ) -> Element(msg) {
     // Build horizontal segments for timed events.
     // Cross-midnight events are treated differently per day:
@@ -1026,6 +1037,53 @@ pub fn view_gantt(
         )
     }
 
+    // Moon phase info for left gutter — emoji + illumination% + rise/set times.
+    // Full moon gets a prominent "FULL MOON" label; other phases show concise info.
+    let moon_label_el = case moon_info {
+      Error(_) -> element.none()
+      Ok(mi) -> {
+        let illum_str =
+          int.to_string(float_round(mi.illumination)) <> "%"
+        let rise_set_parts = case mi.moonrise_min, mi.moonset_min {
+          -1, -1 -> []
+          rise, -1 -> [
+            html.text("↑" <> format_time_min(rise)),
+          ]
+          -1, set -> [
+            html.text("↓" <> format_time_min(set)),
+          ]
+          rise, set -> [
+            html.text("↑" <> format_time_min(rise)),
+            html.text(" ↓" <> format_time_min(set)),
+          ]
+        }
+        let is_full = mi.phase_name == "Full"
+        html.div(
+          [
+            attribute.class(
+              "flex flex-row gap-1 select-none leading-none items-center",
+            ),
+            attribute.style("font-size", "11px"),
+            attribute.style("color", "var(--color-moon-label)"),
+            attribute.style("font-weight", case is_full {
+              True -> "700"
+              False -> "400"
+            }),
+          ],
+          list.flatten([
+            [html.text(mi.phase_emoji)],
+            case is_full {
+              True -> [html.text(" FULL MOON")]
+              False -> [
+                html.text(" " <> illum_str),
+                ..rise_set_parts
+              ]
+            },
+          ]),
+        )
+      }
+    }
+
     // Left gutter: header band (matching tick band height) + date label + all-day chips.
     // Width is wider to allow chips to display more text before truncating.
     let gutter_header =
@@ -1051,7 +1109,7 @@ pub fn view_gantt(
           [
             html.div(
               [attribute.class("flex flex-col gap-0.5 pt-0.5 pr-1")],
-              list.flatten([[sun_label_el], all_day_chips]),
+              list.flatten([[sun_label_el], [moon_label_el], all_day_chips]),
             ),
           ],
         ]),
@@ -1467,9 +1525,16 @@ pub fn view_gantt(
       html.div(
         [attribute.class("flex-1 min-h-0 flex flex-col")],
         list.map(
-          list.zip(days, list.zip(day_timed_and_blocks, day_sun_times)),
+          list.zip(
+            days,
+            list.zip(
+              day_timed_and_blocks,
+              list.zip(day_sun_times, day_moon_info),
+            ),
+          ),
           fn(pair) {
-            let #(day, #(#(day_timed, day_blocks), sun_times)) = pair
+            let #(day, #(#(day_timed, day_blocks), #(sun_times, moon_info))) =
+              pair
             let all_day =
               list.filter(events, fn(e) { all_day_spans_date(e, day) })
             view_gantt_day(
@@ -1479,6 +1544,7 @@ pub fn view_gantt(
               day_blocks,
               all_day,
               sun_times,
+              moon_info,
             )
           },
         ),
@@ -1898,6 +1964,197 @@ fn math_acos(x: Float) -> Float
 
 @external(erlang, "math", "floor")
 fn math_floor(x: Float) -> Float
+
+// MOON PHASE CALCULATION ------------------------------------------------------
+
+/// Moon data for a given day: illumination, phase emoji, moonrise/moonset times.
+pub type MoonInfo {
+  MoonInfo(
+    /// Illumination percentage (0.0 = new moon, 100.0 = full moon).
+    illumination: Float,
+    /// Unicode emoji for the current phase.
+    phase_emoji: String,
+    /// Short phase name (e.g. "Full", "Waxing Gibbous").
+    phase_name: String,
+    /// Moonrise in minutes since midnight (local time), or -1 if none.
+    moonrise_min: Int,
+    /// Moonset in minutes since midnight (local time), or -1 if none.
+    moonset_min: Int,
+  )
+}
+
+/// Compute moon phase info for a given date and location.
+/// The illumination and phase are location-independent.
+/// Moonrise/moonset times depend on latitude, longitude, and UTC offset.
+pub fn compute_moon_info(
+  date: Date,
+  lat: Float,
+  lon: Float,
+  utc_offset_hours: Float,
+) -> MoonInfo {
+  let year = date.year
+  let month = calendar.month_to_int(date.month)
+  let day = date.day
+
+  // Julian date (same formula as in compute_sun_times).
+  let jd =
+    int_to_float(
+      367
+      * year
+      - { 7 * { year + { month + 9 } / 12 } }
+      / 4
+      + 275
+      * month
+      / 9
+      + day
+      + 1_721_013,
+    )
+    +. 0.5
+
+  // Days since J2000.0 epoch (2000-01-12 12:00 TT).
+  let d = jd -. 2_451_545.0
+
+  // --- Moon illumination and phase from synodic cycle ---
+  // Known new moon: January 6, 2000 18:14 UTC ≈ JD 2451550.26
+  let known_new_moon_jd = 2_451_550.26
+  let synodic_month = 29.53059
+  let days_since_new = mod_f(jd -. known_new_moon_jd, synodic_month)
+  let phase_fraction = days_since_new /. synodic_month
+  // Illumination: 0 at new, 1 at full, using cosine curve
+  let illumination =
+    { 1.0 -. math_cos(phase_fraction *. 2.0 *. pi) } /. 2.0 *. 100.0
+
+  // Phase name and emoji from the phase fraction (0.0 = new moon, 0.5 = full moon)
+  let #(phase_name, phase_emoji) = phase_name_and_emoji(phase_fraction)
+
+  // --- Moonrise / Moonset calculation ---
+  // Low-precision lunar position (Meeus, Astronomical Algorithms, Ch. 47 simplified)
+  let #(moonrise_min, moonset_min) =
+    compute_moonrise_moonset(d, lat, lon, utc_offset_hours)
+
+  MoonInfo(
+    illumination:,
+    phase_emoji:,
+    phase_name:,
+    moonrise_min:,
+    moonset_min:,
+  )
+}
+
+/// Map phase fraction (0..1) to name and emoji.
+/// 0.0 = new moon, ~0.25 = first quarter, ~0.5 = full, ~0.75 = last quarter
+fn phase_name_and_emoji(f: Float) -> #(String, String) {
+  case True {
+    _ if f <. 0.0125 -> #("New", "🌑")
+    _ if f <. 0.235 -> #("Wax Crescent", "🌒")
+    _ if f <. 0.265 -> #("First Quarter", "🌓")
+    _ if f <. 0.485 -> #("Wax Gibbous", "🌔")
+    _ if f <. 0.515 -> #("Full", "🌕")
+    _ if f <. 0.735 -> #("Wan Gibbous", "🌖")
+    _ if f <. 0.765 -> #("Last Quarter", "🌗")
+    _ if f <. 0.9875 -> #("Wan Crescent", "🌘")
+    _ -> #("New", "🌑")
+  }
+}
+
+/// Compute moonrise and moonset times for a given day.
+/// Uses low-precision lunar position to find the moon's RA/Dec,
+/// then computes rise/set hour angles. Returns minutes-since-midnight
+/// for each, or -1 if the moon doesn't rise or set on that day.
+fn compute_moonrise_moonset(
+  d: Float,
+  lat: Float,
+  lon: Float,
+  utc_offset_hours: Float,
+) -> #(Int, Int) {
+  // Low-precision lunar ecliptic coordinates (Meeus simplified).
+  // Mean elements of the lunar orbit.
+  let l0 = mod_f(218.3165 +. 13.176396 *. d, 360.0)
+  // Mean longitude
+  let m_moon = mod_f(134.9634 +. 13.064993 *. d, 360.0)
+  // Moon's mean anomaly
+  let m_sun = mod_f(357.5291 +. 0.985600 *. d, 360.0)
+  // Sun's mean anomaly
+  let f = mod_f(93.2720 +. 13.229350 *. d, 360.0)
+  // Moon's argument of latitude
+  let d_moon = mod_f(297.8502 +. 12.190749 *. d, 360.0)
+  // Mean elongation
+
+  // Ecliptic longitude (degrees).
+  let ecl_lon =
+    l0
+    +. 6.289 *. math_sin(to_rad(m_moon))
+    -. 1.274 *. math_sin(to_rad(2.0 *. d_moon -. m_moon))
+    +. 0.658 *. math_sin(to_rad(2.0 *. d_moon))
+    +. 0.214 *. math_sin(to_rad(2.0 *. m_moon))
+    -. 0.186 *. math_sin(to_rad(m_sun))
+    -. 0.114 *. math_sin(to_rad(2.0 *. f))
+
+  // Ecliptic latitude (degrees).
+  let ecl_lat =
+    5.128 *. math_sin(to_rad(f))
+    +. 0.281 *. math_sin(to_rad(m_moon +. f))
+    +. 0.078 *. math_sin(to_rad(2.0 *. d_moon -. f))
+
+  // Obliquity of the ecliptic.
+  let obliquity = 23.4393 -. 3.563e-7 *. d
+
+  // Convert ecliptic to equatorial (RA, Dec).
+  let sin_lon = math_sin(to_rad(ecl_lon))
+  let cos_lon = math_cos(to_rad(ecl_lon))
+  let sin_lat = math_sin(to_rad(ecl_lat))
+  let cos_lat = math_cos(to_rad(ecl_lat))
+  let sin_obl = math_sin(to_rad(obliquity))
+  let cos_obl = math_cos(to_rad(obliquity))
+
+  let ra_rad =
+    math_atan2(sin_lon *. cos_obl -. sin_lat /. cos_lat *. sin_obl, cos_lon)
+  let ra_deg = mod_f(to_deg(ra_rad), 360.0)
+
+  let sin_dec = sin_lat *. cos_obl +. cos_lat *. sin_obl *. sin_lon
+  let dec_rad = math_asin(sin_dec)
+
+  // Greenwich Mean Sidereal Time at 0h UT for this day.
+  let gmst0 = mod_f(280.46061837 +. 360.98564736629 *. d, 360.0)
+
+  // Local Sidereal Time at 0h local time.
+  let lst0 = mod_f(gmst0 +. lon -. utc_offset_hours *. 15.0, 360.0)
+
+  // Hour angle at transit (when moon crosses the meridian).
+  let ha_transit = mod_f(ra_deg -. lst0 +. 360.0, 360.0)
+  let transit_hours = ha_transit /. 15.0
+
+  // Hour angle for moonrise/moonset: altitude = -0.833° (same correction as sun,
+  // though for the moon the parallax makes it closer to +0.125°; we use -0.833°
+  // which is standard for a point source — close enough for a display).
+  // Using +0.125° accounts for typical horizontal parallax minus refraction.
+  let alt = 0.125
+  let cos_ha =
+    { math_sin(to_rad(alt)) -. math_sin(to_rad(lat)) *. sin_dec }
+    /. { math_cos(to_rad(lat)) *. math_cos(dec_rad) }
+
+  case cos_ha >. 1.0 || cos_ha <. -1.0 {
+    // Moon doesn't rise or set (circumpolar or never above horizon).
+    True -> #(-1, -1)
+    False -> {
+      let ha_deg = to_deg(math_acos(cos_ha))
+      let ha_hours = ha_deg /. 15.0
+
+      let rise_hours = transit_hours -. ha_hours
+      let set_hours = transit_hours +. ha_hours
+
+      let rise_min = float_round(mod_f(rise_hours *. 60.0, 1440.0))
+      let set_min = float_round(mod_f(set_hours *. 60.0, 1440.0))
+
+      #(rise_min, set_min)
+    }
+  }
+}
+
+const pi = 3.141592653589793
+
+@external(erlang, "math", "atan2")
+fn math_atan2(y: Float, x: Float) -> Float
 
 // CSS HELPERS -----------------------------------------------------------------
 
