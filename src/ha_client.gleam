@@ -1,0 +1,523 @@
+// ha_client.gleam — Home Assistant integration via MQTT discovery.
+//
+// Connects to an MQTT broker, registers a HA device with two switch entities
+// (display_power and dark_mode), and listens for commands from HA automations.
+//
+// Env vars:
+//   MQTT_HOST, MQTT_PORT (default 1883), MQTT_USERNAME, MQTT_PASSWORD
+//   HA_DEVICE_PREFIX (default "kitchen_terminal")
+//   DISPLAY_OUTPUT, DISPLAY_CONTROL_SCHEME — both must be set for display control
+
+import envoy
+import gleam/bit_array
+import gleam/erlang/process.{type Subject}
+import gleam/int
+import gleam/json
+import gleam/list
+import gleam/option.{type Option, None, Some}
+import gleam/otp/actor
+import gleam/result
+import gleam/string
+import log
+import spoke/mqtt
+import spoke/mqtt_actor
+import spoke/tcp
+
+// PUBLIC TYPES ----------------------------------------------------------------
+
+/// State pushed to registered UI clients.
+pub type HaState {
+  HaState(display_power: Bool, dark_mode: Bool)
+}
+
+/// Configuration parsed from env vars.
+pub type Config {
+  Config(
+    mqtt_host: String,
+    mqtt_port: Int,
+    mqtt_username: String,
+    mqtt_password: String,
+    device_prefix: String,
+    display_output: Option(String),
+    display_control_scheme: Option(String),
+  )
+}
+
+/// Opaque handle for communicating with the HA client actor.
+pub opaque type HaClient {
+  HaClient(subject: Subject(Msg))
+}
+
+pub type ClientCallback =
+  fn(HaState) -> Nil
+
+// PUBLIC API ------------------------------------------------------------------
+
+/// Try to load MQTT configuration from env vars.
+/// Returns Error if MQTT_HOST is not set (integration disabled).
+pub fn config_from_env() -> Result(Config, String) {
+  use mqtt_host <- result.try(
+    envoy.get("MQTT_HOST")
+    |> result.replace_error("MQTT_HOST not set"),
+  )
+  use mqtt_username <- result.try(
+    envoy.get("MQTT_USERNAME")
+    |> result.replace_error("MQTT_USERNAME not set"),
+  )
+  use mqtt_password <- result.try(
+    envoy.get("MQTT_PASSWORD")
+    |> result.replace_error("MQTT_PASSWORD not set"),
+  )
+  let mqtt_port =
+    envoy.get("MQTT_PORT")
+    |> result.try(int.parse)
+    |> result.unwrap(1883)
+  let device_prefix =
+    envoy.get("HA_DEVICE_PREFIX")
+    |> result.unwrap("kitchen_terminal")
+  let display_output =
+    envoy.get("DISPLAY_OUTPUT")
+    |> option.from_result
+  let display_control_scheme =
+    envoy.get("DISPLAY_CONTROL_SCHEME")
+    |> option.from_result
+
+  Ok(Config(
+    mqtt_host:,
+    mqtt_port:,
+    mqtt_username:,
+    mqtt_password:,
+    device_prefix:,
+    display_output:,
+    display_control_scheme:,
+  ))
+}
+
+/// Start the HA client actor. Returns an HaClient handle.
+pub fn start(config: Config) -> Result(HaClient, actor.StartError) {
+  let result =
+    actor.new_with_initialiser(15_000, fn(self) {
+      case init_mqtt(self, config) {
+        Ok(state) ->
+          actor.initialised(state)
+          |> actor.returning(self)
+          |> Ok
+        Error(reason) -> Error(reason)
+      }
+    })
+    |> actor.on_message(handle_message)
+    |> actor.start
+
+  case result {
+    Ok(started) -> Ok(HaClient(subject: started.data))
+    Error(err) -> Error(err)
+  }
+}
+
+/// Register a callback to receive HaState updates.
+/// The callback is invoked immediately with the current state.
+pub fn register(client: HaClient, callback: ClientCallback) -> Nil {
+  process.send(client.subject, RegisterClient(callback))
+}
+
+// INTERNAL TYPES --------------------------------------------------------------
+
+type Msg {
+  RegisterClient(ClientCallback)
+  MqttMessage(topic: String, payload: BitArray)
+  MqttConnectionChanged(mqtt.ConnectionState)
+  Reconnect
+}
+
+type State {
+  State(
+    config: Config,
+    mqtt_client: mqtt_actor.Client,
+    display_power: Bool,
+    dark_mode: Bool,
+    clients: List(ClientCallback),
+    self: Subject(Msg),
+  )
+}
+
+// ACTOR INIT ------------------------------------------------------------------
+
+fn init_mqtt(
+  self: Subject(Msg),
+  config: Config,
+) -> Result(State, String) {
+  let prefix = config.device_prefix
+
+  // Build the MQTT transport connector
+  let connector = case config.mqtt_port {
+    1883 -> tcp.connector_with_defaults(host: config.mqtt_host)
+    port -> tcp.connector(host: config.mqtt_host, port:, connect_timeout: 5000)
+  }
+
+  let connect_options =
+    mqtt.connect_with_id(connector, prefix <> "_home_terminal")
+    |> mqtt.using_auth(
+      config.mqtt_username,
+      Some(bit_array.from_string(config.mqtt_password)),
+    )
+    |> mqtt.keep_alive_seconds(30)
+
+  // Start the spoke MQTT actor
+  let started = case mqtt_actor.build(connect_options) |> mqtt_actor.start(5000) {
+    Ok(s) -> s
+    Error(_) -> {
+      log.println("[ha_client] failed to start MQTT actor")
+      panic as "ha_client: failed to start MQTT actor"
+    }
+  }
+  let client = started.data
+
+  // Subscribe to MQTT updates, routing them into our actor's message types
+  let updates_subject = process.new_subject()
+  mqtt_actor.subscribe_to_updates(client, updates_subject)
+
+  // LWT (Last Will and Testament) — published by broker if we disconnect
+  let will =
+    mqtt.PublishData(
+      topic: prefix <> "/availability",
+      payload: bit_array.from_string("offline"),
+      qos: mqtt.AtLeastOnce,
+      retain: True,
+    )
+
+  // Connect with clean session and LWT
+  mqtt_actor.connect(client, True, Some(will))
+
+  // Wait for connection to be accepted
+  let connect_result =
+    process.new_selector()
+    |> process.select(updates_subject)
+    |> process.selector_receive(from: _, within: 10_000)
+
+  use <- require_connected(connect_result, config)
+
+  // Publish device discovery
+  publish_discovery(client, prefix)
+
+  // Publish initial states
+  publish_state(client, prefix <> "/display_power/state", True)
+  publish_state(client, prefix <> "/dark_mode/state", True)
+
+  // Publish availability
+  mqtt_actor.publish(
+    client,
+    mqtt.PublishData(
+      topic: prefix <> "/availability",
+      payload: bit_array.from_string("online"),
+      qos: mqtt.AtLeastOnce,
+      retain: True,
+    ),
+  )
+
+  // Subscribe to command topics
+  let _sub_result =
+    mqtt_actor.subscribe(client, [
+      mqtt.SubscribeRequest(prefix <> "/display_power/set", mqtt.AtLeastOnce),
+      mqtt.SubscribeRequest(prefix <> "/dark_mode/set", mqtt.AtLeastOnce),
+    ])
+
+  log.println("[ha_client] device discovery published, listening for commands")
+
+  // Now route MQTT updates into our actor subject using a background selector.
+  // Spawn a process that continuously forwards MQTT updates to self.
+  let _ = process.spawn(fn() { mqtt_forwarder(updates_subject, self) })
+
+  Ok(State(
+    config:,
+    mqtt_client: client,
+    display_power: True,
+    dark_mode: True,
+    clients: [],
+    self:,
+  ))
+}
+
+/// Check the MQTT connect result and either continue or return an error.
+/// Used with `use <- require_connected(result, config)` pattern.
+fn require_connected(
+  connect_result: Result(mqtt.Update, Nil),
+  config: Config,
+  continue: fn() -> Result(State, String),
+) -> Result(State, String) {
+  case connect_result {
+    Ok(mqtt.ConnectionStateChanged(mqtt.ConnectAccepted(_))) -> {
+      log.println(
+        "[ha_client] connected to MQTT broker at " <> config.mqtt_host,
+      )
+      continue()
+    }
+    Ok(mqtt.ConnectionStateChanged(mqtt.ConnectRejected(reason))) -> {
+      log.println(
+        "[ha_client] connection rejected: " <> string.inspect(reason),
+      )
+      Error("MQTT connection rejected: " <> string.inspect(reason))
+    }
+    Ok(_) -> {
+      log.println("[ha_client] unexpected MQTT response during connect")
+      Error("Unexpected MQTT response during connect")
+    }
+    Error(Nil) -> {
+      log.println("[ha_client] MQTT connection timed out")
+      Error("MQTT connection timed out")
+    }
+  }
+}
+
+/// Runs in a separate process, forwarding MQTT updates to the actor's subject.
+fn mqtt_forwarder(
+  updates: Subject(mqtt.Update),
+  self: Subject(Msg),
+) -> Nil {
+  let selector =
+    process.new_selector()
+    |> process.select(updates)
+
+  let update = process.selector_receive_forever(from: selector)
+  case update {
+    mqtt.ReceivedMessage(topic:, payload:, ..) ->
+      process.send(self, MqttMessage(topic:, payload:))
+    mqtt.ConnectionStateChanged(state) ->
+      process.send(self, MqttConnectionChanged(state))
+  }
+  mqtt_forwarder(updates, self)
+}
+
+// MESSAGE HANDLER -------------------------------------------------------------
+
+fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
+  case msg {
+    RegisterClient(callback) -> {
+      // Immediately push current state
+      callback(HaState(
+        display_power: state.display_power,
+        dark_mode: state.dark_mode,
+      ))
+      actor.continue(State(..state, clients: [callback, ..state.clients]))
+    }
+
+    MqttMessage(topic:, payload:) -> {
+      let prefix = state.config.device_prefix
+      let payload_str =
+        bit_array.to_string(payload)
+        |> result.unwrap("")
+        |> string.uppercase
+      let on = payload_str == "ON"
+
+      let new_state = case string.ends_with(topic, "/display_power/set") {
+        True -> {
+          log.println("[ha_client] display_power command: " <> payload_str)
+          set_display_power(state.config, on)
+          publish_state(
+            state.mqtt_client,
+            prefix <> "/display_power/state",
+            on,
+          )
+          State(..state, display_power: on)
+        }
+        False ->
+          case string.ends_with(topic, "/dark_mode/set") {
+            True -> {
+              log.println("[ha_client] dark_mode command: " <> payload_str)
+              publish_state(
+                state.mqtt_client,
+                prefix <> "/dark_mode/state",
+                on,
+              )
+              State(..state, dark_mode: on)
+            }
+            False -> {
+              log.println("[ha_client] unknown topic: " <> topic)
+              state
+            }
+          }
+      }
+      broadcast(new_state)
+      actor.continue(new_state)
+    }
+
+    MqttConnectionChanged(mqtt.DisconnectedUnexpectedly(reason:)) -> {
+      log.println("[ha_client] disconnected unexpectedly: " <> reason)
+      // Schedule reconnect after 5 seconds
+      let self = state.self
+      let _ = process.spawn_unlinked(fn() {
+        process.sleep(5000)
+        process.send(self, Reconnect)
+      })
+      actor.continue(state)
+    }
+
+    MqttConnectionChanged(conn_state) -> {
+      log.println(
+        "[ha_client] connection state: " <> string.inspect(conn_state),
+      )
+      actor.continue(state)
+    }
+
+    Reconnect -> {
+      log.println("[ha_client] attempting reconnect...")
+      let will =
+        mqtt.PublishData(
+          topic: state.config.device_prefix <> "/availability",
+          payload: bit_array.from_string("offline"),
+          qos: mqtt.AtLeastOnce,
+          retain: True,
+        )
+      mqtt_actor.connect(state.mqtt_client, True, Some(will))
+      actor.continue(state)
+    }
+  }
+}
+
+fn broadcast(state: State) -> Nil {
+  let ha_state =
+    HaState(display_power: state.display_power, dark_mode: state.dark_mode)
+  list.each(state.clients, fn(callback) { callback(ha_state) })
+}
+
+// MQTT PUBLISHING -------------------------------------------------------------
+
+fn publish_discovery(client: mqtt_actor.Client, prefix: String) -> Nil {
+  let discovery_topic = "homeassistant/device/" <> prefix <> "/config"
+
+  let payload =
+    json.object([
+      #(
+        "dev",
+        json.object([
+          #("ids", json.array([prefix], json.string)),
+          #("name", json.string(humanize_prefix(prefix))),
+          #("mf", json.string("home-terminal")),
+          #("mdl", json.string("Raspberry Pi")),
+          #("sw", json.string("1.0.0")),
+        ]),
+      ),
+      #(
+        "o",
+        json.object([
+          #("name", json.string("home-terminal")),
+          #("sw", json.string("1.0.0")),
+        ]),
+      ),
+      #(
+        "avty",
+        json.array(
+          [
+            json.object([
+              #("t", json.string(prefix <> "/availability")),
+            ]),
+          ],
+          fn(x) { x },
+        ),
+      ),
+      #(
+        "cmps",
+        json.object([
+          #(
+            "display_power",
+            json.object([
+              #("p", json.string("switch")),
+              #("name", json.string("Display Power")),
+              #("unique_id", json.string(prefix <> "_display_power")),
+              #("cmd_t", json.string(prefix <> "/display_power/set")),
+              #("stat_t", json.string(prefix <> "/display_power/state")),
+              #("ic", json.string("mdi:monitor")),
+            ]),
+          ),
+          #(
+            "dark_mode",
+            json.object([
+              #("p", json.string("switch")),
+              #("name", json.string("Dark Mode")),
+              #("unique_id", json.string(prefix <> "_dark_mode")),
+              #("cmd_t", json.string(prefix <> "/dark_mode/set")),
+              #("stat_t", json.string(prefix <> "/dark_mode/state")),
+              #("ic", json.string("mdi:theme-light-dark")),
+            ]),
+          ),
+        ]),
+      ),
+    ])
+    |> json.to_string
+    |> bit_array.from_string
+
+  mqtt_actor.publish(
+    client,
+    mqtt.PublishData(
+      topic: discovery_topic,
+      payload:,
+      qos: mqtt.AtLeastOnce,
+      retain: True,
+    ),
+  )
+}
+
+fn publish_state(
+  client: mqtt_actor.Client,
+  topic: String,
+  on: Bool,
+) -> Nil {
+  let payload = case on {
+    True -> "ON"
+    False -> "OFF"
+  }
+  mqtt_actor.publish(
+    client,
+    mqtt.PublishData(
+      topic:,
+      payload: bit_array.from_string(payload),
+      qos: mqtt.AtLeastOnce,
+      retain: True,
+    ),
+  )
+}
+
+/// Convert "kitchen_terminal" -> "Kitchen Terminal"
+fn humanize_prefix(prefix: String) -> String {
+  string.split(prefix, "_")
+  |> list.map(string.capitalise)
+  |> string.join(" ")
+}
+
+// DISPLAY CONTROL -------------------------------------------------------------
+
+@external(erlang, "os", "cmd")
+fn os_cmd(cmd: List(Int)) -> List(Int)
+
+fn run_shell_cmd(cmd_str: String) -> Nil {
+  let codepoints = string.to_utf_codepoints(cmd_str)
+  let char_list = list.map(codepoints, string.utf_codepoint_to_int)
+  let _result = os_cmd(char_list)
+  Nil
+}
+
+fn set_display_power(config: Config, on: Bool) -> Nil {
+  case config.display_control_scheme, config.display_output {
+    Some("wlr-randr"), Some(output) -> {
+      let flag = case on {
+        True -> "--on"
+        False -> "--off"
+      }
+      let cmd_str =
+        "wlr-randr --output " <> output <> " " <> flag
+      log.println("[ha_client] running: " <> cmd_str)
+      run_shell_cmd(cmd_str)
+    }
+    Some(scheme), _ -> {
+      log.println(
+        "[ha_client] unknown DISPLAY_CONTROL_SCHEME: " <> scheme,
+      )
+      Nil
+    }
+    None, _ -> {
+      log.println(
+        "[ha_client] display control not configured (DISPLAY_CONTROL_SCHEME or DISPLAY_OUTPUT unset), skipping",
+      )
+      Nil
+    }
+  }
+}
