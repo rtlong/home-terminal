@@ -214,34 +214,7 @@ fn init_mqtt(
 
   use <- require_connected(connect_result, config)
 
-  // Publish device discovery
-  publish_discovery(client, prefix)
-
-  // Publish initial states
-  publish_state(client, prefix <> "/display_power/state", True)
-  publish_state(client, prefix <> "/dark_mode/state", True)
-
-  // Publish availability
-  mqtt_actor.publish(
-    client,
-    mqtt.PublishData(
-      topic: prefix <> "/availability",
-      payload: bit_array.from_string("online"),
-      qos: mqtt.AtLeastOnce,
-      retain: True,
-    ),
-  )
-
-  // Subscribe to command topics
-  let _sub_result =
-    mqtt_actor.subscribe(client, [
-      mqtt.SubscribeRequest(prefix <> "/display_power/set", mqtt.AtLeastOnce),
-      mqtt.SubscribeRequest(prefix <> "/dark_mode/set", mqtt.AtLeastOnce),
-    ])
-
-  log.println("[ha_client] device discovery published, listening for commands")
-
-  Ok(#(
+  let initial_state =
     State(
       config:,
       mqtt_client: client,
@@ -249,9 +222,10 @@ fn init_mqtt(
       dark_mode: True,
       clients: [],
       self:,
-    ),
-    updates_subject,
-  ))
+    )
+  setup_session(client, prefix, initial_state)
+
+  Ok(#(initial_state, updates_subject))
 }
 
 /// Check the MQTT connect result and either continue or return an error.
@@ -283,6 +257,40 @@ fn require_connected(
       Error("MQTT connection timed out")
     }
   }
+}
+
+/// Re-publish discovery, availability, current state, and re-subscribe to
+/// command topics. Called both on initial connect and after reconnect.
+fn setup_session(
+  client: mqtt_actor.Client,
+  prefix: String,
+  state: State,
+) -> Nil {
+  publish_discovery(client, prefix)
+
+  // Publish current state (not hardcoded True — preserve state across reconnect)
+  publish_state(client, prefix <> "/display_power/state", state.display_power)
+  publish_state(client, prefix <> "/dark_mode/state", state.dark_mode)
+
+  // Publish availability
+  mqtt_actor.publish(
+    client,
+    mqtt.PublishData(
+      topic: prefix <> "/availability",
+      payload: bit_array.from_string("online"),
+      qos: mqtt.AtLeastOnce,
+      retain: True,
+    ),
+  )
+
+  // Subscribe to command topics
+  let _sub_result =
+    mqtt_actor.subscribe(client, [
+      mqtt.SubscribeRequest(prefix <> "/display_power/set", mqtt.AtLeastOnce),
+      mqtt.SubscribeRequest(prefix <> "/dark_mode/set", mqtt.AtLeastOnce),
+    ])
+
+  log.println("[ha_client] session established: discovery, state, subscriptions")
 }
 
 // MESSAGE HANDLER -------------------------------------------------------------
@@ -346,6 +354,14 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
         process.sleep(5000)
         process.send(self, Reconnect)
       })
+      actor.continue(state)
+    }
+
+    MqttConnectionChanged(mqtt.ConnectAccepted(_)) -> {
+      log.println("[ha_client] connected, re-establishing session")
+      let prefix = state.config.device_prefix
+      // Re-publish discovery, availability, current state, and re-subscribe
+      setup_session(state.mqtt_client, prefix, state)
       actor.continue(state)
     }
 
