@@ -98,10 +98,24 @@ pub fn start(config: Config) -> Result(HaClient, actor.StartError) {
   let result =
     actor.new_with_initialiser(15_000, fn(self) {
       case init_mqtt(self, config) {
-        Ok(state) ->
+        Ok(#(state, updates_subject)) -> {
+          // Build a selector that maps mqtt.Update messages into our Msg type
+          // so the actor receives them directly in handle_message.
+          let mqtt_selector =
+            process.new_selector()
+            |> process.select_map(updates_subject, fn(update) {
+              case update {
+                mqtt.ReceivedMessage(topic:, payload:, ..) ->
+                  MqttMessage(topic:, payload:)
+                mqtt.ConnectionStateChanged(conn_state) ->
+                  MqttConnectionChanged(conn_state)
+              }
+            })
           actor.initialised(state)
+          |> actor.selecting(mqtt_selector)
           |> actor.returning(self)
           |> Ok
+        }
         Error(reason) -> Error(reason)
       }
     })
@@ -145,7 +159,7 @@ type State {
 fn init_mqtt(
   self: Subject(Msg),
   config: Config,
-) -> Result(State, String) {
+) -> Result(#(State, Subject(mqtt.Update)), String) {
   let prefix = config.device_prefix
 
   // Build the MQTT transport connector
@@ -223,17 +237,16 @@ fn init_mqtt(
 
   log.println("[ha_client] device discovery published, listening for commands")
 
-  // Now route MQTT updates into our actor subject using a background selector.
-  // Spawn a process that continuously forwards MQTT updates to self.
-  let _ = process.spawn(fn() { mqtt_forwarder(updates_subject, self) })
-
-  Ok(State(
-    config:,
-    mqtt_client: client,
-    display_power: True,
-    dark_mode: True,
-    clients: [],
-    self:,
+  Ok(#(
+    State(
+      config:,
+      mqtt_client: client,
+      display_power: True,
+      dark_mode: True,
+      clients: [],
+      self:,
+    ),
+    updates_subject,
   ))
 }
 
@@ -242,8 +255,8 @@ fn init_mqtt(
 fn require_connected(
   connect_result: Result(mqtt.Update, Nil),
   config: Config,
-  continue: fn() -> Result(State, String),
-) -> Result(State, String) {
+  continue: fn() -> Result(#(State, Subject(mqtt.Update)), String),
+) -> Result(#(State, Subject(mqtt.Update)), String) {
   case connect_result {
     Ok(mqtt.ConnectionStateChanged(mqtt.ConnectAccepted(_))) -> {
       log.println(
@@ -266,25 +279,6 @@ fn require_connected(
       Error("MQTT connection timed out")
     }
   }
-}
-
-/// Runs in a separate process, forwarding MQTT updates to the actor's subject.
-fn mqtt_forwarder(
-  updates: Subject(mqtt.Update),
-  self: Subject(Msg),
-) -> Nil {
-  let selector =
-    process.new_selector()
-    |> process.select(updates)
-
-  let update = process.selector_receive_forever(from: selector)
-  case update {
-    mqtt.ReceivedMessage(topic:, payload:, ..) ->
-      process.send(self, MqttMessage(topic:, payload:))
-    mqtt.ConnectionStateChanged(state) ->
-      process.send(self, MqttConnectionChanged(state))
-  }
-  mqtt_forwarder(updates, self)
 }
 
 // MESSAGE HANDLER -------------------------------------------------------------
