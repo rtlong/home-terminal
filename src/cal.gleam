@@ -630,8 +630,8 @@ pub fn view_gantt(
             html.div(
               [
                 attribute.style("flex", "1 0 0"),
-                attribute.style("height", "0"),
-                attribute.style("border-top", "1.5px solid " <> color),
+                attribute.style("height", "1.5px"),
+                attribute.style("background-color", color),
                 attribute.style("min-width", "4px"),
               ],
               [],
@@ -671,33 +671,25 @@ pub fn view_gantt(
                     ],
                     [html.text(label_text)],
                   ),
-                  // SVG taper: the label box's top and bottom edges each
-                  // curve inward to meet the 1.5px axis line, like the
-                  // rectangle itself is tapering off.  Uses quadratic
-                  // bezier curves so the transition is smooth rather than
-                  // a sharp arrowhead.
-                  // viewBox 60×16: left edge is full label height, right
-                  // edge is a 1.5px sliver at the vertical centre.
-                  // Top edge: straight from (0,0) partway, then curves
-                  // down to (60,7.25).  Bottom edge mirrors upward.
+                  // SVG taper: 13px tall to match label height.  Two
+                  // straight diagonal edges slope from the label corners
+                  // to a flat 1.5px tip matching the axis line width.
                   svg.svg(
                     [
-                      attribute.attribute("viewBox", "0 0 60 16"),
+                      attribute.attribute("viewBox", "0 0 60 13"),
                       attribute.attribute("width", "60"),
-                      attribute.attribute("height", "16"),
+                      attribute.attribute("height", "13"),
                       attribute.attribute("preserveAspectRatio", "none"),
                       attribute.style("flex-shrink", "0"),
                       attribute.style("display", "block"),
                     ],
                     [
-                      svg.path([
+                      svg.polygon([
                         attribute.attribute(
-                          "d",
-                          // Start at top-left, go right along top edge,
-                          // then curve down to the line centre at the
-                          // right edge.  Line across the 1.5px gap, then
-                          // curve back up along the bottom to bottom-left.
-                          "M0,0 L10,0 Q60,0 60,7.25 L60,8.75 Q60,16 10,16 L0,16 Z",
+                          "points",
+                          // Top-left, top-right (line top), bottom-right
+                          // (line bottom), bottom-left.
+                          "0,0 60,5.75 60,7.25 0,13",
                         ),
                         attribute.attribute("fill", color),
                       ]),
