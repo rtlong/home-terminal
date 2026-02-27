@@ -31,6 +31,11 @@ pub type CalendarConfig {
   CalendarConfig(visible: Bool)
 }
 
+/// An external iCal feed URL with a display name.
+pub type IcalUrl {
+  IcalUrl(name: String, url: String)
+}
+
 /// Top-level application config, persisted to config.json.
 pub type Config {
   Config(
@@ -46,6 +51,8 @@ pub type Config {
     people_colors: Dict(String, Float),
     /// Per-calendar display settings (visibility, color).
     calendars: Dict(String, CalendarConfig),
+    /// External iCal feed URLs (e.g. shared Google Calendar links).
+    ical_urls: List(IcalUrl),
     /// Geographic coordinates for sunrise/sunset calculation.
     /// Decimal degrees: positive = N/E, negative = S/W.
     latitude: Float,
@@ -61,6 +68,7 @@ pub fn empty_config() -> Config {
     calendar_people: dict.new(),
     people_colors: dict.new(),
     calendars: dict.new(),
+    ical_urls: [],
     latitude: 0.0,
     longitude: 0.0,
   )
@@ -308,8 +316,16 @@ fn encode_config(config: Config) -> json.Json {
     #("calendar_people", json.object(cal_people_entries)),
     #("people_colors", json.object(people_colors_entries)),
     #("calendars", json.object(cal_entries)),
+    #("ical_urls", json.array(config.ical_urls, encode_ical_url)),
     #("latitude", json.float(config.latitude)),
     #("longitude", json.float(config.longitude)),
+  ])
+}
+
+fn encode_ical_url(ical_url: IcalUrl) -> json.Json {
+  json.object([
+    #("name", json.string(ical_url.name)),
+    #("url", json.string(ical_url.url)),
   ])
 }
 
@@ -385,6 +401,11 @@ fn config_decoder() -> decode.Decoder(Config) {
     dict.new(),
     decode.dict(decode.string, calendar_config_decoder()),
   )
+  use ical_urls <- decode.optional_field(
+    "ical_urls",
+    [],
+    decode.list(ical_url_decoder()),
+  )
   use latitude <- decode.optional_field("latitude", 0.0, decode.float)
   use longitude <- decode.optional_field("longitude", 0.0, decode.float)
   decode.success(Config(
@@ -393,6 +414,7 @@ fn config_decoder() -> decode.Decoder(Config) {
     calendar_people:,
     people_colors:,
     calendars:,
+    ical_urls:,
     latitude:,
     longitude:,
   ))
@@ -401,6 +423,12 @@ fn config_decoder() -> decode.Decoder(Config) {
 fn calendar_config_decoder() -> decode.Decoder(CalendarConfig) {
   use visible <- decode.field("visible", decode.bool)
   decode.success(CalendarConfig(visible:))
+}
+
+fn ical_url_decoder() -> decode.Decoder(IcalUrl) {
+  use name <- decode.field("name", decode.string)
+  use url <- decode.field("url", decode.string)
+  decode.success(IcalUrl(name:, url:))
 }
 
 // DATE PARSING ----------------------------------------------------------------

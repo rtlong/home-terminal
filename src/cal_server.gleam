@@ -22,6 +22,7 @@ import gleam/otp/actor
 import gleam/string
 import gleam/time/calendar
 import gleam/time/timestamp
+import ical_fetch
 import log
 import state
 import travel
@@ -249,9 +250,25 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
       // processed while the fetch is in flight.
       let self = state.self
       let dav_config = state.dav_config
+      let ical_urls = state.cal_config.ical_urls
       process.spawn(fn() {
         let result = cal_dav.fetch_events(dav_config)
-        process.send(self, CalDavFetched(result))
+        // Also fetch any external iCal feed URLs and merge the results.
+        let #(ics_names, ics_events) = ical_fetch.fetch_all(ical_urls)
+        let merged = case result {
+          Ok(#(dav_names, dav_events)) ->
+            Ok(#(
+              list.append(dav_names, ics_names),
+              list.append(dav_events, ics_events),
+            ))
+          Error(err) ->
+            // CalDAV failed, but ICS feeds may have succeeded.
+            case ics_events {
+              [] -> Error(err)
+              _ -> Ok(#(ics_names, ics_events))
+            }
+        }
+        process.send(self, CalDavFetched(merged))
       })
       process.send_after(state.self, poll_interval_ms, PollTimerFired)
       |> ignore_timer
