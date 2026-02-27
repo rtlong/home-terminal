@@ -56,7 +56,10 @@ pub type ClientCallback =
 pub opaque type Msg {
   ClientConnected(id: Int, callback: ClientCallback)
   ClientDisconnected(id: Int)
-  CalDavFetched(Result(#(List(String), List(Event)), String))
+  FetchCompleted(
+    dav_result: Result(#(List(String), List(Event)), String),
+    ics_result: ical_fetch.FetchResult,
+  )
   PollTimerFired
   UpdateCalendarConfig(name: String, config: state.CalendarConfig)
   UpdateCalendarPeople(cal_name: String, people: List(String))
@@ -82,6 +85,10 @@ type State {
     travel_cache: dict.Dict(String, cal.TravelInfo),
     /// Point-to-point leg durations in seconds, keyed by leg_cache_key.
     leg_cache: cal.LegCache,
+    /// Per-iCal-feed last-fetched timestamp (URL → unix seconds).
+    ical_last_fetched: dict.Dict(String, Int),
+    /// Per-iCal-feed cached events (URL → events from last fetch).
+    ical_cached_events: dict.Dict(String, List(Event)),
   )
 }
 
@@ -142,6 +149,8 @@ pub fn start(
           fetched_at: 0,
           travel_cache: travel_caches.travel_cache,
           leg_cache: travel_caches.leg_cache,
+          ical_last_fetched: dict.new(),
+          ical_cached_events: dict.new(),
         )
       actor.initialised(actor_state) |> actor.returning(self_subject) |> Ok
     })
@@ -251,32 +260,37 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
       let self = state.self
       let dav_config = state.dav_config
       let ical_urls = state.cal_config.ical_urls
+      let ical_lf = state.ical_last_fetched
+      let ical_ce = state.ical_cached_events
       process.spawn(fn() {
-        let result = cal_dav.fetch_events(dav_config)
-        // Also fetch any external iCal feed URLs and merge the results.
-        let #(ics_names, ics_events) = ical_fetch.fetch_all(ical_urls)
-        let merged = case result {
-          Ok(#(dav_names, dav_events)) ->
-            Ok(#(
-              list.append(dav_names, ics_names),
-              list.append(dav_events, ics_events),
-            ))
-          Error(err) ->
-            // CalDAV failed, but ICS feeds may have succeeded.
-            case ics_events {
-              [] -> Error(err)
-              _ -> Ok(#(ics_names, ics_events))
-            }
-        }
-        process.send(self, CalDavFetched(merged))
+        let dav_result = cal_dav.fetch_events(dav_config)
+        let now_secs = unix_seconds_now()
+        // Fetch external iCal feeds, respecting per-feed refresh intervals.
+        let ics_result =
+          ical_fetch.fetch_all(ical_urls, now_secs, ical_lf, ical_ce)
+        process.send(self, FetchCompleted(dav_result:, ics_result:))
       })
       process.send_after(state.self, poll_interval_ms, PollTimerFired)
       |> ignore_timer
       actor.continue(state)
     }
 
-    CalDavFetched(result) -> {
-      let new_state = case result {
+    FetchCompleted(dav_result:, ics_result:) -> {
+      // Merge CalDAV and ICS results. ICS events are always present
+      // (cached from previous cycles for feeds not yet due for refresh).
+      let merged = case dav_result {
+        Ok(#(dav_names, dav_events)) ->
+          Ok(#(
+            list.append(dav_names, ics_result.names),
+            list.append(dav_events, ics_result.events),
+          ))
+        Error(err) ->
+          case ics_result.events {
+            [] -> Error(err)
+            _ -> Ok(#(ics_result.names, ics_result.events))
+          }
+      }
+      let new_state = case merged {
         Ok(#(cal_names, events)) -> {
           let now_secs = unix_seconds_now()
           log.println(
@@ -478,11 +492,18 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
             fetched_at: now_secs,
             travel_cache: new_travel_cache,
             leg_cache: new_leg_cache,
+            ical_last_fetched: ics_result.last_fetched,
+            ical_cached_events: ics_result.cached_events,
           )
         }
         Error(err) -> {
           log.println("[cal_server] fetch error: " <> err)
-          State(..state, events: Error(err))
+          State(
+            ..state,
+            events: Error(err),
+            ical_last_fetched: ics_result.last_fetched,
+            ical_cached_events: ics_result.cached_events,
+          )
         }
       }
       broadcast(new_state)

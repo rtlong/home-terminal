@@ -1,12 +1,17 @@
 // External iCal feed fetcher.
 //
-// Fetches a .ics URL via HTTP GET and parses the response body using
+// Fetches .ics URLs via HTTP GET and parses the response bodies using
 // ical.parse_events. Used alongside the CalDAV client to pull in
 // arbitrary external calendar feeds (e.g. shared Google Calendar URLs).
+//
+// Each feed has a configurable refresh interval. Feeds that were fetched
+// recently enough are skipped, and their previously-cached events are
+// reused by the caller.
 
 import cal.{type Event}
 import gleam/bit_array
 import gleam/bytes_tree
+import gleam/dict.{type Dict}
 import gleam/hackney
 import gleam/http
 import gleam/http/request
@@ -19,16 +24,85 @@ import ical
 import log
 import state.{type IcalUrl}
 
-/// Fetch events from a list of external iCal feed URLs.
-/// Returns (calendar_names, events). Failures for individual feeds are
-/// logged and skipped — one broken URL won't block the others.
+/// Result of fetching all ICS feeds for one poll cycle.
+/// Contains the merged events and updated tracking dicts.
+pub type FetchResult {
+  FetchResult(
+    /// All calendar names from configured ICS feeds.
+    names: List(String),
+    /// All events (freshly fetched + cached from previous cycles).
+    events: List(Event),
+    /// Updated last-fetched timestamps (url → unix seconds).
+    last_fetched: Dict(String, Int),
+    /// Updated per-feed event cache (url → events).
+    cached_events: Dict(String, List(Event)),
+  )
+}
+
+/// Fetch events from external iCal feeds, respecting per-feed refresh intervals.
+///
+/// Feeds whose refresh interval hasn't elapsed since their last fetch are
+/// skipped — their previously-cached events are reused instead.
+///
+/// `now_secs` is the current unix timestamp in seconds.
+/// `last_fetched` maps feed URL → last fetch unix seconds.
+/// `cached_events` maps feed URL → previously-fetched events.
 pub fn fetch_all(
   urls: List(IcalUrl),
-) -> #(List(String), List(Event)) {
-  let results = list.map(urls, fetch_one)
+  now_secs: Int,
+  last_fetched: Dict(String, Int),
+  cached_events: Dict(String, List(Event)),
+) -> FetchResult {
   let names = list.map(urls, fn(u) { u.name })
-  let events = list.flat_map(results, fn(r) { result.unwrap(r, []) })
-  #(names, events)
+
+  let #(new_last_fetched, new_cached, all_events) =
+    list.fold(urls, #(last_fetched, cached_events, []), fn(acc, feed) {
+      let #(lf, ce, evts) = acc
+      case is_due(feed, now_secs, lf) {
+        True -> {
+          let result = fetch_one(feed)
+          let feed_events = result.unwrap(result, [])
+          #(
+            dict.insert(lf, feed.url, now_secs),
+            dict.insert(ce, feed.url, feed_events),
+            list.append(evts, feed_events),
+          )
+        }
+        False -> {
+          // Not due — reuse cached events.
+          let feed_events =
+            dict.get(ce, feed.url) |> result.unwrap([])
+          log.println(
+            "[ical_fetch] skipping " <> feed.name <> " (not due for refresh)",
+          )
+          #(lf, ce, list.append(evts, feed_events))
+        }
+      }
+    })
+
+  FetchResult(
+    names:,
+    events: all_events,
+    last_fetched: new_last_fetched,
+    cached_events: new_cached,
+  )
+}
+
+/// Check whether a feed is due for a refresh.
+fn is_due(
+  feed: IcalUrl,
+  now_secs: Int,
+  last_fetched: Dict(String, Int),
+) -> Bool {
+  let interval_secs = state.parse_refresh_interval(feed.refresh)
+  case interval_secs, dict.get(last_fetched, feed.url) {
+    // No interval or unrecognised → always fetch.
+    0, _ -> True
+    // Never fetched before → fetch now.
+    _, Error(_) -> True
+    // Check if enough time has elapsed.
+    interval, Ok(last) -> now_secs - last >= interval
+  }
 }
 
 /// Fetch and parse events from a single iCal feed URL.

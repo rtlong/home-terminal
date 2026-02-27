@@ -31,9 +31,15 @@ pub type CalendarConfig {
   CalendarConfig(visible: Bool)
 }
 
-/// An external iCal feed URL with a display name.
+/// An external iCal feed URL with a display name and refresh interval.
 pub type IcalUrl {
-  IcalUrl(name: String, url: String)
+  IcalUrl(
+    name: String,
+    url: String,
+    /// Human-readable refresh interval, e.g. "5 minutes", "hourly", "daily".
+    /// Parsed by parse_refresh_interval/1. Defaults to "" (every poll cycle).
+    refresh: String,
+  )
 }
 
 /// Top-level application config, persisted to config.json.
@@ -77,6 +83,49 @@ pub fn empty_config() -> Config {
 /// Default config for a calendar not yet seen in config.json.
 pub fn default_calendar_config() -> CalendarConfig {
   CalendarConfig(visible: True)
+}
+
+/// Parse a human-readable refresh interval string into seconds.
+/// Supports: "daily", "hourly", "weekly",
+///           "<N> minute(s)", "<N> hour(s)", "<N> day(s)", "<N> second(s)".
+/// Returns 0 for empty or unrecognised strings (meaning "every poll cycle").
+pub fn parse_refresh_interval(s: String) -> Int {
+  let trimmed = string.trim(s) |> string.lowercase
+  case trimmed {
+    "" -> 0
+    "daily" -> 86_400
+    "hourly" -> 3600
+    "weekly" -> 604_800
+    _ -> parse_quantity_unit(trimmed)
+  }
+}
+
+/// Parse "<number> <unit>" patterns like "15 minutes", "6 hours", "1 day".
+fn parse_quantity_unit(s: String) -> Int {
+  // Split on first space or find where digits end.
+  let parts =
+    string.split(s, " ")
+    |> list.filter(fn(p) { p != "" })
+  case parts {
+    [num_str, unit_str, ..] ->
+      case int.parse(num_str) {
+        Ok(n) -> n * unit_to_seconds(string.lowercase(unit_str))
+        Error(_) -> 0
+      }
+    _ -> 0
+  }
+}
+
+/// Map a unit word (possibly plural) to seconds.
+fn unit_to_seconds(unit: String) -> Int {
+  case unit {
+    "second" | "seconds" | "sec" | "secs" | "s" -> 1
+    "minute" | "minutes" | "min" | "mins" | "m" -> 60
+    "hour" | "hours" | "hr" | "hrs" | "h" -> 3600
+    "day" | "days" | "d" -> 86_400
+    "week" | "weeks" | "w" -> 604_800
+    _ -> 0
+  }
 }
 
 // DATA DIR --------------------------------------------------------------------
@@ -326,6 +375,7 @@ fn encode_ical_url(ical_url: IcalUrl) -> json.Json {
   json.object([
     #("name", json.string(ical_url.name)),
     #("url", json.string(ical_url.url)),
+    #("refresh", json.string(ical_url.refresh)),
   ])
 }
 
@@ -428,7 +478,8 @@ fn calendar_config_decoder() -> decode.Decoder(CalendarConfig) {
 fn ical_url_decoder() -> decode.Decoder(IcalUrl) {
   use name <- decode.field("name", decode.string)
   use url <- decode.field("url", decode.string)
-  decode.success(IcalUrl(name:, url:))
+  use refresh <- decode.optional_field("refresh", "", decode.string)
+  decode.success(IcalUrl(name:, url:, refresh:))
 }
 
 // DATE PARSING ----------------------------------------------------------------
