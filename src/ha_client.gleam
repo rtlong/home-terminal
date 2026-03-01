@@ -19,6 +19,7 @@ import gleam/otp/actor
 import gleam/result
 import gleam/string
 import log
+import shellout
 import spoke/mqtt
 import spoke/mqtt_actor
 import spoke/tcp
@@ -609,16 +610,6 @@ fn humanize_prefix(prefix: String) -> String {
 
 // DISPLAY CONTROL -------------------------------------------------------------
 
-@external(erlang, "os", "cmd")
-fn os_cmd(cmd: List(Int)) -> List(Int)
-
-fn run_shell_cmd(cmd_str: String) -> Nil {
-  let codepoints = string.to_utf_codepoints(cmd_str)
-  let char_list = list.map(codepoints, string.utf_codepoint_to_int)
-  let _result = os_cmd(char_list)
-  Nil
-}
-
 fn set_display_power(config: Config, on: Bool) -> Nil {
   case config.display_control_scheme, config.display_output {
     Some("wlr-randr"), Some(output) -> {
@@ -626,10 +617,33 @@ fn set_display_power(config: Config, on: Bool) -> Nil {
         True -> "--on"
         False -> "--off"
       }
-      let cmd_str =
-        "wlr-randr --output " <> output <> " " <> flag
-      log.println("[ha_client] running: " <> cmd_str)
-      run_shell_cmd(cmd_str)
+      log.println(
+        "[ha_client] running: wlr-randr --output " <> output <> " " <> flag,
+      )
+      case
+        shellout.command(
+          run: "wlr-randr",
+          with: ["--output", output, flag],
+          in: ".",
+          opt: [],
+        )
+      {
+        Ok(out) -> {
+          let out = string.trim(out)
+          case string.is_empty(out) {
+            True -> log.println("[ha_client] wlr-randr: success")
+            False -> log.println("[ha_client] wlr-randr output: " <> out)
+          }
+        }
+        Error(#(exit_code, out)) -> {
+          log.println(
+            "[ha_client] wlr-randr FAILED (exit "
+            <> int.to_string(exit_code)
+            <> "): "
+            <> string.trim(out),
+          )
+        }
+      }
     }
     Some(scheme), _ -> {
       log.println(

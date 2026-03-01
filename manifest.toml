@@ -40,6 +40,7 @@ packages = [
   { name = "mist", version = "5.0.4", build_tools = ["gleam"], requirements = ["exception", "gleam_erlang", "gleam_http", "gleam_otp", "gleam_stdlib", "gleam_yielder", "glisten", "gramps", "hpack_erl", "logging"], otp_app = "mist", source = "hex", outer_checksum = "7CED4B2D81FD547ADB093D97B9928B9419A7F58B8562A30A6CC17A252B31AD05" },
   { name = "mug", version = "3.1.0", build_tools = ["gleam"], requirements = ["gleam_erlang", "gleam_stdlib"], otp_app = "mug", source = "hex", outer_checksum = "C01279D98E40371DA23461774B63F0E3581B8F1396049D881B0C7EB32799D93F" },
   { name = "parse_trans", version = "3.4.1", build_tools = ["rebar3"], requirements = [], otp_app = "parse_trans", source = "hex", outer_checksum = "620A406CE75DADA827B82E453C19CF06776BE266F5A67CFF34E1EF2CBB60E49A" },
+  { name = "shellout", version = "1.8.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "shellout", source = "hex", outer_checksum = "C416356D45151F298108C9DB9CD1EDE0313F620B5EDBB5766CD7237659D87841" },
   { name = "simplifile", version = "2.3.2", build_tools = ["gleam"], requirements = ["filepath", "gleam_stdlib"], otp_app = "simplifile", source = "hex", outer_checksum = "E049B4DACD4D206D87843BCF4C775A50AE0F50A52031A2FFB40C9ED07D6EC70A" },
   { name = "spoke_core", version = "1.0.1", build_tools = ["gleam"], requirements = ["drift", "gleam_stdlib", "spoke_mqtt", "spoke_packet"], otp_app = "spoke_core", source = "hex", outer_checksum = "B4092B5D0912936E3504AF903324D283D537C5126ED7FF50D8D12597E69224F1" },
   { name = "spoke_mqtt", version = "1.0.0", build_tools = ["gleam"], requirements = ["gleam_stdlib", "spoke_packet"], otp_app = "spoke_mqtt", source = "hex", outer_checksum = "44480FEE8F416839CE6F9C43938A84604F802B0FA318E1C0A9434AD02DB0D5F4" },
@@ -66,6 +67,7 @@ gleeunit = { version = ">= 1.0.0 and < 2.0.0" }
 lucide_lustre = { version = ">= 2.0.3 and < 3.0.0" }
 lustre = { version = ">= 5.0.0 and < 6.0.0" }
 mist = { version = ">= 5.0.0 and < 6.0.0" }
+shellout = { version = ">= 1.8.0 and < 2.0.0" }
 spoke_mqtt = { version = ">= 1.0.0 and < 2.0.0" }
 spoke_mqtt_actor = { version = ">= 1.1.1 and < 2.0.0" }
 spoke_tcp = { version = ">= 2.0.0 and < 3.0.0" }

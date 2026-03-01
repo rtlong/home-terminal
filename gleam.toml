@@ -16,6 +16,7 @@ gleam_time = ">= 1.7.0 and < 2.0.0"
 spoke_mqtt = ">= 1.0.0 and < 2.0.0"
 spoke_mqtt_actor = ">= 1.1.1 and < 2.0.0"
 spoke_tcp = ">= 2.0.0 and < 3.0.0"
+shellout = ">= 1.8.0 and < 2.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"
