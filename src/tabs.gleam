@@ -51,6 +51,7 @@ pub type Model {
     server: Server,
     display_power: Bool,
     dark_mode: Bool,
+    selected_event: Option(cal.Event),
   )
 }
 
@@ -104,6 +105,7 @@ fn init(flags: Flags) -> #(Model, Effect(Msg)) {
       server: server,
       display_power: True,
       dark_mode: True,
+      selected_event: None,
     )
 
   #(model, effect)
@@ -121,6 +123,8 @@ pub opaque type Msg {
   UserToggledCalendarLocation(name: String, show_location: Bool)
   UserChangedPersonColor(person: String, color: String)
   Tick
+  UserSelectedEvent(cal.Event)
+  UserDismissedEvent
 }
 
 const tick_interval_ms = 30_000
@@ -185,6 +189,16 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     }
 
     Tick -> #(model, tick_effect())
+
+    UserSelectedEvent(e) -> #(
+      Model(..model, selected_event: Some(e)),
+      effect.none(),
+    )
+
+    UserDismissedEvent -> #(
+      Model(..model, selected_event: None),
+      effect.none(),
+    )
   }
 }
 
@@ -211,6 +225,18 @@ fn view(model: Model) -> Element(Msg) {
     html.div([attribute.class("flex-1 flex flex-col min-h-0 overflow-hidden")], [
       view_active_tab(model, pal),
     ]),
+    // Event detail modal
+    case model.selected_event {
+      None -> element.none()
+      Some(e) ->
+        cal.view_event_detail(
+          e,
+          model.calendar_data.travel_cache,
+          model.calendar_data.leg_cache,
+          model.calendar_data.cal_config.home_address,
+          UserDismissedEvent,
+        )
+    },
     // Full-screen black overlay when display is powered off
     case model.display_power {
       True -> element.none()
@@ -379,6 +405,7 @@ fn view_active_tab(model: Model, pal: palette.Palette) -> Element(Msg) {
                 cfg.people,
                 model.calendar_data.cal_config.latitude,
                 model.calendar_data.cal_config.longitude,
+                UserSelectedEvent,
               ),
             ],
           )

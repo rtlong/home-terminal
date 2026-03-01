@@ -14,6 +14,7 @@ import lustre/attribute
 import lustre/element.{type Element}
 import lustre/element/html
 import lustre/element/svg
+import lustre/event
 import palette
 import travel
 
@@ -37,6 +38,8 @@ pub type Event {
     location: String,
     /// True when TRANSP:TRANSPARENT — the event does not mark the person busy.
     free: Bool,
+    description: String,
+    url: String,
   )
 }
 
@@ -116,6 +119,7 @@ pub fn view_gantt(
   people: List(String),
   latitude: Float,
   longitude: Float,
+  on_select: fn(Event) -> msg,
 ) -> Element(msg) {
   let now = timestamp.system_time()
   let local_offset = calendar.local_offset()
@@ -220,7 +224,7 @@ pub fn view_gantt(
   // have access to sun_times and can adapt colors in night zones.
 
   // Bar tuple: (bar, left_min, width_min, color, thick, is_free, label, label2,
-  //             drive_to_min, drive_from_min)
+  //             drive_to_min, drive_from_min, event)
   // drive_to_min/drive_from_min are 0 when no travel applies.
 
   // Height in px of the inverse-color tick header band at the top of each day.
@@ -285,6 +289,7 @@ pub fn view_gantt(
                       },
                       drive_to_min,
                       0,
+                      e,
                     )
                   })
                 #(list.append(bars_acc, new_bars), allday_acc)
@@ -317,6 +322,7 @@ pub fn view_gantt(
                       },
                       0,
                       drive_from_min,
+                      e,
                     )
                   })
                 #(list.append(bars_acc, new_bars), allday_acc)
@@ -356,6 +362,7 @@ pub fn view_gantt(
                       time_str,
                       drive_to_min,
                       drive_from_min,
+                      e,
                     )
                   })
                 #(list.append(bars_acc, new_bars), allday_acc)
@@ -365,8 +372,18 @@ pub fn view_gantt(
           _, _ -> acc
         }
       })
-    // Merge cross-midnight span events into the all-day chips list.
-    let all_day_events = list.append(all_day_events, extra_allday)
+    // Merge cross-midnight span events into the all-day chips list,
+    // then deduplicate by UID (same event can appear from multiple sources).
+    let all_day_events =
+      list.append(all_day_events, extra_allday)
+      |> list.fold(#([], []), fn(acc, e) {
+        let #(seen_uids, deduped) = acc
+        case list.contains(seen_uids, e.uid) {
+          True -> acc
+          False -> #([e.uid, ..seen_uids], [e, ..deduped])
+        }
+      })
+      |> fn(pair) { list.reverse(pair.1) }
 
     // Fixed pixel height for every bar lane.
     let bar_px = 26
@@ -388,10 +405,11 @@ pub fn view_gantt(
         String,
         Int,
         Int,
+        Event,
       ),
       flex_val: Int,
     ) -> Element(msg) {
-      let #(_, left_min, width_min, color, _thick, is_free, label, label2, _, _) =
+      let #(_, left_min, width_min, color, _thick, is_free, label, label2, _, _, evt) =
         bar
       let clamped_width = int.min(width_min, total_min - left_min)
       let right_min = left_min + clamped_width
@@ -580,12 +598,13 @@ pub fn view_gantt(
           html.div(
             [
               attribute.class(
-                "relative overflow-hidden pointer-events-none select-none",
+                "relative overflow-hidden select-none cursor-pointer",
               ),
               attribute.style("flex", int.to_string(flex_val) <> " 0 0"),
               attribute.style("min-width", "0"),
               attribute.style("display", "flex"),
               attribute.style("align-items", "center"),
+              event.on_click(on_select(evt)),
             ],
             axis_children,
           )
@@ -639,12 +658,13 @@ pub fn view_gantt(
             list.flatten([
               [
                 attribute.class(
-                  "overflow-hidden flex flex-wrap items-start content-center gap-x-0.5 pointer-events-none select-none rounded-sm",
+                  "overflow-hidden flex flex-wrap items-start content-center gap-x-0.5 select-none rounded-sm cursor-pointer",
                 ),
                 attribute.style("flex", int.to_string(flex_val) <> " 0 0"),
                 attribute.style("min-width", "0"),
                 attribute.style("background-color", color),
                 attribute.style("color", "white"),
+                event.on_click(on_select(evt)),
               ],
               extra_style,
             ]),
@@ -669,9 +689,10 @@ pub fn view_gantt(
         String,
         Int,
         Int,
+        Event,
       ),
     ) -> Element(msg) {
-      let #(_, left_min, width_min, color, _thick, _free, _label, _label2, drive_to_min, drive_from_min) =
+      let #(_, left_min, width_min, color, _thick, _free, _label, _label2, drive_to_min, drive_from_min, _evt) =
         bar
       let g_left = int.max(left_min - drive_to_min, 0)
       let ev_right = left_min + int.min(width_min, total_min - left_min)
@@ -839,10 +860,11 @@ pub fn view_gantt(
         html.span(
           [
             attribute.class(
-              "inline-block px-1 rounded text-white leading-tight truncate",
+              "inline-block px-1 rounded text-white leading-tight truncate cursor-pointer",
             ),
             attribute.style("font-size", "13px"),
             attribute.style("background-color", color),
+            event.on_click(on_select(e)),
           ],
           [html.text(e.summary)],
         )
@@ -2005,3 +2027,274 @@ fn float_css(f: Float, unit: String) -> String {
 
 @external(erlang, "erlang", "round")
 fn float_round(f: Float) -> Int
+
+// EVENT DETAIL MODAL ----------------------------------------------------------
+
+/// Floating detail panel for a selected event.
+/// Clicking the backdrop (outside the panel) fires `on_dismiss`.
+pub fn view_event_detail(
+  e: Event,
+  travel_cache: Dict(String, TravelInfo),
+  leg_cache: LegCache,
+  home_address: String,
+  on_dismiss: msg,
+) -> Element(msg) {
+  let local_offset = calendar.local_offset()
+
+  // Format the date/time string.
+  let time_str = case e.start, e.end {
+    AllDay(s), AllDay(en) -> {
+      let s_str = weekday_name(s) <> " " <> format_date(s)
+      let end_inclusive = date_offset_by(en, -1)
+      case s == end_inclusive {
+        True -> s_str
+        False -> s_str <> " – " <> weekday_name(end_inclusive) <> " " <> format_date(end_inclusive)
+      }
+    }
+    AtTime(s), AtTime(en) -> {
+      let #(s_date, _) = timestamp.to_calendar(s, local_offset)
+      let #(en_date, _) = timestamp.to_calendar(en, local_offset)
+      let start_str =
+        weekday_name(s_date)
+        <> " "
+        <> format_date(s_date)
+        <> " "
+        <> format_time(s, local_offset)
+      case s_date == en_date {
+        True -> start_str <> " – " <> format_time(en, local_offset)
+        False ->
+          start_str
+          <> " – "
+          <> weekday_name(en_date)
+          <> " "
+          <> format_date(en_date)
+          <> " "
+          <> format_time(en, local_offset)
+      }
+    }
+    AtTime(s), AllDay(_) -> {
+      let #(s_date, _) = timestamp.to_calendar(s, local_offset)
+      weekday_name(s_date) <> " " <> format_date(s_date) <> " " <> format_time(s, local_offset) <> " →"
+    }
+    AllDay(s), AtTime(en) -> {
+      let #(en_date, _) = timestamp.to_calendar(en, local_offset)
+      weekday_name(s) <> " " <> format_date(s) <> " – " <> weekday_name(en_date) <> " " <> format_date(en_date) <> " " <> format_time(en, local_offset)
+    }
+  }
+
+  // Travel info from home to the event location.
+  let travel_row = case e.location {
+    "" -> element.none()
+    loc -> {
+      let info = dict.get(travel_cache, loc)
+      let leg_secs =
+        dict.get(leg_cache, travel.leg_cache_key(home_address, loc))
+        |> result.or(dict.get(leg_cache, travel.leg_cache_key(loc, home_address)))
+      let travel_detail = case info, leg_secs {
+        Ok(ti), _ ->
+          ti.duration_text <> " · " <> ti.distance_text <> " from home"
+        Error(_), Ok(secs) -> secs_to_min_text(secs) <> " min from home"
+        Error(_), Error(_) -> ""
+      }
+      html.div(
+        [attribute.class("flex flex-col gap-0.5")],
+        list.flatten([
+          [detail_row("📍", loc)],
+          case travel_detail {
+            "" -> []
+            t -> [detail_row("🚗", t)]
+          },
+        ]),
+      )
+    }
+  }
+
+  let free_row = case e.free {
+    True -> detail_row("○", "Free / transparent")
+    False -> element.none()
+  }
+
+  let description_rows = case e.description {
+    "" -> []
+    d ->
+      string.split(d, "\\n")
+      |> list.map(fn(line) {
+        html.p(
+          [
+            attribute.class("text-sm text-text leading-tight"),
+            attribute.style("white-space", "pre-wrap"),
+            attribute.style("word-break", "break-word"),
+          ],
+          [html.text(line)],
+        )
+      })
+  }
+
+  let url_row = case e.url {
+    "" -> element.none()
+    u ->
+      html.a(
+        [
+          attribute.class("text-sm text-accent underline break-all"),
+          attribute.attribute("href", u),
+          attribute.attribute("target", "_blank"),
+          attribute.attribute("rel", "noopener noreferrer"),
+        ],
+        [html.text(u)],
+      )
+  }
+
+  let panel_children =
+    list.flatten([
+      // Close button
+      [
+        html.button(
+          [
+            attribute.class(
+              "absolute top-2 right-2 text-text-muted hover:text-text leading-none",
+            ),
+            attribute.style("font-size", "18px"),
+            attribute.style("background", "none"),
+            attribute.style("border", "none"),
+            attribute.style("cursor", "pointer"),
+            attribute.style("padding", "4px 8px"),
+            event.on_click(on_dismiss),
+          ],
+          [html.text("×")],
+        ),
+      ],
+      // Title
+      [
+        html.h2(
+          [
+            attribute.class("font-semibold text-text leading-tight pr-6"),
+            attribute.style("font-size", "16px"),
+          ],
+          [html.text(e.summary)],
+        ),
+      ],
+      // Calendar name
+      [detail_row("📅", e.calendar_name)],
+      // Date/time
+      [detail_row("🕐", time_str)],
+      // Location + travel
+      [travel_row],
+      // Free/busy
+      [free_row],
+      // Description
+      case description_rows {
+        [] -> []
+        rows -> [
+          html.div(
+            [attribute.class("flex flex-col gap-1 pt-1 border-t border-border")],
+            rows,
+          ),
+        ]
+      },
+      // URL
+      case e.url {
+        "" -> []
+        _ -> [url_row]
+      },
+    ])
+
+  // Two siblings inside a fixed wrapper:
+  //   1. A full-screen backdrop that dismisses on click.
+  //   2. The panel centered via absolute positioning, above the backdrop.
+  // The panel does NOT get a click handler so clicks on it don't bubble to
+  // the backdrop — they stop at the wrapper which has pointer-events:none
+  // except on the backdrop child.
+  html.div(
+    [
+      attribute.class("fixed inset-0"),
+      attribute.style("z-index", "40"),
+    ],
+    [
+      // Backdrop layer
+      html.div(
+        [
+          attribute.class("absolute inset-0"),
+          attribute.style("background-color", "rgba(0,0,0,0.5)"),
+          event.on_click(on_dismiss),
+        ],
+        [],
+      ),
+      // Panel layer — centered, above backdrop
+      html.div(
+        [
+          attribute.class("absolute inset-0 flex items-center justify-center"),
+          attribute.style("pointer-events", "none"),
+        ],
+        [
+          html.div(
+            [
+              attribute.class(
+                "relative bg-surface rounded-lg p-4 flex flex-col gap-2 overflow-y-auto",
+              ),
+              attribute.style("max-width", "min(480px, calc(100vw - 2rem))"),
+              attribute.style("max-height", "calc(100vh - 4rem)"),
+              attribute.style("box-shadow", "0 8px 32px rgba(0,0,0,0.6)"),
+              attribute.style("pointer-events", "auto"),
+            ],
+            panel_children,
+          ),
+        ],
+      ),
+    ],
+  )
+}
+
+fn detail_row(icon: String, text: String) -> Element(msg) {
+  html.div(
+    [attribute.class("flex flex-row gap-2 items-baseline")],
+    [
+      html.span(
+        [attribute.class("shrink-0 text-text-muted"), attribute.style("font-size", "12px")],
+        [html.text(icon)],
+      ),
+      html.span(
+        [attribute.class("text-sm text-text"), attribute.style("word-break", "break-word")],
+        [html.text(text)],
+      ),
+    ],
+  )
+}
+
+fn date_offset_by(date: Date, n: Int) -> Date {
+  case n {
+    0 -> date
+    _ if n > 0 -> date_offset_by(advance_date(date), n - 1)
+    _ -> date_offset_by(retreat_date(date), n + 1)
+  }
+}
+
+fn retreat_date(date: Date) -> Date {
+  case date.day > 1 {
+    True -> Date(..date, day: date.day - 1)
+    False -> {
+      let pm = prev_month(date.month)
+      let py = case date.month {
+        calendar.January -> date.year - 1
+        _ -> date.year
+      }
+      Date(year: py, month: pm, day: days_in_month(pm, py))
+    }
+  }
+}
+
+fn prev_month(m: calendar.Month) -> calendar.Month {
+  case m {
+    calendar.January -> calendar.December
+    calendar.February -> calendar.January
+    calendar.March -> calendar.February
+    calendar.April -> calendar.March
+    calendar.May -> calendar.April
+    calendar.June -> calendar.May
+    calendar.July -> calendar.June
+    calendar.August -> calendar.July
+    calendar.September -> calendar.August
+    calendar.October -> calendar.September
+    calendar.November -> calendar.October
+    calendar.December -> calendar.November
+  }
+}
