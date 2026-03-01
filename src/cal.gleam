@@ -66,86 +66,6 @@ pub type BarPos {
   BarCenter
 }
 
-/// A travel block to render on the timeline.
-///
-/// Each located event generates one block per assigned person:
-///   - DriveTo: home → event, arrival-aligned (strip ends at event_start)
-///   - DriveFrom: event → home, departure-aligned (strip starts at event_end)
-///
-/// `bar` identifies which vertical bar this block belongs to.
-pub type TravelBlock {
-  /// Home → event. Strip is arrival-aligned: ends at `event_start`.
-  DriveTo(
-    event_start: Timestamp,
-    travel_secs: Int,
-    travel_text: String,
-    color: String,
-    bar: BarPos,
-  )
-  /// Event → home. Strip is departure-aligned: starts at `event_end`.
-  DriveFrom(
-    event_end: Timestamp,
-    travel_secs: Int,
-    travel_text: String,
-    color: String,
-    bar: BarPos,
-  )
-}
-
-// TRAVEL BLOCK COMPUTATION ----------------------------------------------------
-
-/// Compute travel blocks for a day's timed events.
-///
-/// For each located timed event, emits one DriveTo and one DriveFrom per
-/// assigned (bar, color) pair — so both-person events get travel on both bars.
-/// `bars_for_event` returns one #(BarPos, color) per assigned person.
-pub fn compute_travel_blocks(
-  events: List(Event),
-  leg_cache: LegCache,
-  home_key: String,
-  leg_key: fn(String, String) -> String,
-  bars_for_event: fn(Event) -> List(#(BarPos, String)),
-) -> List(TravelBlock) {
-  list.flat_map(events, fn(e) {
-    case e.location, e.start, e.end {
-      loc, AtTime(start), AtTime(end) if loc != "" -> {
-        let pairs = bars_for_event(e)
-        let to_secs = dict.get(leg_cache, leg_key(home_key, loc))
-        let from_secs = dict.get(leg_cache, leg_key(loc, home_key))
-        list.flat_map(pairs, fn(pair) {
-          let #(bar, color) = pair
-          let to_block = case to_secs {
-            Ok(secs) -> [
-              DriveTo(
-                event_start: start,
-                travel_secs: secs,
-                travel_text: secs_to_min_text(secs),
-                color:,
-                bar:,
-              ),
-            ]
-            Error(_) -> []
-          }
-          let from_block = case from_secs {
-            Ok(secs) -> [
-              DriveFrom(
-                event_end: end,
-                travel_secs: secs,
-                travel_text: secs_to_min_text(secs),
-                color:,
-                bar:,
-              ),
-            ]
-            Error(_) -> []
-          }
-          list.append(to_block, from_block)
-        })
-      }
-      _, _, _ -> []
-    }
-  })
-}
-
 /// Format seconds as just the minute count (e.g. "24"), rounding to nearest minute.
 pub fn secs_to_min_text(secs: Int) -> String {
   let mins = { secs + 30 } / 60
@@ -217,24 +137,37 @@ pub fn view_gantt(
       })
     })
 
-  let day_timed_and_blocks =
-    list.map(day_timed_lists, fn(day_timed) {
-      let day_blocks = case home_address {
-        "" -> []
-        addr ->
-          compute_travel_blocks(
-            day_timed,
-            leg_cache,
-            addr,
-            travel.leg_cache_key,
-            bars_for_event,
-          )
+  // Build a per-event travel-minutes lookup: event uid → #(drive_to_min, drive_from_min).
+  // Computed once here so view_gantt_day can use it without re-querying the cache.
+  let travel_mins_for =
+    case home_address {
+      "" -> fn(_uid: String) { #(0, 0) }
+      addr -> {
+        let lookup =
+          list.filter_map(list.flatten(day_timed_lists), fn(e) {
+            case e.location, e.start, e.end {
+              loc, AtTime(_), AtTime(_) if loc != "" -> {
+                let to_min =
+                  dict.get(leg_cache, travel.leg_cache_key(addr, loc))
+                  |> result.map(fn(s) { { s + 30 } / 60 })
+                  |> result.unwrap(0)
+                let from_min =
+                  dict.get(leg_cache, travel.leg_cache_key(loc, addr))
+                  |> result.map(fn(s) { { s + 30 } / 60 })
+                  |> result.unwrap(0)
+                Ok(#(e.uid, #(to_min, from_min)))
+              }
+              _, _, _ -> Error(Nil)
+            }
+          })
+          |> dict.from_list
+        fn(uid: String) {
+          dict.get(lookup, uid) |> result.unwrap(#(0, 0))
+        }
       }
-      #(day_timed, day_blocks)
-    })
+    }
 
-  let all_day_blocks = list.flat_map(day_timed_and_blocks, fn(p) { p.1 })
-  let window = compute_window(day_timed_lists, all_day_blocks, local_offset)
+  let window = compute_window(day_timed_lists, travel_mins_for, local_offset)
   let total_min = window.end_min - window.start_min
   let total_f = int_to_float(total_min)
 
@@ -286,8 +219,9 @@ pub fn view_gantt(
   // Gridlines and tick labels are built per-day inside view_gantt_day so they
   // have access to sun_times and can adapt colors in night zones.
 
-  // A type alias for gantt bar tuples: (bar, left_min, width_min, color, thick, label, label2)
-  // We use a record-less 7-tuple throughout.
+  // Bar tuple: (bar, left_min, width_min, color, thick, is_free, label, label2,
+  //             drive_to_min, drive_from_min)
+  // drive_to_min/drive_from_min are 0 when no travel applies.
 
   // Height in px of the inverse-color tick header band at the top of each day.
   // Tall enough for pill badges (NOW, sunset time).
@@ -298,7 +232,6 @@ pub fn view_gantt(
     day: Date,
     is_today: Bool,
     day_timed: List(Event),
-    day_blocks: List(TravelBlock),
     all_day_events: List(Event),
     sun_times: Result(SunTimes, Nil),
     moon_info: Result(MoonInfo, Nil),
@@ -327,11 +260,14 @@ pub fn view_gantt(
               False, False -> #(bars_acc, [e, ..allday_acc])
 
               // Start day: event starts today and crosses midnight.
+              // Travel applies only on the start day (DriveTo); DriveFrom
+              // doesn't apply because the event doesn't end today.
               True, False -> {
                 let left_min =
                   int.max(st.hours * 60 + st.minutes, window.start_min)
                   - window.start_min
                 let width_min = total_min - left_min
+                let #(drive_to_min, _) = travel_mins_for(e.uid)
                 let new_bars =
                   list.map(bars_for_event(e), fn(pair) {
                     let #(bar, color) = pair
@@ -347,18 +283,23 @@ pub fn view_gantt(
                         True -> ""
                         False -> format_time(s, local_offset) <> " →"
                       },
+                      drive_to_min,
+                      0,
                     )
                   })
                 #(list.append(bars_acc, new_bars), allday_acc)
               }
 
               // End day: event started on a previous day and ends today.
+              // Travel applies only on the end day (DriveFrom); DriveTo
+              // doesn't apply because the event didn't start today.
               False, True -> {
                 let left_min = 0
                 let right_min =
                   int.min(et.hours * 60 + et.minutes, window.end_min)
                   - window.start_min
                 let width_min = int.max(right_min, 1)
+                let #(_, drive_from_min) = travel_mins_for(e.uid)
                 let new_bars =
                   list.map(bars_for_event(e), fn(pair) {
                     let #(bar, color) = pair
@@ -374,6 +315,8 @@ pub fn view_gantt(
                         True -> ""
                         False -> "ends " <> format_time(en, local_offset)
                       },
+                      0,
+                      drive_from_min,
                     )
                   })
                 #(list.append(bars_acc, new_bars), allday_acc)
@@ -398,6 +341,7 @@ pub fn view_gantt(
                     <> "–"
                     <> format_time(en, local_offset)
                 }
+                let #(drive_to_min, drive_from_min) = travel_mins_for(e.uid)
                 let new_bars =
                   list.map(bars_for_event(e), fn(pair) {
                     let #(bar, color) = pair
@@ -410,6 +354,8 @@ pub fn view_gantt(
                       e.free,
                       e.summary,
                       time_str,
+                      drive_to_min,
+                      drive_from_min,
                     )
                   })
                 #(list.append(bars_acc, new_bars), allday_acc)
@@ -422,127 +368,31 @@ pub fn view_gantt(
     // Merge cross-midnight span events into the all-day chips list.
     let all_day_events = list.append(all_day_events, extra_allday)
 
-    // Travel block segments.
-    let travel_bars =
-      list.filter_map(day_blocks, fn(b) {
-        case b {
-          DriveTo(event_start:, travel_secs:, travel_text:, color:, bar:) -> {
-            let #(_, t) = timestamp.to_calendar(event_start, local_offset)
-            let anchor = t.hours * 60 + t.minutes
-            let travel_min = { travel_secs + 30 } / 60
-            let raw_start = anchor - travel_min
-            let left_min =
-              int.max(raw_start, window.start_min) - window.start_min
-            let right_min = int.min(anchor, window.end_min) - window.start_min
-            let width_min = int.max(right_min - left_min, 0)
-            case width_min > 0 {
-              False -> Error(Nil)
-              True ->
-                Ok(#(
-                  bar,
-                  left_min,
-                  width_min,
-                  color,
-                  False,
-                  False,
-                  travel_text,
-                  "",
-                ))
-            }
-          }
-          DriveFrom(event_end:, travel_secs:, travel_text:, color:, bar:) -> {
-            let #(_, t) = timestamp.to_calendar(event_end, local_offset)
-            let anchor = t.hours * 60 + t.minutes
-            let travel_min = { travel_secs + 30 } / 60
-            let raw_end = anchor + travel_min
-            let left_min = int.max(anchor, window.start_min) - window.start_min
-            let right_min = int.min(raw_end, window.end_min) - window.start_min
-            let width_min = int.max(right_min - left_min, 0)
-            case width_min > 0 {
-              False -> Error(Nil)
-              True ->
-                Ok(#(
-                  bar,
-                  left_min,
-                  width_min,
-                  color,
-                  False,
-                  False,
-                  travel_text,
-                  "",
-                ))
-            }
-          }
-        }
-      })
-
-    let all_bars = list.append(event_bars, travel_bars)
-
     // Fixed pixel height for every bar lane.
     let bar_px = 26
 
     // CSS grid column template — reuse the one built in the outer scope.
     let grid_cols = grid_cols_str
 
-    // Group bars by their event: each event bar plus any DriveTo/DriveFrom
-    // travel bars that touch it forms a single grid item spanning the full
-    // extent (travel_start .. travel_end).  Inside the group, sub-bars are
-    // laid out as a flex row with each piece sized proportionally by minutes,
-    // keeping travel flush with its event without needing explicit grid-row.
-    // Free events (no adjacent travel) and lone travel-free events are their
-    // own single-bar groups.
-    let make_groups = fn(
-      bars: List(#(BarPos, Int, Int, String, Bool, Bool, String, String)),
-    ) -> List(
-      #(Int, Int, List(#(BarPos, Int, Int, String, Bool, Bool, String, String))),
-    ) {
-      let is_thick = fn(
-        b: #(BarPos, Int, Int, String, Bool, Bool, String, String),
-      ) {
-        b.4
-      }
-      let event_bars = list.filter(bars, is_thick)
-      let travel_bars = list.filter(bars, fn(b) { !is_thick(b) })
-      // For each event bar, claim its touching travel bars.
-      let #(groups, claimed) =
-        list.fold(event_bars, #([], []), fn(acc, ev) {
-          let #(gs, claimed) = acc
-          let ev_left = ev.1
-          let ev_right = ev.1 + ev.2
-          let drive_to =
-            list.filter(travel_bars, fn(tb) {
-              tb.1 + tb.2 == ev_left && tb.3 == ev.3
-            })
-          let drive_from =
-            list.filter(travel_bars, fn(tb) {
-              tb.1 == ev_right && tb.3 == ev.3
-            })
-          let members = list.flatten([drive_to, [ev], drive_from])
-          let g_left = list.fold(members, ev_left, fn(m, b) { int.min(m, b.1) })
-          let g_right =
-            list.fold(members, ev_right, fn(m, b) { int.max(m, b.1 + b.2) })
-          let new_claimed =
-            list.flatten([
-              claimed,
-              list.map(drive_to, fn(b) { b.1 }),
-              list.map(drive_from, fn(b) { b.1 }),
-            ])
-          #(list.append(gs, [#(g_left, g_right, members)]), new_claimed)
-        })
-      // Any travel bar not claimed by an event gets its own group.
-      let lone_travel =
-        list.filter(travel_bars, fn(tb) { !list.contains(claimed, tb.1) })
-      let lone_groups =
-        list.map(lone_travel, fn(tb) { #(tb.1, tb.1 + tb.2, [tb]) })
-      list.append(groups, lone_groups)
-    }
-
-    // Render one event bar (no travel) inside a group.
+    // Render one event bar (the solid/free-line portion).
+    // flex_val controls proportional width inside the travel envelope.
     let render_event_bar = fn(
-      bar: #(BarPos, Int, Int, String, Bool, Bool, String, String),
+      bar: #(
+        BarPos,
+        Int,
+        Int,
+        String,
+        Bool,
+        Bool,
+        String,
+        String,
+        Int,
+        Int,
+      ),
       flex_val: Int,
     ) -> Element(msg) {
-      let #(_, left_min, width_min, color, _thick, is_free, label, label2) = bar
+      let #(_, left_min, width_min, color, _thick, is_free, label, label2, _, _) =
+        bar
       let clamped_width = int.min(width_min, total_min - left_min)
       let right_min = left_min + clamped_width
       let show_time = clamped_width >= 35
@@ -804,37 +654,36 @@ pub fn view_gantt(
       }
     }
 
-    // Render one group: event bar optionally wrapped in a travel-time border.
-    // When travel exists, the outer div shows a full-height border in the
-    // calendar color spanning the whole travel extent. The event bar sits
-    // inside at its actual proportional position with transparent spacers
-    // filling the travel time on each side.
-    let render_group = fn(
-      g: #(
+    // Render one event bar, optionally wrapped in a travel-time envelope.
+    // Travel times are carried directly on the bar tuple — no separate
+    // matching step needed.
+    let render_bar = fn(
+      bar: #(
+        BarPos,
         Int,
         Int,
-        List(#(BarPos, Int, Int, String, Bool, Bool, String, String)),
+        String,
+        Bool,
+        Bool,
+        String,
+        String,
+        Int,
+        Int,
       ),
     ) -> Element(msg) {
-      let #(g_left, g_right, members) = g
+      let #(_, left_min, width_min, color, _thick, _free, _label, _label2, drive_to_min, drive_from_min) =
+        bar
+      let g_left = int.max(left_min - drive_to_min, 0)
+      let ev_right = left_min + int.min(width_min, total_min - left_min)
+      let g_right = int.min(ev_right + drive_from_min, total_min)
       let col_start = int.to_string(g_left + 1)
       let col_end = int.to_string(g_right + 1)
-      let is_thick = fn(
-        b: #(BarPos, Int, Int, String, Bool, Bool, String, String),
-      ) {
-        b.4
-      }
-      let ev_bars = list.filter(members, is_thick)
-      let travel_bars = list.filter(members, fn(b) { !is_thick(b) })
-      case travel_bars, ev_bars {
-        // Group has travel: render a tinted envelope with transparent spacers
-        // for travel portions and the solid event bar inside.
-        [_, ..], [ev, ..] -> {
-          let ev_left = ev.1
-          let ev_right = ev.1 + int.min(ev.2, total_min - ev.1)
-          let color = ev.3
-          let drive_to_w = ev_left - g_left
-          let ev_w = ev_right - ev_left
+      let has_travel = drive_to_min > 0 || drive_from_min > 0
+      case has_travel {
+        // Event with travel: tinted envelope wrapping the event bar.
+        True -> {
+          let drive_to_w = left_min - g_left
+          let ev_w = ev_right - left_min
           let drive_from_w = g_right - ev_right
           let inner_els =
             list.flatten([
@@ -852,7 +701,7 @@ pub fn view_gantt(
                   ),
                 ]
               },
-              [render_event_bar(ev, ev_w)],
+              [render_event_bar(bar, ev_w)],
               case drive_from_w > 0 {
                 False -> []
                 True -> [
@@ -881,33 +730,25 @@ pub fn view_gantt(
             inner_els,
           )
         }
-        // No travel: just the event bar directly, with vertical breathing room.
-        _, [ev, ..] -> {
-          let ev_w = int.min(ev.2, total_min - ev.1)
+        // No travel: just the event bar.
+        False -> {
+          let ev_w = int.min(width_min, total_min - left_min)
           html.div(
             [
               attribute.class("flex flex-row"),
               attribute.style("grid-column", col_start <> " / " <> col_end),
               attribute.style("min-width", "0"),
             ],
-            [render_event_bar(ev, ev_w)],
+            [render_event_bar(bar, ev_w)],
           )
         }
-        // Lone travel bar without an event (shouldn't happen but handle gracefully).
-        _, _ -> element.none()
       }
     }
 
     // Render one sub-row using CSS grid with auto-placement.
     let view_sub_row = fn(pos: BarPos) -> Element(msg) {
       let bars =
-        list.filter(
-          all_bars,
-          fn(t: #(BarPos, Int, Int, String, Bool, Bool, String, String)) {
-            t.0 == pos
-          },
-        )
-      let groups = make_groups(bars)
+        list.filter(event_bars, fn(b) { b.0 == pos })
       html.div(
         [
           attribute.class("flex-1"),
@@ -923,7 +764,7 @@ pub fn view_gantt(
           attribute.style("position", "relative"),
           attribute.style("z-index", "1"),
         ],
-        list.map(groups, render_group),
+        list.map(bars, render_bar),
       )
     }
 
@@ -1533,20 +1374,18 @@ pub fn view_gantt(
           list.zip(
             days,
             list.zip(
-              day_timed_and_blocks,
+              day_timed_lists,
               list.zip(day_sun_times, day_moon_info),
             ),
           ),
           fn(pair) {
-            let #(day, #(#(day_timed, day_blocks), #(sun_times, moon_info))) =
-              pair
+            let #(day, #(day_timed, #(sun_times, moon_info))) = pair
             let all_day =
               list.filter(events, fn(e) { all_day_spans_date(e, day) })
             view_gantt_day(
               day,
               day == today_date,
               day_timed,
-              day_blocks,
               all_day,
               sun_times,
               moon_info,
@@ -1567,7 +1406,7 @@ type Window {
 
 fn compute_window(
   day_timed_lists: List(List(Event)),
-  all_blocks: List(TravelBlock),
+  travel_mins_for: fn(String) -> #(Int, Int),
   local_offset: duration.Duration,
 ) -> Window {
   let timed_events = list.flatten(day_timed_lists)
@@ -1575,67 +1414,39 @@ fn compute_window(
   case timed_events {
     [] -> Window(default_window_start_min, default_window_end_min)
     _ -> {
-      let start_mins =
-        list.filter_map(timed_events, fn(e) {
-          case e.start {
-            AtTime(ts) -> {
+      // Extend window to cover travel extents: DriveTo pushes the window
+      // start earlier; DriveFrom pushes the window end later.
+      let #(start_mins, end_mins) =
+        list.fold(timed_events, #([], []), fn(acc, e) {
+          let #(starts, ends) = acc
+          case e.start, e.end {
+            AtTime(ts), AtTime(te) -> {
+              let #(_, t_start) = timestamp.to_calendar(ts, local_offset)
+              let #(_, t_end) = timestamp.to_calendar(te, local_offset)
+              let start_min = t_start.hours * 60 + t_start.minutes
+              let end_min = t_end.hours * 60 + t_end.minutes
+              let #(drive_to_min, drive_from_min) = travel_mins_for(e.uid)
+              #(
+                [start_min - drive_to_min, ..starts],
+                [end_min + drive_from_min, ..ends],
+              )
+            }
+            AtTime(ts), _ -> {
               let #(_, t) = timestamp.to_calendar(ts, local_offset)
-              Ok(t.hours * 60 + t.minutes)
+              #([t.hours * 60 + t.minutes, ..starts], ends)
             }
-            AllDay(_) -> Error(Nil)
-          }
-        })
-      let end_mins =
-        list.filter_map(timed_events, fn(e) {
-          case e.end {
-            AtTime(ts) -> {
-              let #(_, t) = timestamp.to_calendar(ts, local_offset)
-              Ok(t.hours * 60 + t.minutes)
+            _, AtTime(te) -> {
+              let #(_, t) = timestamp.to_calendar(te, local_offset)
+              #(starts, [t.hours * 60 + t.minutes, ..ends])
             }
-            AllDay(_) -> Error(Nil)
-          }
-        })
-
-      // Extend window to cover travel block extents.
-      // DriveTo: strip ends at event_start (already in start_mins), but
-      //   begins travel_secs earlier — can push window start earlier.
-      // DriveFrom: strip begins at event_end (already in end_mins), but
-      //   extends travel_secs later — can push window end later.
-      let block_start_mins =
-        list.filter_map(all_blocks, fn(b) {
-          case b {
-            DriveTo(event_start:, travel_secs:, ..) -> {
-              let #(_, t) = timestamp.to_calendar(event_start, local_offset)
-              let anchor = t.hours * 60 + t.minutes
-              Ok(anchor - { travel_secs + 30 } / 60)
-            }
-            DriveFrom(..) -> Error(Nil)
-          }
-        })
-      let block_end_mins =
-        list.filter_map(all_blocks, fn(b) {
-          case b {
-            DriveFrom(event_end:, travel_secs:, ..) -> {
-              let #(_, t) = timestamp.to_calendar(event_end, local_offset)
-              let anchor = t.hours * 60 + t.minutes
-              Ok(anchor + { travel_secs + 30 } / 60)
-            }
-            DriveTo(..) -> Error(Nil)
+            _, _ -> acc
           }
         })
 
       let earliest =
-        list.fold(
-          list.append(start_mins, block_start_mins),
-          default_window_start_min,
-          int.min,
-        )
+        list.fold(start_mins, default_window_start_min, int.min)
       let latest =
-        list.fold(
-          list.append(end_mins, block_end_mins),
-          default_window_end_min,
-          int.max,
-        )
+        list.fold(end_mins, default_window_end_min, int.max)
 
       let snapped_start = earliest / 60 * 60
       let snapped_end = case latest % 60 {
