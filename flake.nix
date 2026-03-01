@@ -45,8 +45,10 @@
 
                 # On a file change: build then tell overmind to restart beam.
                 # overmind sends SIGTERM, waits for exit, then starts fresh.
-                # erlang:halt(0) makes beam exit immediately on SIGTERM so the
-                # port is released before the new instance starts.
+                # erlang:halt(0) makes the BEAM exit immediately on SIGTERM.
+                # The Procfile beam command then polls until the port is free
+                # before exec-ing gleam run, avoiding EADDRINUSE on macOS where
+                # the kernel holds the socket briefly after process exit.
                 scripts.rebuild-and-restart.exec = ''
                   gleam build && overmind restart beam
                 '';

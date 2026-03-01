@@ -37,10 +37,12 @@ fn get_port() -> Int {
 
 // MAIN ------------------------------------------------------------------------
 
-/// Register an OS-level SIGTERM handler that calls init:stop(), giving the
-/// BEAM VM time to shut down supervisors (and release the TCP port) before
-/// the process exits. Without this, watchexec kills gleam-run-dev but
-/// beam.smp keeps holding the port, causing EADDRINUSE on the next start.
+/// Register an OS-level SIGTERM handler that calls erlang:halt(0), which
+/// exits the VM immediately and synchronously. Without this, init:stop()
+/// is used which is async and leaves the socket open during supervisor
+/// shutdown, causing EADDRINUSE. The Procfile polls for the port to be
+/// free before starting the new instance, handling the brief macOS socket
+/// release delay after process exit.
 @external(erlang, "signal_handler_ffi", "trap_sigterm")
 fn trap_sigterm() -> Nil
 
