@@ -749,9 +749,17 @@ pub fn view_gantt(
     let view_sub_row = fn(pos: BarPos) -> Element(msg) {
       let bars =
         list.filter(event_bars, fn(b) { b.0 == pos })
+      // Empty lanes collapse to nothing; populated lanes grow to fill space.
+      // Using flex: 0 0 0px (via inline style) on empty lanes avoids the
+      // min-height: auto / intrinsic-grid-height problem that causes unequal
+      // distribution when one lane has many stacked bars.
+      let #(flex_style, border_style) = case bars {
+        [] -> #("0 0 0px", "none")
+        _ -> #("1 1 0%", "1px solid var(--color-row-border)")
+      }
       html.div(
         [
-          attribute.class("flex-1"),
+          attribute.style("flex", flex_style),
           attribute.style("display", "grid"),
           attribute.style("grid-template-columns", grid_cols),
           attribute.style("grid-auto-flow", "dense"),
@@ -760,7 +768,7 @@ pub fn view_gantt(
             "minmax(" <> int.to_string(bar_px) <> "px, auto)",
           ),
           attribute.style("row-gap", "2px"),
-          attribute.style("border-bottom", "1px solid var(--color-row-border)"),
+          attribute.style("border-bottom", border_style),
           attribute.style("position", "relative"),
           attribute.style("z-index", "1"),
         ],
