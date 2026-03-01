@@ -2,6 +2,7 @@
 
 import cal_dav
 import cal_server
+import envoy
 import gleam/bytes_tree
 import gleam/erlang/application
 import gleam/erlang/process.{type Selector, type Subject}
@@ -11,6 +12,7 @@ import gleam/int
 import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/result
 import gleam/string
 import ha_client
 import log
@@ -25,7 +27,13 @@ import tabs
 
 // CONSTANTS -------------------------------------------------------------------
 
-const port = 46_548
+const default_port = 46_548
+
+fn get_port() -> Int {
+  envoy.get("PORT")
+  |> result.try(int.parse)
+  |> result.unwrap(default_port)
+}
 
 // MAIN ------------------------------------------------------------------------
 
@@ -89,7 +97,8 @@ pub fn main() {
     }
   }
 
-  let assert Ok(_) = start_with_retry(handler, 20, 250)
+  let port = get_port()
+  let assert Ok(_) = start_with_retry(handler, port, 20, 250)
   process.sleep_forever()
 }
 
@@ -98,6 +107,7 @@ pub fn main() {
 /// even after the process exits — init:stop() is async.
 fn start_with_retry(
   handler: fn(Request(Connection)) -> Response(ResponseData),
+  port: Int,
   attempts: Int,
   delay_ms: Int,
 ) -> Result(_, actor.StartError) {
@@ -121,7 +131,7 @@ fn start_with_retry(
         <> "ms…",
       )
       process.sleep(delay_ms)
-      start_with_retry(handler, attempts - 1, int.min(delay_ms * 2, 5000))
+      start_with_retry(handler, port, attempts - 1, int.min(delay_ms * 2, 5000))
     }
     Error(_) -> result
   }
