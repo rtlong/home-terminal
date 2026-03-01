@@ -9,9 +9,11 @@
 // RECURRENCE-ID overrides replace the corresponding generated instance.
 //
 // DTSTART/DTEND can be in one of three formats:
-//   20240115           — all-day (DATE)
-//   20240115T140000Z   — UTC datetime (DATE-TIME with Z suffix)
-//   20240115T140000    — floating datetime (treated as UTC for simplicity)
+//   20240115              — all-day (DATE)
+//   20240115T140000Z      — UTC datetime (DATE-TIME with Z suffix)
+//   20240115T140000       — floating datetime (treated as server local time)
+//   DTSTART;TZID=America/Chicago:20240115T140000
+//                         — TZID-annotated (converted via qdate_localtime FFI)
 
 // IMPORTS ---------------------------------------------------------------------
 
@@ -25,6 +27,23 @@ import gleam/string
 import gleam/time/calendar.{type Month, Date}
 import gleam/time/duration
 import gleam/time/timestamp
+
+// FFI -------------------------------------------------------------------------
+
+/// Convert a wall-clock date/time in the named IANA timezone to Gregorian seconds (UTC).
+/// On unknown timezone or impossible time (spring-forward gap), falls back to treating
+/// the wall-clock time as UTC (same degradation as the old server-offset approach).
+/// Gregorian seconds = seconds since year 0000-01-01 (calendar:datetime_to_gregorian_seconds/1).
+@external(erlang, "tz_ffi", "local_to_utc")
+fn tz_local_to_utc(
+  year: Int,
+  month: Int,
+  day: Int,
+  hour: Int,
+  minute: Int,
+  second: Int,
+  tz: String,
+) -> Int
 
 // PUBLIC API ------------------------------------------------------------------
 
@@ -133,25 +152,29 @@ fn expand_vevent(
         |> result.unwrap("OPAQUE")
         |> string.uppercase
         == "TRANSPARENT"
-      let dtstart_is_local = has_tzid_param(lines, "DTSTART")
-      let dtend_is_local =
-        has_tzid_param(lines, "DTEND")
-        // If DTSTART has TZID and DTEND is floating (no TZID, no Z), treat
-        // DTEND as local too — some servers emit mixed-type start/end.
-        || {
-          dtstart_is_local
-          && !has_tzid_param(lines, "DTEND")
-          && case get_prop_prefix(props, "DTEND") {
-            Ok(v) -> is_floating_datetime(v)
-            Error(Nil) -> False
+      let dtstart_tzid = get_tzid_param(lines, "DTSTART")
+      // If DTSTART has TZID and DTEND is floating (no TZID, no Z), inherit
+      // DTSTART's timezone for DTEND — some servers emit mixed-type start/end.
+      let dtend_tzid = case get_tzid_param(lines, "DTEND") {
+        Ok(tz) -> Ok(tz)
+        Error(Nil) ->
+          // If DTSTART has TZID and DTEND is floating (no TZID, no Z), inherit
+          // DTSTART's timezone for DTEND — some servers emit mixed-type start/end.
+          case dtstart_tzid, get_prop_prefix(props, "DTEND") {
+            Ok(tz), Ok(v) ->
+              case is_floating_datetime(v) {
+                True -> Ok(tz)
+                False -> Error(Nil)
+              }
+            _, _ -> Error(Nil)
           }
-        }
+      }
 
       case get_prop_prefix(props, "DTSTART"), get_prop_prefix(props, "DTEND") {
         Ok(dtstart_raw), Ok(dtend_raw) -> {
           case
-            parse_event_time(dtstart_raw, dtstart_is_local, local_offset),
-            parse_event_time(dtend_raw, dtend_is_local, local_offset)
+            parse_event_time(dtstart_raw, dtstart_tzid, local_offset),
+            parse_event_time(dtend_raw, dtend_tzid, local_offset)
           {
             Ok(start), Ok(end) -> {
               // Check for RRULE:FREQ=WEEKLY
@@ -493,7 +516,7 @@ fn generate_weekly_allday(
                   let oprops = list.filter_map(ol, parse_property)
                   case get_prop_prefix(oprops, "RECURRENCE-ID") {
                     Ok(rec_raw) -> {
-                      case parse_event_time(rec_raw, False, local_offset) {
+                      case parse_event_time(rec_raw, Error(Nil), local_offset) {
                         Ok(AllDay(rec_date)) ->
                           case rec_date == current_date {
                             True ->
@@ -657,11 +680,11 @@ fn generate_weekly_timed(
               let override_event =
                 list.find_map(uid_overrides, fn(ol) {
                   let oprops = list.filter_map(ol, parse_property)
-                  let rec_id_is_local = has_tzid_param(ol, "RECURRENCE-ID")
+                  let rec_id_tzid = get_tzid_param(ol, "RECURRENCE-ID")
                   case get_prop_prefix(oprops, "RECURRENCE-ID") {
                     Ok(rec_raw) -> {
                       case
-                        parse_event_time(rec_raw, rec_id_is_local, local_offset)
+                        parse_event_time(rec_raw, rec_id_tzid, local_offset)
                       {
                         Ok(rec_time) -> {
                           case
@@ -740,14 +763,15 @@ fn parse_override_event(
   use summary <- result.try(get_prop(props, "SUMMARY"))
   use dtstart_raw <- result.try(get_prop_prefix(props, "DTSTART"))
   use dtend_raw <- result.try(get_prop_prefix(props, "DTEND"))
-  let dtstart_is_local = has_tzid_param(lines, "DTSTART")
-  let dtend_is_local =
-    has_tzid_param(lines, "DTEND")
-    || {
-      dtstart_is_local
-      && !has_tzid_param(lines, "DTEND")
-      && is_floating_datetime(dtend_raw)
-    }
+  let dtstart_tzid = get_tzid_param(lines, "DTSTART")
+  let dtend_tzid = case get_tzid_param(lines, "DTEND") {
+    Ok(tz) -> Ok(tz)
+    Error(Nil) ->
+      case dtstart_tzid, is_floating_datetime(dtend_raw) {
+        Ok(tz), True -> Ok(tz)
+        _, _ -> Error(Nil)
+      }
+  }
   let location = get_prop(props, "LOCATION") |> result.unwrap("")
   let description = get_prop(props, "DESCRIPTION") |> result.unwrap("")
   let url = get_prop(props, "URL") |> result.unwrap("")
@@ -758,12 +782,12 @@ fn parse_override_event(
     == "TRANSPARENT"
   use start <- result.try(parse_event_time(
     dtstart_raw,
-    dtstart_is_local,
+    dtstart_tzid,
     local_offset,
   ))
   use end <- result.try(parse_event_time(
     dtend_raw,
-    dtend_is_local,
+    dtend_tzid,
     local_offset,
   ))
   Ok(Event(
@@ -787,9 +811,10 @@ fn collect_exdates(
   list.filter_map(lines, fn(line) {
     let upper = string.uppercase(line)
     case string.starts_with(upper, "EXDATE"), string.split_once(line, ":") {
-      True, Ok(#(param_part, value)) -> {
-        let is_local = string.contains(string.uppercase(param_part), "TZID=")
-        parse_event_time(string.trim(value), is_local, local_offset)
+      True, Ok(#(_param_part, value)) -> {
+        // Reuse get_tzid_param by passing the single line as a one-element list.
+        let tzid = get_tzid_param([line], "EXDATE")
+        parse_event_time(string.trim(value), tzid, local_offset)
         |> result.try(fn(et) {
           case et {
             AtTime(ts) -> Ok(ts)
@@ -918,13 +943,32 @@ fn has_prop(lines: List(String), prop_name: String) -> Bool {
   })
 }
 
-/// Check whether a property line for `name` carries a ;TZID= parameter.
-fn has_tzid_param(lines: List(String), prop_name: String) -> Bool {
-  list.any(lines, fn(line) {
+/// Extract the TZID value from a property line for `prop_name`, if present.
+/// E.g. "DTSTART;TZID=America/Chicago:20260307T064800" → Ok("America/Chicago")
+fn get_tzid_param(
+  lines: List(String),
+  prop_name: String,
+) -> Result(String, Nil) {
+  let upper_name = string.uppercase(prop_name)
+  list.find_map(lines, fn(line) {
     let upper = string.uppercase(line)
-    string.starts_with(upper, prop_name <> ";TZID=")
+    let prefix = upper_name <> ";TZID="
+    case string.starts_with(upper, prefix) {
+      False -> Error(Nil)
+      True -> {
+        // Everything between ";TZID=" and the next ":" is the timezone name.
+        // Use the original case-preserved line so "America/Chicago" is not uppercased.
+        let after_tzid = string.drop_start(line, string.length(prefix))
+        case string.split_once(after_tzid, ":") {
+          Ok(#(tz_name, _)) -> Ok(tz_name)
+          Error(Nil) -> Error(Nil)
+        }
+      }
+    }
   })
 }
+
+
 
 /// True if a datetime value string is a floating local time (no Z suffix, 15 chars).
 /// YYYYMMDDTHHMMSS (15 chars) = floating; YYYYMMDDTHHMMSSZ (16 chars) = UTC.
@@ -936,35 +980,71 @@ fn is_floating_datetime(value: String) -> Bool {
 // DATETIME PARSING ------------------------------------------------------------
 
 /// Parse an iCalendar date or datetime value into an EventTime.
-/// If `is_local` is True, the datetime string is in wall-clock (TZID) time:
-/// we store it shifted by -local_offset so that to_calendar(ts, local_offset)
-/// recovers the original wall-clock time during display.
+///
+/// `tzid` should be:
+///   Ok("America/Chicago") — TZID-annotated: converted via qdate_localtime FFI
+///   Error(Nil)            — UTC (Z suffix) or floating (server-local fallback)
+///
+/// `local_offset` is used only for floating datetimes (no Z, no TZID).
 fn parse_event_time(
   value: String,
-  is_local: Bool,
+  tzid: Result(String, Nil),
   local_offset: duration.Duration,
 ) -> Result(EventTime, Nil) {
   let trimmed = string.trim(value)
   case string.length(trimmed) {
     // DATE format: YYYYMMDD
     8 -> parse_date(trimmed) |> result.map(AllDay)
-    // DATE-TIME: YYYYMMDDTHHMMSSZ (UTC) or YYYYMMDDTHHMMSS (floating/TZID)
+    // DATE-TIME: YYYYMMDDTHHMMSSZ (UTC, 16 chars) or YYYYMMDDTHHMMSS (floating/TZID, 15 chars)
     15 | 16 -> {
-      use ts <- result.try(parse_datetime(trimmed))
-      let adjusted = case is_local {
-        // Subtract local offset so that to_calendar(ts, local_offset) = wall clock.
-        // Duration has no negate(), so negate manually via seconds.
-        True -> {
-          let offset_secs = duration.to_seconds(local_offset)
-          let neg_offset = duration.seconds(0 - float.truncate(offset_secs))
-          timestamp.add(ts, neg_offset)
+      case tzid {
+        Ok(tz) -> {
+          // TZID-annotated: convert wall-clock time in `tz` to UTC via FFI.
+          use ts <- result.try(parse_datetime_with_tz(trimmed, tz))
+          Ok(AtTime(ts))
         }
-        False -> ts
+        Error(Nil) -> {
+          use ts <- result.try(parse_datetime(trimmed))
+          let adjusted = case is_floating_datetime(trimmed) {
+            // Floating datetime: treat as server-local wall clock.
+            // Subtract local offset so that to_calendar(ts, local_offset) = wall clock.
+            True -> {
+              let offset_secs = duration.to_seconds(local_offset)
+              let neg_offset = duration.seconds(0 - float.truncate(offset_secs))
+              timestamp.add(ts, neg_offset)
+            }
+            // UTC (Z suffix): ts is already correct.
+            False -> ts
+          }
+          Ok(AtTime(adjusted))
+        }
       }
-      Ok(AtTime(adjusted))
     }
     _ -> Error(Nil)
   }
+}
+
+/// Gregorian seconds for the Unix epoch (1970-01-01T00:00:00Z).
+/// Equals calendar:datetime_to_gregorian_seconds({{1970,1,1},{0,0,0}}) in Erlang.
+const gregorian_epoch_offset: Int = 62_167_219_200
+
+/// Parse a datetime string (YYYYMMDDTHHMMSS[Z]) and convert from the given
+/// IANA timezone to a UTC Timestamp using the qdate_localtime FFI.
+fn parse_datetime_with_tz(
+  s: String,
+  tz: String,
+) -> Result(timestamp.Timestamp, Nil) {
+  use year <- result.try(parse_int_slice(s, 0, 4))
+  use month_int <- result.try(parse_int_slice(s, 4, 2))
+  use day <- result.try(parse_int_slice(s, 6, 2))
+  use hour <- result.try(parse_int_slice(s, 9, 2))
+  use minute <- result.try(parse_int_slice(s, 11, 2))
+  use second <- result.try(parse_int_slice(s, 13, 2))
+  use _ <- result.try(int_to_month(month_int))
+  let utc_gregorian =
+    tz_local_to_utc(year, month_int, day, hour, minute, second, tz)
+  let unix_secs = utc_gregorian - gregorian_epoch_offset
+  Ok(timestamp.from_unix_seconds(unix_secs))
 }
 
 fn parse_date(s: String) -> Result(calendar.Date, Nil) {
