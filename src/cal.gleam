@@ -510,8 +510,13 @@ pub fn view_gantt(
           let ev_left = ev.1
           let ev_right = ev.1 + ev.2
           let drive_to =
-            list.filter(travel_bars, fn(tb) { tb.1 + tb.2 == ev_left })
-          let drive_from = list.filter(travel_bars, fn(tb) { tb.1 == ev_right })
+            list.filter(travel_bars, fn(tb) {
+              tb.1 + tb.2 == ev_left && tb.3 == ev.3
+            })
+          let drive_from =
+            list.filter(travel_bars, fn(tb) {
+              tb.1 == ev_right && tb.3 == ev.3
+            })
           let members = list.flatten([drive_to, [ev], drive_from])
           let g_left = list.fold(members, ev_left, fn(m, b) { int.min(m, b.1) })
           let g_right =
