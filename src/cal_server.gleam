@@ -114,28 +114,54 @@ pub fn start(
   let result =
     actor.new_with_initialiser(5000, fn(self_subject) {
       process.send(self_subject, PollTimerFired)
+
+      log.println("[cal_server] config_dir: " <> config_dir)
+      log.println("[cal_server] cache_dir:  " <> cache_dir)
+
       // Load cached events so clients get data immediately, before the first fetch.
+      let cache_path = cache_dir <> "/cache.json"
       let cached = state.read_cache(cache_dir)
       let initial_events = case cached {
-        [] -> Error("Loading…")
-        events -> Ok(events)
+        [] -> {
+          log.println("[cal_server] " <> cache_path <> " — not found or empty")
+          Error("Loading…")
+        }
+        events -> {
+          log.println(
+            "[cal_server] " <> cache_path <> " — loaded "
+            <> string.inspect(list.length(events))
+            <> " events",
+          )
+          Ok(events)
+        }
       }
-      log.println(
-        "[cal_server] loaded "
-        <> string.inspect(list.length(cached))
-        <> " events from cache",
-      )
+
+      let config_path = config_dir <> "/config.json"
       let cal_config = state.read_config(config_dir)
+      log.println(
+        "[cal_server] " <> config_path <> " — loaded ("
+        <> string.inspect(list.length(cal_config.people))
+        <> " people, "
+        <> string.inspect(list.length(cal_config.ical_urls))
+        <> " ical urls)",
+      )
+
+      let travel_path = cache_dir <> "/travel_cache.json"
       let travel_caches = state.read_travel_caches(cache_dir)
+      log.println(
+        "[cal_server] " <> travel_path <> " — loaded "
+        <> string.inspect(dict.size(travel_caches.travel_cache))
+        <> " travel entries, "
+        <> string.inspect(dict.size(travel_caches.leg_cache))
+        <> " leg entries",
+      )
+
+      let ical_path = cache_dir <> "/ical_cache.json"
       let ical_cache = state.read_ical_cache(cache_dir)
       log.println(
-        "[cal_server] loaded "
-        <> string.inspect(dict.size(travel_caches.travel_cache))
-        <> " travel_cache entries, "
-        <> string.inspect(dict.size(travel_caches.leg_cache))
-        <> " leg_cache entries, "
+        "[cal_server] " <> ical_path <> " — loaded "
         <> string.inspect(dict.size(ical_cache.last_fetched))
-        <> " ical feed caches from disk",
+        <> " feed caches",
       )
       // Derive calendar names from cached events so the palette can assign
       // colors immediately on startup, before the first live CalDAV fetch.

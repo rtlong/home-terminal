@@ -55,8 +55,13 @@ pub fn main() {
   trap_sigterm()
 
   // Set up file logging before anything else.
-  log.set_path(log.default_path())
+  let log_path = log.default_path()
+  log.set_path(log_path)
   log.println("[app] starting")
+  log.println("[app] log:        " <> log_path)
+  log.println("[app] config_dir: " <> state.config_dir())
+  log.println("[app] cache_dir:  " <> state.cache_dir())
+  log.println("[app] state_dir:  " <> state.state_dir())
 
   // Load CalDAV credentials and start the shared calendar server.
   // Crash hard on misconfiguration rather than silently serving stale data.
