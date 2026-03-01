@@ -69,19 +69,16 @@
 
             target = "erlang";
 
-            # qdate_localtime uses a rebar3 pre_hook that runs `priv/ibuild.escript`
-            # as a bare executable. Two problems in the Nix sandbox:
-            #   1. nix-gleam's rsync strips the execute bit (--chmod=Fu=rw)
-            #   2. The shebang is #!/usr/bin/env escript, but /usr/bin/env doesn't
-            #      exist on Linux builders in the Nix sandbox
-            # Fix: rewrite the rebar.config pre_hook to invoke escript explicitly,
-            # and patch the shebang to use the escript from nativeBuildInputs.
+            # qdate_localtime's rebar3 pre_hook runs `priv/ibuild.escript` as a
+            # bare executable. This fails in the Nix Linux sandbox because
+            # /usr/bin/env doesn't exist there (breaking the shebang), and
+            # nix-gleam's rsync strips the execute bit anyway.
+            # Fix: rewrite the hook in rebar.config to invoke escript explicitly
+            # via PATH. Since erlang is in nativeBuildInputs, escript is on PATH
+            # at build time and this is sufficient — no shebang patching needed.
             postConfigure = ''
-              find build/packages -name "rebar.config" | while read rc; do
-                sed -i 's|"priv/ibuild.escript"|"escript priv/ibuild.escript"|g' "$rc"
-              done
-              find build/packages -name "*.escript" -exec chmod +x {} \; -exec sed -i \
-                '1s|#!/usr/bin/env escript|#!'"$(command -v escript)"'|' {} \;
+              find build/packages -name "rebar.config" -exec \
+                sed -i 's|"priv/ibuild.escript"|"escript priv/ibuild.escript"|g' {} \;
             '';
 
             meta = {
