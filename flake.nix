@@ -69,11 +69,19 @@
 
             target = "erlang";
 
-            # nix-gleam's rsync copies hex deps with --chmod=Fu=rw which strips execute
-            # bits from rebar3 compile hook scripts (e.g. qdate_localtime's ibuild.escript).
-            # Restore the execute bit on any .escript files after the configure phase.
+            # qdate_localtime uses a rebar3 pre_hook that runs `priv/ibuild.escript`
+            # as a bare executable. Two problems in the Nix sandbox:
+            #   1. nix-gleam's rsync strips the execute bit (--chmod=Fu=rw)
+            #   2. The shebang is #!/usr/bin/env escript, but /usr/bin/env doesn't
+            #      exist on Linux builders in the Nix sandbox
+            # Fix: rewrite the rebar.config pre_hook to invoke escript explicitly,
+            # and patch the shebang to use the escript from nativeBuildInputs.
             postConfigure = ''
-              find build/packages -name "*.escript" -exec chmod +x {} \;
+              find build/packages -name "rebar.config" | while read rc; do
+                sed -i 's|"priv/ibuild.escript"|"escript priv/ibuild.escript"|g' "$rc"
+              done
+              find build/packages -name "*.escript" -exec chmod +x {} \; -exec sed -i \
+                '1s|#!/usr/bin/env escript|#!'"$(command -v escript)"'|' {} \;
             '';
 
             meta = {
