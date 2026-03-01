@@ -4,6 +4,10 @@
     systems.url = "github:nix-systems/default";
     devenv.url = "github:cachix/devenv";
     devenv.inputs.nixpkgs.follows = "nixpkgs";
+    nix-gleam = {
+      url = "github:arnarg/nix-gleam";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   nixConfig = {
@@ -17,12 +21,69 @@
       nixpkgs,
       devenv,
       systems,
+      nix-gleam,
       ...
     }@inputs:
     let
       forEachSystem = nixpkgs.lib.genAttrs (import systems);
     in
     {
+      packages = forEachSystem (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system}.extend nix-gleam.overlays.default;
+
+          src = self;
+
+          # Build the Tailwind CSS before the Gleam build.
+          # The compiled app.css must be present in priv/static/ so it gets included
+          # in the OTP app's priv directory and can be served at runtime.
+          css = pkgs.stdenvNoCC.mkDerivation {
+            name = "home-terminal-css";
+            inherit src;
+            nativeBuildInputs = [ pkgs.tailwindcss_4 ];
+            buildPhase = ''
+              tailwindcss --input tailwind.css --output app.css --minify
+            '';
+            installPhase = ''
+              install -Dm644 app.css $out/app.css
+            '';
+          };
+        in
+        {
+          default = pkgs.buildGleamApplication {
+            pname = "home-terminal";
+            version = "1.0.0";
+
+            # Patch in the compiled CSS before the Gleam build runs.
+            src = pkgs.stdenvNoCC.mkDerivation {
+              name = "home-terminal-src";
+              inherit src;
+              buildPhase = "";
+              installPhase = ''
+                cp -r $src $out
+                chmod -R u+w $out
+                install -Dm644 ${css}/app.css $out/priv/static/app.css
+              '';
+            };
+
+            target = "erlang";
+
+            # nix-gleam's rsync copies hex deps with --chmod=Fu=rw which strips execute
+            # bits from rebar3 compile hook scripts (e.g. qdate_localtime's ibuild.escript).
+            # Restore the execute bit on any .escript files after the configure phase.
+            postConfigure = ''
+              find build/packages -name "*.escript" -exec chmod +x {} \;
+            '';
+
+            meta = {
+              description = "Home dashboard terminal with calendar, HA integration, and travel times";
+              mainProgram = "home_terminal";
+            };
+          };
+        }
+      );
+
       devShells = forEachSystem (
         system:
         let
