@@ -754,7 +754,7 @@ pub fn view_gantt(
       // min-height: auto / intrinsic-grid-height problem that causes unequal
       // distribution when one lane has many stacked bars.
       let #(flex_style, border_style) = case bars {
-        [] -> #("0 0 0px", "none")
+        [] -> #("0 0 10px", "1px solid var(--color-row-border)")
         _ -> #("1 1 0%", "1px solid var(--color-row-border)")
       }
       html.div(
