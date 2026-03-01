@@ -36,7 +36,12 @@ import gleam/time/timestamp
 
 /// Per-calendar display configuration.
 pub type CalendarConfig {
-  CalendarConfig(visible: Bool)
+  CalendarConfig(
+    visible: Bool,
+    /// When False, location data for events on this calendar is ignored for
+    /// travel-time calculations and display. Defaults to True.
+    show_location: Bool,
+  )
 }
 
 /// An external iCal feed URL with a display name and refresh interval.
@@ -90,7 +95,7 @@ pub fn empty_config() -> Config {
 
 /// Default config for a calendar not yet seen in config.json.
 pub fn default_calendar_config() -> CalendarConfig {
-  CalendarConfig(visible: True)
+  CalendarConfig(visible: True, show_location: True)
 }
 
 /// Parse a human-readable refresh interval string into seconds.
@@ -458,6 +463,7 @@ fn encode_config(config: Config) -> json.Json {
         name,
         json.object([
           #("visible", json.bool(cal_cfg.visible)),
+          #("show_location", json.bool(cal_cfg.show_location)),
         ]),
       )
     })
@@ -586,7 +592,12 @@ fn config_decoder() -> decode.Decoder(Config) {
 
 fn calendar_config_decoder() -> decode.Decoder(CalendarConfig) {
   use visible <- decode.field("visible", decode.bool)
-  decode.success(CalendarConfig(visible:))
+  use show_location <- decode.optional_field(
+    "show_location",
+    True,
+    decode.bool,
+  )
+  decode.success(CalendarConfig(visible:, show_location:))
 }
 
 fn ical_url_decoder() -> decode.Decoder(IcalUrl) {

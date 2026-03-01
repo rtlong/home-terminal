@@ -118,6 +118,7 @@ pub opaque type Msg {
   HaStateChanged(ha_client.HaState)
   UserToggledCalendar(name: String, visible: Bool)
   UserToggledCalendarPerson(cal_name: String, person: String, assigned: Bool)
+  UserToggledCalendarLocation(name: String, show_location: Bool)
   UserChangedPersonColor(person: String, color: String)
   Tick
 }
@@ -148,7 +149,15 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     )
 
     UserToggledCalendar(name:, visible:) -> {
-      let new_cfg = state.CalendarConfig(visible: visible)
+      let existing = state.get_calendar_config(model.calendar_data.cal_config, name)
+      let new_cfg = state.CalendarConfig(..existing, visible: visible)
+      cal_server.update_calendar_config(model.server, name, new_cfg)
+      #(model, effect.none())
+    }
+
+    UserToggledCalendarLocation(name:, show_location:) -> {
+      let existing = state.get_calendar_config(model.calendar_data.cal_config, name)
+      let new_cfg = state.CalendarConfig(..existing, show_location: show_location)
       cal_server.update_calendar_config(model.server, name, new_cfg)
       #(model, effect.none())
     }
@@ -327,6 +336,15 @@ fn view_active_tab(model: Model, pal: palette.Palette) -> Element(Msg) {
           let visible_events =
             list.filter(events, fn(e) {
               state.get_calendar_config(cfg, e.calendar_name).visible
+            })
+          // Clear location on events whose calendar has show_location=False
+          // so that travel-time blocks are not computed for them.
+          let visible_events =
+            list.map(visible_events, fn(e) {
+              case state.get_calendar_config(cfg, e.calendar_name).show_location {
+                True -> e
+                False -> cal.Event(..e, location: "")
+              }
             })
           let people = cfg.people
           let bars_for_event = fn(e: cal.Event) -> List(#(cal.BarPos, String)) {
@@ -542,6 +560,24 @@ fn view_calendar_row(
       on_toggle_change(name),
     ])
 
+  // Show-location toggle: when unchecked, location data on this calendar's
+  // events is ignored for travel-time calculations.
+  let location_toggle =
+    html.label(
+      [attribute.class("flex items-center gap-1 cursor-pointer select-none")],
+      [
+        html.input([
+          attribute.type_("checkbox"),
+          attribute.class("w-3.5 h-3.5 styled-checkbox"),
+          attribute.checked(cal_cfg.show_location),
+          on_location_toggle_change(name),
+        ]),
+        html.span([attribute.class("text-xs text-text-muted")], [
+          html.text("travel"),
+        ]),
+      ],
+    )
+
   // Per-person assignment checkboxes — only shown when people list is non-empty.
   let person_chips = case people {
     [] -> element.none()
@@ -584,6 +620,7 @@ fn view_calendar_row(
         html.span([attribute.class("flex-1 text-sm text-text")], [
           html.text(name),
         ]),
+        location_toggle,
         toggle,
       ]),
       person_chips,
@@ -597,6 +634,14 @@ fn on_toggle_change(name: String) -> attribute.Attribute(Msg) {
   event.on("change", {
     use checked <- decode.subfield(["target", "checked"], decode.bool)
     decode.success(UserToggledCalendar(name:, visible: checked))
+  })
+}
+
+/// Decode a checkbox change event → UserToggledCalendarLocation.
+fn on_location_toggle_change(name: String) -> attribute.Attribute(Msg) {
+  event.on("change", {
+    use show_location <- decode.subfield(["target", "checked"], decode.bool)
+    decode.success(UserToggledCalendarLocation(name:, show_location:))
   })
 }
 
