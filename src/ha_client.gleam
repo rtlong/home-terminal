@@ -21,7 +21,6 @@ import envoy
 import gleam/bit_array
 import gleam/erlang/process.{type Subject}
 import gleam/int
-import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
@@ -692,8 +691,10 @@ fn build_wayland_env() -> List(#(String, String)) {
   |> list.filter_map(fn(r) { r })
 }
 
-/// Find the sway IPC socket path by listing files in XDG_RUNTIME_DIR and
-/// returning the first sway-ipc.*.sock match.
+/// Find the sway IPC socket path.  Sway's kiosk config creates a stable
+/// symlink at $XDG_RUNTIME_DIR/sway.sock on startup (via `exec ln -sf
+/// $SWAYSOCK .../sway.sock`), so we can use a fixed path rather than
+/// globbing for the PID-named socket.
 fn find_sway_socket(
   env: List(#(String, String)),
 ) -> Result(String, String) {
@@ -702,16 +703,12 @@ fn find_sway_socket(
     |> result.map(fn(pair) { pair.1 })
     |> result.replace_error("XDG_RUNTIME_DIR not set")
   use dir <- result.try(runtime_dir)
-  case simplifile.get_files(dir) {
-    Ok(files) -> {
-      files
-      |> list.find(fn(f) { string.contains(f, "/sway-ipc.") })
-      |> result.replace_error("no sway-ipc socket found in " <> dir)
-    }
+  let sock = dir <> "/sway.sock"
+  case simplifile.verify_is_file(sock) {
+    Ok(True) -> Ok(sock)
+    Ok(False) -> Error("sway.sock exists but is not a file/socket: " <> sock)
     Error(err) ->
-      Error(
-        "could not list " <> dir <> ": " <> simplifile.describe_error(err),
-      )
+      Error(sock <> " not found: " <> simplifile.describe_error(err))
   }
 }
 
