@@ -7,6 +7,8 @@
 //   MQTT_HOST, MQTT_PORT (default 1883), MQTT_USERNAME, MQTT_PASSWORD
 //   HA_DEVICE_PREFIX (default "kitchen_terminal")
 //   DISPLAY_OUTPUT, DISPLAY_CONTROL_SCHEME — both must be set for display control
+//     Supported schemes: "wlopm" (preferred, requires zwlr_output_power_manager_v1)
+//                        "wlr-randr" (legacy, fights cage compositor)
 
 import envoy
 import gleam/bit_array
@@ -612,6 +614,40 @@ fn humanize_prefix(prefix: String) -> String {
 
 fn set_display_power(config: Config, on: Bool) -> Nil {
   case config.display_control_scheme, config.display_output {
+    Some("wlopm"), Some(output) -> {
+      let flag = case on {
+        True -> "--on"
+        False -> "--off"
+      }
+      log.println("[ha_client] running: wlopm " <> flag <> " " <> output)
+      // Pass Wayland env vars explicitly — open_port does not reliably inherit
+      // the beam process environment for these display-related variables.
+      let wayland_env = build_wayland_env()
+      case
+        shellout.command(
+          run: "wlopm",
+          with: [flag, output],
+          in: ".",
+          opt: [shellout.SetEnvironment(wayland_env)],
+        )
+      {
+        Ok(out) -> {
+          let out = string.trim(out)
+          case string.is_empty(out) {
+            True -> log.println("[ha_client] wlopm: success")
+            False -> log.println("[ha_client] wlopm output: " <> out)
+          }
+        }
+        Error(#(exit_code, out)) -> {
+          log.println(
+            "[ha_client] wlopm FAILED (exit "
+            <> int.to_string(exit_code)
+            <> "): "
+            <> string.trim(out),
+          )
+        }
+      }
+    }
     Some("wlr-randr"), Some(output) -> {
       let flag = case on {
         True -> "--on"
@@ -620,16 +656,7 @@ fn set_display_power(config: Config, on: Bool) -> Nil {
       log.println(
         "[ha_client] running: wlr-randr --output " <> output <> " " <> flag,
       )
-      // Pass Wayland env vars explicitly — open_port does not reliably inherit
-      // the beam process environment for these display-related variables.
-      let wayland_env =
-        [
-          envoy.get("WAYLAND_DISPLAY")
-            |> result.map(fn(v) { #("WAYLAND_DISPLAY", v) }),
-          envoy.get("XDG_RUNTIME_DIR")
-            |> result.map(fn(v) { #("XDG_RUNTIME_DIR", v) }),
-        ]
-        |> list.filter_map(fn(r) { r })
+      let wayland_env = build_wayland_env()
       case
         shellout.command(
           run: "wlr-randr",
@@ -668,4 +695,17 @@ fn set_display_power(config: Config, on: Bool) -> Nil {
       Nil
     }
   }
+}
+
+/// Build the list of Wayland environment variables to pass to display control
+/// commands. Reads WAYLAND_DISPLAY and XDG_RUNTIME_DIR from the current
+/// process environment.
+fn build_wayland_env() -> List(#(String, String)) {
+  [
+    envoy.get("WAYLAND_DISPLAY")
+      |> result.map(fn(v) { #("WAYLAND_DISPLAY", v) }),
+    envoy.get("XDG_RUNTIME_DIR")
+      |> result.map(fn(v) { #("XDG_RUNTIME_DIR", v) }),
+  ]
+  |> list.filter_map(fn(r) { r })
 }
