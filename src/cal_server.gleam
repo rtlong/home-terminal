@@ -203,14 +203,19 @@ pub fn start(
 }
 
 /// Start the calendar server in demo mode.
-/// No CalDAV credentials are required.  Events are generated deterministically
-/// from a seed derived from the current day, and regenerated on each poll so
-/// they always refer to the correct "next 7 days" window.
+/// No CalDAV credentials are required.  Events are generated from a seed that
+/// is randomised on each boot (or taken from DEMO_SEED for reproduction).
 pub fn start_demo() -> Result(Server, actor.StartError) {
-  let seed = demo_data.daily_seed()
+  let seed = demo_data.make_seed()
   let demo_cfg = demo_data.generate_config(seed)
 
-  log.println("[cal_server] demo mode — seed " <> string.inspect(seed))
+  log.println(
+    "[cal_server] demo mode — seed "
+    <> string.inspect(seed)
+    <> "  (set DEMO_SEED="
+    <> string.inspect(seed)
+    <> " to reproduce)",
+  )
 
   let result =
     actor.new_with_initialiser(5000, fn(self_subject) {

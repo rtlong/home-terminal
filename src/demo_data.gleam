@@ -19,11 +19,13 @@
 // IMPORTS ---------------------------------------------------------------------
 
 import cal.{type Event, AllDay, AtTime, Event}
+import envoy
 import gleam/dict
 import gleam/float
 import gleam/int
 import gleam/list
 import gleam/string
+import log
 import gleam/time/calendar.{
   type Date, Date, April, August, December, February, January, July, June,
   March, May, November, October, September,
@@ -110,21 +112,43 @@ fn rand_bool(seed: Seed, probability: Float) -> #(Bool, Seed) {
   #(f <. probability, s)
 }
 
-// STABLE DAILY SEED -----------------------------------------------------------
+// BOOT SEED -------------------------------------------------------------------
 
-/// Derive a seed that is stable for the current calendar day.
-/// Changes once per day, ensuring the randomised config is consistent
-/// across multiple refreshes within the same day.
-@external(erlang, "log_ffi", "system_time_seconds")
-fn system_time_seconds() -> Int
+/// Return a seed for the PRNG.
+///
+/// If the `DEMO_SEED` environment variable is set to a valid integer it is
+/// used directly, allowing exact reproduction of a previous run.  Otherwise a
+/// fresh seed is derived from the nanosecond system clock at the moment of the
+/// call, which changes on every boot.
+pub fn make_seed() -> Seed {
+  case envoy.get("DEMO_SEED") {
+    Ok(s) ->
+      case int.parse(s) {
+        Ok(n) -> n
+        Error(_) -> {
+          log.println(
+            "[demo_data] DEMO_SEED value '"
+            <> s
+            <> "' is not a valid integer — ignoring",
+          )
+          random_seed()
+        }
+      }
+    Error(_) -> random_seed()
+  }
+}
 
-pub fn daily_seed() -> Seed {
-  let unix_day = system_time_seconds() / 86_400
-  // Hash the day index into a non-trivial starting point.
-  let #(_, s1) = lcg(unix_day * 2_654_435_761)
+@external(erlang, "demo_data_ffi", "system_time_nanoseconds")
+fn system_time_nanoseconds() -> Int
+
+fn random_seed() -> Seed {
+  // Mix nanosecond time through two LCG steps so consecutive calls that land
+  // in the same nanosecond still produce distinct seeds.
+  let #(_, s1) = lcg(system_time_nanoseconds())
   let #(_, s2) = lcg(s1)
   s2
 }
+
 
 // NAME POOLS ------------------------------------------------------------------
 

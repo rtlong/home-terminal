@@ -62,13 +62,21 @@ direnv allow           # or: nix develop
 | `DISPLAY_OUTPUT` | Wayland output name for display power (e.g. `HDMI-A-1`) |
 | `DISPLAY_CONTROL_SCHEME` | `swaymsg`, `wlopm`, or `wlr-randr` |
 | `PORT` | HTTP port (default: `46548`) |
+| `DEMO_MODE` | Set to `1` to run with generated fake data (no CalDAV needed) |
+| `DEMO_SEED` | Integer seed to reproduce a specific demo run (printed on startup) |
 
 ### Demo mode
 
-No credentials required. Generates a week of deterministic fake events:
+No credentials required. Generates a week of fake events from a random seed:
 
 ```sh
 DEMO_MODE=1 gleam run
+```
+
+The seed is printed on startup. To reproduce the same data:
+
+```sh
+DEMO_MODE=1 DEMO_SEED=12345678 gleam run
 ```
 
 Open `http://localhost:46548`.
