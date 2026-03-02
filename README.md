@@ -58,6 +58,7 @@ direnv allow           # or: nix develop
 | `MQTT_HOST` | MQTT broker hostname |
 | `MQTT_USERNAME` | MQTT username |
 | `MQTT_PASSWORD` | MQTT password |
+| `HA_DEVICE_PREFIX` | HA device identifier / MQTT topic prefix (default: system hostname) |
 | `DISPLAY_OUTPUT` | Wayland output name for display power (e.g. `HDMI-A-1`) |
 | `DISPLAY_CONTROL_SCHEME` | `swaymsg`, `wlopm`, or `wlr-randr` |
 | `PORT` | HTTP port (default: `46548`) |

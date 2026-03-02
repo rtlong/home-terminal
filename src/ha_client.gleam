@@ -5,7 +5,7 @@
 //
 // Env vars:
 //   MQTT_HOST, MQTT_PORT (default 1883), MQTT_USERNAME, MQTT_PASSWORD
-//   HA_DEVICE_PREFIX (default "kitchen_terminal")
+//   HA_DEVICE_PREFIX (default: system hostname with hyphens replaced by underscores)
 //   DISPLAY_OUTPUT, DISPLAY_CONTROL_SCHEME — both must be set for display control
 //     Supported schemes:
 //       "swaymsg" — preferred for sway compositor; uses sway IPC to set
@@ -84,7 +84,7 @@ pub fn config_from_env() -> Result(Config, String) {
     |> result.unwrap(1883)
   let device_prefix =
     envoy.get("HA_DEVICE_PREFIX")
-    |> result.unwrap("kitchen_terminal")
+    |> result.unwrap(default_device_prefix())
   let display_output =
     envoy.get("DISPLAY_OUTPUT")
     |> option.from_result
@@ -609,6 +609,16 @@ fn publish_state(
     ),
   )
 }
+
+/// Return the system hostname, replacing hyphens with underscores so the
+/// result is safe as an MQTT topic segment and HA unique_id prefix.
+fn default_device_prefix() -> String {
+  inet_gethostname()
+  |> string.replace(each: "-", with: "_")
+}
+
+@external(erlang, "ha_client_ffi", "gethostname")
+fn inet_gethostname() -> String
 
 /// Convert "kitchen_terminal" -> "Kitchen Terminal"
 fn humanize_prefix(prefix: String) -> String {
