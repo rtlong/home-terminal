@@ -21,6 +21,7 @@ import envoy
 import gleam/bit_array
 import gleam/erlang/process.{type Subject}
 import gleam/int
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
@@ -704,7 +705,7 @@ fn find_sway_socket(
     |> result.replace_error("XDG_RUNTIME_DIR not set")
   use dir <- result.try(runtime_dir)
   let sock = dir <> "/sway.sock"
-  case simplifile.verify_is_file(sock) {
+  case simplifile.is_file(sock) {
     Ok(True) -> Ok(sock)
     Ok(False) -> Error("sway.sock exists but is not a file/socket: " <> sock)
     Error(err) ->
