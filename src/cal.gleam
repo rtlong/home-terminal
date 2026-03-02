@@ -1466,25 +1466,41 @@ fn compute_window(
               AtTime(ts), AtTime(te) -> {
                 let #(start_date, t_start) =
                   timestamp.to_calendar(ts, local_offset)
-                let #(_, t_end) = timestamp.to_calendar(te, local_offset)
+                let #(end_date, t_end) =
+                  timestamp.to_calendar(te, local_offset)
                 let is_start_day =
                   calendar.naive_date_compare(start_date, day) == order.Eq
-                // For the end-day of a cross-midnight event, the event
-                // occupies [midnight, end_time] on this row — treat start as 0.
+                let is_end_day =
+                  calendar.naive_date_compare(end_date, day) == order.Eq
+                // For the end-day of a cross-midnight event the visible
+                // portion starts at midnight (0), not the actual start time
+                // (previous night).
                 let start_min = case is_start_day {
                   True -> t_start.hours * 60 + t_start.minutes
                   False -> 0
                 }
-                let end_min = t_end.hours * 60 + t_end.minutes
+                // For the start-day of a cross-midnight event the event runs
+                // off the right edge of this row (to midnight = 1440).  Using
+                // the raw end timestamp gives a small number like 90 (1:30am)
+                // which would never expand the window rightward.
+                let end_min = case is_end_day {
+                  True -> t_end.hours * 60 + t_end.minutes
+                  False -> 1440
+                }
                 let #(drive_to_min, drive_from_min) = travel_mins_for(e.uid)
-                // Only subtract drive_to from start on the start day.
+                // drive_to only applies on the start day; drive_from only on
+                // the end day.
                 let adjusted_start = case is_start_day {
                   True -> start_min - drive_to_min
                   False -> start_min
                 }
+                let adjusted_end = case is_end_day {
+                  True -> end_min + drive_from_min
+                  False -> end_min
+                }
                 #(
                   [adjusted_start, ..starts2],
-                  [end_min + drive_from_min, ..ends2],
+                  [adjusted_end, ..ends2],
                 )
               }
               AtTime(ts), _ -> {
