@@ -171,7 +171,8 @@ pub fn view_gantt(
       }
     }
 
-  let window = compute_window(day_timed_lists, travel_mins_for, local_offset)
+  let window =
+    compute_window(days, day_timed_lists, travel_mins_for, local_offset)
   let total_min = window.end_min - window.start_min
   let total_f = int_to_float(total_min)
 
@@ -303,29 +304,36 @@ pub fn view_gantt(
                 let right_min =
                   int.min(et.hours * 60 + et.minutes, window.end_min)
                   - window.start_min
-                let width_min = int.max(right_min, 1)
-                let #(_, drive_from_min) = travel_mins_for(e.uid)
-                let new_bars =
-                  list.map(bars_for_event(e), fn(pair) {
-                    let #(bar, color) = pair
-                    #(
-                      bar,
-                      left_min,
-                      width_min,
-                      color,
-                      True,
-                      e.free,
-                      e.summary,
-                      case is_quarter_hour(et.minutes) {
-                        True -> ""
-                        False -> "ends " <> format_time(en, local_offset)
-                      },
-                      0,
-                      drive_from_min,
-                      e,
-                    )
-                  })
-                #(list.append(bars_acc, new_bars), allday_acc)
+                // If the event ends before the window opens, omit the bar
+                // entirely rather than rendering a phantom 1-minute sliver.
+                case right_min <= 0 {
+                  True -> acc
+                  False -> {
+                    let width_min = right_min
+                    let #(_, drive_from_min) = travel_mins_for(e.uid)
+                    let new_bars =
+                      list.map(bars_for_event(e), fn(pair) {
+                        let #(bar, color) = pair
+                        #(
+                          bar,
+                          left_min,
+                          width_min,
+                          color,
+                          True,
+                          e.free,
+                          e.summary,
+                          case is_quarter_hour(et.minutes) {
+                            True -> ""
+                            False -> "ends " <> format_time(en, local_offset)
+                          },
+                          0,
+                          drive_from_min,
+                          e,
+                        )
+                      })
+                    #(list.append(bars_acc, new_bars), allday_acc)
+                  }
+                }
               }
 
               // Normal same-day event.
@@ -1431,6 +1439,7 @@ type Window {
 }
 
 fn compute_window(
+  days: List(Date),
   day_timed_lists: List(List(Event)),
   travel_mins_for: fn(String) -> #(Int, Int),
   local_offset: duration.Duration,
@@ -1440,33 +1449,55 @@ fn compute_window(
   case timed_events {
     [] -> Window(default_window_start_min, default_window_end_min)
     _ -> {
-      // Extend window to cover travel extents: DriveTo pushes the window
-      // start earlier; DriveFrom pushes the window end later.
+      // Walk each (day, events) pair so we can compute per-day window bounds
+      // correctly.  For a cross-midnight event appearing as an end fragment on
+      // a given day its visible portion starts at midnight (0 min), not at the
+      // event's actual start time (which was the previous night).  Using the
+      // raw start timestamp for such events would never push the window start
+      // earlier than the default 7am, causing the end fragment to be clipped.
       let #(start_mins, end_mins) =
-        list.fold(timed_events, #([], []), fn(acc, e) {
+        list.zip(days, day_timed_lists)
+        |> list.fold(#([], []), fn(acc, pair) {
           let #(starts, ends) = acc
-          case e.start, e.end {
-            AtTime(ts), AtTime(te) -> {
-              let #(_, t_start) = timestamp.to_calendar(ts, local_offset)
-              let #(_, t_end) = timestamp.to_calendar(te, local_offset)
-              let start_min = t_start.hours * 60 + t_start.minutes
-              let end_min = t_end.hours * 60 + t_end.minutes
-              let #(drive_to_min, drive_from_min) = travel_mins_for(e.uid)
-              #(
-                [start_min - drive_to_min, ..starts],
-                [end_min + drive_from_min, ..ends],
-              )
+          let #(day, day_events) = pair
+          list.fold(day_events, #(starts, ends), fn(acc2, e) {
+            let #(starts2, ends2) = acc2
+            case e.start, e.end {
+              AtTime(ts), AtTime(te) -> {
+                let #(start_date, t_start) =
+                  timestamp.to_calendar(ts, local_offset)
+                let #(_, t_end) = timestamp.to_calendar(te, local_offset)
+                let is_start_day =
+                  calendar.naive_date_compare(start_date, day) == order.Eq
+                // For the end-day of a cross-midnight event, the event
+                // occupies [midnight, end_time] on this row — treat start as 0.
+                let start_min = case is_start_day {
+                  True -> t_start.hours * 60 + t_start.minutes
+                  False -> 0
+                }
+                let end_min = t_end.hours * 60 + t_end.minutes
+                let #(drive_to_min, drive_from_min) = travel_mins_for(e.uid)
+                // Only subtract drive_to from start on the start day.
+                let adjusted_start = case is_start_day {
+                  True -> start_min - drive_to_min
+                  False -> start_min
+                }
+                #(
+                  [adjusted_start, ..starts2],
+                  [end_min + drive_from_min, ..ends2],
+                )
+              }
+              AtTime(ts), _ -> {
+                let #(_, t) = timestamp.to_calendar(ts, local_offset)
+                #([t.hours * 60 + t.minutes, ..starts2], ends2)
+              }
+              _, AtTime(te) -> {
+                let #(_, t) = timestamp.to_calendar(te, local_offset)
+                #(starts2, [t.hours * 60 + t.minutes, ..ends2])
+              }
+              _, _ -> acc2
             }
-            AtTime(ts), _ -> {
-              let #(_, t) = timestamp.to_calendar(ts, local_offset)
-              #([t.hours * 60 + t.minutes, ..starts], ends)
-            }
-            _, AtTime(te) -> {
-              let #(_, t) = timestamp.to_calendar(te, local_offset)
-              #(starts, [t.hours * 60 + t.minutes, ..ends])
-            }
-            _, _ -> acc
-          }
+          })
         })
 
       let earliest =
