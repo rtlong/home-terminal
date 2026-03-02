@@ -13,7 +13,6 @@ import icons
 import lustre/attribute
 import lustre/element.{type Element}
 import lustre/element/html
-import lustre/element/svg
 import lustre/event
 import palette
 import travel
@@ -425,25 +424,13 @@ pub fn view_gantt(
       case is_free {
         // Free events: number-line style — a thin horizontal axis with caps
         // at each end and the label floating above the line.
-        // Terminating end (event starts/ends within window): vertical bar cap.
-        // Continuing end (event runs past window boundary): arrow cap.
+        // Free events: number-line style — thin horizontal axis with a
+        // label pill and vertical-bar end-caps.
+        // Cross-midnight ends touch midnight with a squared corner on the
+        // label pill rather than an arrow or fade.
         True -> {
-          // Continuing-left: arrow pointing left (event runs before window start)
-          let continuing_left =
-            html.div(
-              [
-                attribute.style("width", "0"),
-                attribute.style("height", "0"),
-                attribute.style("border-top", "4px solid transparent"),
-                attribute.style("border-bottom", "4px solid transparent"),
-                attribute.style("border-right", "5px solid " <> color),
-                attribute.style("flex-shrink", "0"),
-                attribute.style("opacity", "0.7"),
-              ],
-              [],
-            )
-          // Terminating-left: vertical bar (event starts here)
-          let terminating_left =
+          // Vertical-bar cap: used at both terminating and midnight ends.
+          let bar_cap = fn(side: String) {
             html.div(
               [
                 attribute.style("width", "2px"),
@@ -454,42 +441,35 @@ pub fn view_gantt(
               ],
               [],
             )
-          // Continuing-right: arrow pointing right (event runs past window end)
-          let continuing_right =
+            |> fn(el) {
+              // Silence unused-variable warning — side is only used for
+              // documentation; the element is identical for left and right.
+              let _ = side
+              el
+            }
+          }
+          let left_cap = bar_cap("left")
+          let right_cap = bar_cap("right")
+          let line_segment =
             html.div(
               [
-                attribute.style("width", "0"),
-                attribute.style("height", "0"),
-                attribute.style("border-top", "4px solid transparent"),
-                attribute.style("border-bottom", "4px solid transparent"),
-                attribute.style("border-left", "5px solid " <> color),
-                attribute.style("flex-shrink", "0"),
-                attribute.style("opacity", "0.7"),
-              ],
-              [],
-            )
-          // Terminating-right: vertical bar (event ends here)
-          let terminating_right =
-            html.div(
-              [
-                attribute.style("width", "2px"),
-                attribute.style("height", "8px"),
+                attribute.style("flex", "1 0 0"),
+                attribute.style("height", "1.5px"),
                 attribute.style("background-color", color),
-                attribute.style("flex-shrink", "0"),
-                attribute.style("opacity", "0.7"),
+                attribute.style("min-width", "4px"),
               ],
               [],
             )
-          let left_cap = case left_min <= 0 {
-            True -> continuing_left
-            False -> terminating_left
+          // Detect cross-midnight segment type from position data.
+          let is_xm_start = left_min > 0 && right_min >= total_min
+          // Label pill border-radius: square the corner(s) that touch midnight.
+          let label_radius = case is_xm_end, is_xm_start {
+            True, _ -> "0 5px 5px 0"
+            // end-day: left corners touch midnight
+            _, True -> "5px 0 0 5px"
+            // start-day: right corners touch midnight
+            _, _ -> "5px"
           }
-          let right_cap = case right_min >= total_min {
-            True -> continuing_right
-            False -> terminating_right
-          }
-          // Label box: solid background + border, attached to the axis line.
-          // Shows name and time (if non-quarter-hour) inline on the line.
           let label_text = case label2, show_time {
             t, True if t != "" -> label <> " " <> t
             _, _ -> label
@@ -505,98 +485,20 @@ pub fn view_gantt(
                   attribute.style("font-size", "11px"),
                   attribute.style("color", "white"),
                   attribute.style("background-color", color),
-                  attribute.style("border", "1px solid " <> color),
-                  // attribute.style("opacity", "0.85"),
-                  attribute.style("border-radius", "2px"),
+                  attribute.style("border-radius", label_radius),
                   attribute.style("padding", "1px 3px"),
                   attribute.style("white-space", "nowrap"),
                 ],
                 [html.text(label_text)],
               )
           }
-          // Axis row layout depends on cross-midnight segment type.
-          // Normal:    left_cap — line — label — line — right_cap  (centered)
-          // Start-day: left_cap — label — line — right_cap         (left-aligned)
-          // End-day:   left_cap — label▸ — line — right_cap        (left-aligned, tapered)
-          let line_segment =
-            html.div(
-              [
-                attribute.style("flex", "1 0 0"),
-                attribute.style("height", "1.5px"),
-                attribute.style("background-color", color),
-                attribute.style("min-width", "4px"),
-              ],
-              [],
-            )
-
-          // Detect cross-midnight segment type from position data.
-          let is_xm_start = left_min > 0 && right_min >= total_min
-
-          // End-day tapered label: the label pill sits flush at the left
-          // edge (no arrow cap or line fragment before it), then an SVG
-          // wedge tapers smoothly from the label's full height down to the
-          // 1.5px axis line.  The SVG is ~20px wide for a gradual taper.
-          let tapered_label_box = case label {
-            "" -> element.none()
-            _ -> {
-              let label_text = case label2, show_time {
-                t, True if t != "" -> label <> " " <> t
-                _, _ -> label
-              }
-              html.div(
-                [
-                  attribute.class(
-                    "shrink-0 pointer-events-none select-none flex items-center",
-                  ),
-                ],
-                [
-                  html.span(
-                    [
-                      attribute.class("shrink-0 leading-none"),
-                      attribute.style("font-size", "11px"),
-                      attribute.style("color", "white"),
-                      attribute.style("background-color", color),
-                      attribute.style("border-radius", "2px 0 0 2px"),
-                      attribute.style("padding", "1px 0 1px 3px"),
-                      attribute.style("white-space", "nowrap"),
-                    ],
-                    [html.text(label_text)],
-                  ),
-                  // SVG taper: 13px tall to match label height.  Two
-                  // straight diagonal edges slope from the label corners
-                  // to a flat 1.5px tip matching the axis line width.
-                  svg.svg(
-                    [
-                      attribute.attribute("viewBox", "0 0 60 13"),
-                      attribute.attribute("width", "60"),
-                      attribute.attribute("height", "13"),
-                      attribute.attribute("preserveAspectRatio", "none"),
-                      attribute.style("flex-shrink", "0"),
-                      attribute.style("display", "block"),
-                    ],
-                    [
-                      svg.polygon([
-                        attribute.attribute(
-                          "points",
-                          // Top-left, top-right (line top), bottom-right
-                          // (line bottom), bottom-left.
-                          "0,0 60,5.75 60,7.25 0,13",
-                        ),
-                        attribute.attribute("fill", color),
-                      ]),
-                    ],
-                  ),
-                ],
-              )
-            }
-          }
 
           let axis_children = case is_xm_end, is_xm_start {
-            // End-day: label flush at left edge, SVG taper, then line
-            True, _ -> [tapered_label_box, line_segment, right_cap]
-            // Start-day: label at left, then line to right cap
-            _, True -> [left_cap, label_box, line_segment, right_cap]
-            // Normal: centered label
+            // End-day: no left cap (touches midnight), label, line, right cap
+            True, _ -> [label_box, line_segment, right_cap]
+            // Start-day: left cap, label, line, no right cap (touches midnight)
+            _, True -> [left_cap, label_box, line_segment]
+            // Normal: left cap, line, label, line, right cap
             _, _ -> [
               left_cap, line_segment, label_box, line_segment, right_cap,
             ]
@@ -618,22 +520,17 @@ pub fn view_gantt(
         }
         // Normal (busy) events: solid filled bar with label.
         False -> {
-          let is_start_day_xm = left_min > 0 && right_min > total_min
-          let is_end_day_xm = is_xm_end
-          let extra_style = case is_start_day_xm, is_end_day_xm {
-            True, _ -> [
-              attribute.style(
-                "mask-image",
-                "linear-gradient(to right, black 60%, transparent 100%)",
-              ),
-            ]
-            False, True -> [
-              attribute.style(
-                "mask-image",
-                "linear-gradient(to left, black 60%, transparent 100%)",
-              ),
-            ]
-            False, False -> []
+          let is_start_day_xm = left_min > 0 && right_min >= total_min
+          // Square the corner(s) that touch midnight; round the free ends.
+          // Default rounded-sm = ~2px on all corners.
+          let border_radius = case is_start_day_xm, is_xm_end {
+            True, _ ->
+              // Starts mid-day, runs off right edge to midnight: square right corners.
+              "5px 0 0 5px"
+            False, True ->
+              // Continues from previous night, ends mid-day: square left corners.
+              "0 5px 5px 0"
+            False, False -> "5px"
           }
           let label_content = case label {
             "" -> []
@@ -661,19 +558,17 @@ pub fn view_gantt(
             ]
           }
           html.div(
-            list.flatten([
-              [
-                attribute.class(
-                  "overflow-hidden flex flex-wrap items-start content-center gap-x-0.5 select-none rounded-sm cursor-pointer",
-                ),
-                attribute.style("flex", int.to_string(flex_val) <> " 0 0"),
-                attribute.style("min-width", "0"),
-                attribute.style("background-color", color),
-                attribute.style("color", "white"),
-                event.on_click(on_select(evt)),
-              ],
-              extra_style,
-            ]),
+            [
+              attribute.class(
+                "overflow-hidden flex flex-wrap items-start content-center gap-x-0.5 select-none cursor-pointer",
+              ),
+              attribute.style("flex", int.to_string(flex_val) <> " 0 0"),
+              attribute.style("min-width", "0"),
+              attribute.style("background-color", color),
+              attribute.style("color", "white"),
+              attribute.style("border-radius", border_radius),
+              event.on_click(on_select(evt)),
+            ],
             label_content,
           )
         }
