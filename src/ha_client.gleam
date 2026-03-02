@@ -7,8 +7,15 @@
 //   MQTT_HOST, MQTT_PORT (default 1883), MQTT_USERNAME, MQTT_PASSWORD
 //   HA_DEVICE_PREFIX (default "kitchen_terminal")
 //   DISPLAY_OUTPUT, DISPLAY_CONTROL_SCHEME — both must be set for display control
-//     Supported schemes: "wlopm" (preferred, requires zwlr_output_power_manager_v1)
-//                        "wlr-randr" (legacy, fights cage compositor)
+//     Supported schemes:
+//       "swaymsg" — preferred for sway compositor; uses sway IPC to set
+//                   output power.  Works even when the output is powered off
+//                   (wlopm cannot turn an output back on once it disappears
+//                   from the compositor's output list).
+//       "wlopm"   — uses zwlr_output_power_manager_v1 (DPMS).  Broken for
+//                   power-on: output disappears when powered off so wlopm
+//                   cannot find it to re-enable it.  Kept for reference.
+//       "wlr-randr" — legacy; cage fights back.  Do not use.
 
 import envoy
 import gleam/bit_array
@@ -22,6 +29,7 @@ import gleam/result
 import gleam/string
 import log
 import shellout
+import simplifile
 import state
 import spoke/mqtt
 import spoke/mqtt_actor
@@ -614,39 +622,33 @@ fn humanize_prefix(prefix: String) -> String {
 
 fn set_display_power(config: Config, on: Bool) -> Nil {
   case config.display_control_scheme, config.display_output {
+    Some("swaymsg"), Some(output) -> {
+      let power = case on {
+        True -> "on"
+        False -> "off"
+      }
+      log.println(
+        "[ha_client] running: swaymsg output " <> output <> " power " <> power,
+      )
+      let env = build_wayland_env()
+      // swaymsg needs SWAYSOCK — find it by globbing the runtime dir.
+      let env =
+        case find_sway_socket(env) {
+          Ok(sock) -> [#("SWAYSOCK", sock), ..env]
+          Error(reason) -> {
+            log.println("[ha_client] swaymsg: could not find SWAYSOCK: " <> reason)
+            env
+          }
+        }
+      run_display_command("swaymsg", ["output", output, "power", power], env)
+    }
     Some("wlopm"), Some(output) -> {
       let flag = case on {
         True -> "--on"
         False -> "--off"
       }
       log.println("[ha_client] running: wlopm " <> flag <> " " <> output)
-      // Pass Wayland env vars explicitly — open_port does not reliably inherit
-      // the beam process environment for these display-related variables.
-      let wayland_env = build_wayland_env()
-      case
-        shellout.command(
-          run: "wlopm",
-          with: [flag, output],
-          in: ".",
-          opt: [shellout.SetEnvironment(wayland_env)],
-        )
-      {
-        Ok(out) -> {
-          let out = string.trim(out)
-          case string.is_empty(out) {
-            True -> log.println("[ha_client] wlopm: success")
-            False -> log.println("[ha_client] wlopm output: " <> out)
-          }
-        }
-        Error(#(exit_code, out)) -> {
-          log.println(
-            "[ha_client] wlopm FAILED (exit "
-            <> int.to_string(exit_code)
-            <> "): "
-            <> string.trim(out),
-          )
-        }
-      }
+      run_display_command("wlopm", [flag, output], build_wayland_env())
     }
     Some("wlr-randr"), Some(output) -> {
       let flag = case on {
@@ -656,31 +658,11 @@ fn set_display_power(config: Config, on: Bool) -> Nil {
       log.println(
         "[ha_client] running: wlr-randr --output " <> output <> " " <> flag,
       )
-      let wayland_env = build_wayland_env()
-      case
-        shellout.command(
-          run: "wlr-randr",
-          with: ["--output", output, flag],
-          in: ".",
-          opt: [shellout.SetEnvironment(wayland_env)],
-        )
-      {
-        Ok(out) -> {
-          let out = string.trim(out)
-          case string.is_empty(out) {
-            True -> log.println("[ha_client] wlr-randr: success")
-            False -> log.println("[ha_client] wlr-randr output: " <> out)
-          }
-        }
-        Error(#(exit_code, out)) -> {
-          log.println(
-            "[ha_client] wlr-randr FAILED (exit "
-            <> int.to_string(exit_code)
-            <> "): "
-            <> string.trim(out),
-          )
-        }
-      }
+      run_display_command(
+        "wlr-randr",
+        ["--output", output, flag],
+        build_wayland_env(),
+      )
     }
     Some(scheme), _ -> {
       log.println(
@@ -708,4 +690,58 @@ fn build_wayland_env() -> List(#(String, String)) {
       |> result.map(fn(v) { #("XDG_RUNTIME_DIR", v) }),
   ]
   |> list.filter_map(fn(r) { r })
+}
+
+/// Find the sway IPC socket path by listing files in XDG_RUNTIME_DIR and
+/// returning the first sway-ipc.*.sock match.
+fn find_sway_socket(
+  env: List(#(String, String)),
+) -> Result(String, String) {
+  let runtime_dir =
+    list.find(env, fn(pair) { pair.0 == "XDG_RUNTIME_DIR" })
+    |> result.map(fn(pair) { pair.1 })
+    |> result.replace_error("XDG_RUNTIME_DIR not set")
+  use dir <- result.try(runtime_dir)
+  case simplifile.get_files(dir) {
+    Ok(files) -> {
+      files
+      |> list.find(fn(f) { string.contains(f, "/sway-ipc.") })
+      |> result.replace_error("no sway-ipc socket found in " <> dir)
+    }
+    Error(err) ->
+      Error(
+        "could not list " <> dir <> ": " <> simplifile.describe_error(err),
+      )
+  }
+}
+
+/// Run a display control command, logging success or failure.
+fn run_display_command(
+  cmd: String,
+  args: List(String),
+  env: List(#(String, String)),
+) -> Nil {
+  case
+    shellout.command(run: cmd, with: args, in: ".", opt: [
+      shellout.SetEnvironment(env),
+    ])
+  {
+    Ok(out) -> {
+      let out = string.trim(out)
+      case string.is_empty(out) {
+        True -> log.println("[ha_client] " <> cmd <> ": success")
+        False -> log.println("[ha_client] " <> cmd <> " output: " <> out)
+      }
+    }
+    Error(#(exit_code, out)) -> {
+      log.println(
+        "[ha_client] "
+        <> cmd
+        <> " FAILED (exit "
+        <> int.to_string(exit_code)
+        <> "): "
+        <> string.trim(out),
+      )
+    }
+  }
 }
