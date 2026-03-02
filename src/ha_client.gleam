@@ -29,7 +29,6 @@ import gleam/result
 import gleam/string
 import log
 import shellout
-import simplifile
 import state
 import spoke/mqtt
 import spoke/mqtt_actor
@@ -699,18 +698,9 @@ fn build_wayland_env() -> List(#(String, String)) {
 fn find_sway_socket(
   env: List(#(String, String)),
 ) -> Result(String, String) {
-  let runtime_dir =
-    list.find(env, fn(pair) { pair.0 == "XDG_RUNTIME_DIR" })
-    |> result.map(fn(pair) { pair.1 })
-    |> result.replace_error("XDG_RUNTIME_DIR not set")
-  use dir <- result.try(runtime_dir)
-  let sock = dir <> "/sway.sock"
-  case simplifile.is_file(sock) {
-    Ok(True) -> Ok(sock)
-    Ok(False) -> Error("sway.sock exists but is not a file/socket: " <> sock)
-    Error(err) ->
-      Error(sock <> " not found: " <> simplifile.describe_error(err))
-  }
+  list.find(env, fn(pair) { pair.0 == "XDG_RUNTIME_DIR" })
+  |> result.map(fn(pair) { pair.1 <> "/sway.sock" })
+  |> result.replace_error("XDG_RUNTIME_DIR not set")
 }
 
 /// Run a display control command, logging success or failure.
