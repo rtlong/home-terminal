@@ -280,7 +280,7 @@ pub fn view_gantt(
                       left_min,
                       width_min,
                       color,
-                      True,
+                      False,
                       e.free,
                       e.summary,
                       case is_quarter_hour(st.minutes) {
@@ -356,7 +356,7 @@ pub fn view_gantt(
                       left_min,
                       width_min,
                       color,
-                      True,
+                      False,
                       e.free,
                       e.summary,
                       time_str,
@@ -409,7 +409,7 @@ pub fn view_gantt(
       ),
       flex_val: Int,
     ) -> Element(msg) {
-      let #(_, left_min, width_min, color, _thick, is_free, label, label2, _, _, evt) =
+      let #(_, left_min, width_min, color, is_xm_end, is_free, label, label2, _, _, evt) =
         bar
       let clamped_width = int.min(width_min, total_min - left_min)
       let right_min = left_min + clamped_width
@@ -523,7 +523,6 @@ pub fn view_gantt(
 
           // Detect cross-midnight segment type from position data.
           let is_xm_start = left_min > 0 && right_min >= total_min
-          let is_xm_end = left_min <= 0 && right_min < total_min
 
           // End-day tapered label: the label pill sits flush at the left
           // edge (no arrow cap or line fragment before it), then an SVG
@@ -612,8 +611,7 @@ pub fn view_gantt(
         // Normal (busy) events: solid filled bar with label.
         False -> {
           let is_start_day_xm = left_min > 0 && right_min > total_min
-          let is_end_day_xm =
-            left_min == 0 && right_min < total_min && width_min == clamped_width
+          let is_end_day_xm = is_xm_end
           let extra_style = case is_start_day_xm, is_end_day_xm {
             True, _ -> [
               attribute.style(
@@ -692,7 +690,7 @@ pub fn view_gantt(
         Event,
       ),
     ) -> Element(msg) {
-      let #(_, left_min, width_min, color, _thick, _free, _label, _label2, drive_to_min, drive_from_min, _evt) =
+      let #(_, left_min, width_min, color, _is_xm_end, _free, _label, _label2, drive_to_min, drive_from_min, _evt) =
         bar
       let g_left = int.max(left_min - drive_to_min, 0)
       let ev_right = left_min + int.min(width_min, total_min - left_min)
@@ -740,9 +738,7 @@ pub fn view_gantt(
             ])
           html.div(
             [
-              attribute.class(
-                "flex flex-row pointer-events-none select-none rounded-sm",
-              ),
+              attribute.class("flex flex-row select-none rounded-sm"),
               attribute.style("grid-column", col_start <> " / " <> col_end),
               attribute.style("background-color", palette.travel_color(color)),
               attribute.style("min-width", "0"),
