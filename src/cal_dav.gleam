@@ -12,6 +12,7 @@
 
 import cal.{type Event}
 import envoy
+import state
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/hackney
@@ -86,8 +87,7 @@ pub fn config_from_env() -> Result(Config, String) {
     |> result.map_error(fn(_) { "Missing env var: CALDAV_USERNAME" }),
   )
   use password <- result.try(
-    envoy.get("CALDAV_PASSWORD")
-    |> result.map_error(fn(_) { "Missing env var: CALDAV_PASSWORD" }),
+    state.get_secret("caldav_password", "CALDAV_PASSWORD"),
   )
   Ok(Config(url:, username:, password:))
 }

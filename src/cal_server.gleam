@@ -13,7 +13,6 @@
 
 import cal.{type Event}
 import cal_dav
-import envoy
 import gleam/dict
 import gleam/erlang/process.{type Subject}
 import gleam/list
@@ -338,7 +337,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
 
           // ── Geocode home address for sunrise/sunset if not yet cached ──────────
           let new_cal_config = case
-            envoy.get("GOOGLE_MAPS_API_KEY"),
+            state.get_secret("google_maps_api_key", "GOOGLE_MAPS_API_KEY"),
             state.cal_config.home_address,
             state.cal_config.latitude == 0.0
             && state.cal_config.longitude == 0.0
@@ -371,7 +370,7 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
           }
 
           let #(new_travel_cache, new_leg_cache) = case
-            envoy.get("GOOGLE_MAPS_API_KEY"),
+            state.get_secret("google_maps_api_key", "GOOGLE_MAPS_API_KEY"),
             new_cal_config.home_address
           {
             Ok(api_key), home_address if home_address != "" -> {

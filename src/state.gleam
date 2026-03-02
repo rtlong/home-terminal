@@ -141,6 +141,45 @@ fn unit_to_seconds(unit: String) -> Int {
   }
 }
 
+// CREDENTIALS -----------------------------------------------------------------
+
+/// Read a secret value, supporting systemd LoadCredential.
+///
+/// Lookup order:
+///   1. $CREDENTIALS_DIRECTORY/<credential_name>  (systemd LoadCredential file)
+///   2. $env_var_name                              (plain environment variable)
+///
+/// This allows the NixOS module to use LoadCredential without a shell wrapper,
+/// while still working with plain env vars in development.
+pub fn get_secret(
+  credential_name: String,
+  env_var_name: String,
+) -> Result(String, String) {
+  let from_credential = case envoy.get("CREDENTIALS_DIRECTORY") {
+    Ok(dir) ->
+      case file_read(dir <> "/" <> credential_name) {
+        Ok(bits) ->
+          case bit_array.to_string(bits) {
+            Ok(s) -> Ok(string.trim(s))
+            Error(_) -> Error(Nil)
+          }
+        Error(_) -> Error(Nil)
+      }
+    Error(_) -> Error(Nil)
+  }
+  case from_credential {
+    Ok(value) -> Ok(value)
+    Error(_) ->
+      envoy.get(env_var_name)
+      |> result.map_error(fn(_) {
+        "Missing credential: "
+        <> credential_name
+        <> " / env var: "
+        <> env_var_name
+      })
+  }
+}
+
 // XDG DIRECTORIES -------------------------------------------------------------
 
 const app_name = "home-terminal"

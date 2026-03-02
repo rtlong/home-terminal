@@ -20,6 +20,7 @@ import gleam/result
 import gleam/string
 import log
 import shellout
+import state
 import spoke/mqtt
 import spoke/mqtt_actor
 import spoke/tcp
@@ -66,8 +67,7 @@ pub fn config_from_env() -> Result(Config, String) {
     |> result.replace_error("MQTT_USERNAME not set"),
   )
   use mqtt_password <- result.try(
-    envoy.get("MQTT_PASSWORD")
-    |> result.replace_error("MQTT_PASSWORD not set"),
+    state.get_secret("mqtt_password", "MQTT_PASSWORD"),
   )
   let mqtt_port =
     envoy.get("MQTT_PORT")
