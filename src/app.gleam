@@ -56,11 +56,7 @@ fn try_start(
 pub fn main() {
   trap_sigterm()
 
-  // Set up file logging before anything else.
-  let log_path = log.default_path()
-  log.set_path(log_path)
   log.println("[app] starting")
-  log.println("[app] log:        " <> log_path)
   log.println("[app] config_dir: " <> state.config_dir())
   log.println("[app] cache_dir:  " <> state.cache_dir())
   log.println("[app] state_dir:  " <> state.state_dir())

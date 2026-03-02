@@ -1,36 +1,25 @@
-// Simple file logger.
+// Simple logger — writes timestamped lines to stdout.
 //
-// Appends timestamped lines to $XDG_STATE_HOME/home-terminal/app.log via FFI.
-// The log path is set once at startup by calling set_path/1.
-// Falls back to io.println if no path has been set (e.g. in tests).
+// Timestamps are UTC ISO-8601 format (second precision).
+// When running under systemd, journald captures stdout and adds its own
+// metadata; the in-band timestamp makes log lines self-contained when
+// reading raw journal output.
 
 import gleam/io
-import state
-
-// MODULE-LEVEL MUTABLE PATH ---------------------------------------------------
-// We store the log path in the process dictionary so it's accessible without
-// threading it through every call site.
-
-pub fn set_path(path: String) -> Nil {
-  log_ffi_set_path(path)
-}
+import gleam/string
+import gleam/time/duration
+import gleam/time/timestamp
 
 pub fn println(line: String) -> Nil {
-  case log_ffi_get_path() {
-    "" -> io.println(line)
-    path -> log_ffi_write_line(path, line)
-  }
+  let ts =
+    timestamp.system_time()
+    |> timestamp.to_rfc3339(duration.seconds(0))
+    // Trim sub-second precision: "2026-03-01T15:03:53.123Z" -> "2026-03-01T15:03:53"
+    |> fn(s) {
+      case string.split_once(s, ".") {
+        Ok(#(before, _)) -> before
+        Error(_) -> s
+      }
+    }
+  io.println(ts <> " " <> line)
 }
-
-pub fn default_path() -> String {
-  state.state_dir() <> "/app.log"
-}
-
-@external(erlang, "log_ffi", "set_path")
-fn log_ffi_set_path(path: String) -> Nil
-
-@external(erlang, "log_ffi", "get_path")
-fn log_ffi_get_path() -> String
-
-@external(erlang, "log_ffi", "write_line")
-fn log_ffi_write_line(path: String, line: String) -> Nil
