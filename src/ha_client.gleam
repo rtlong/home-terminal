@@ -620,12 +620,22 @@ fn set_display_power(config: Config, on: Bool) -> Nil {
       log.println(
         "[ha_client] running: wlr-randr --output " <> output <> " " <> flag,
       )
+      // Pass Wayland env vars explicitly — open_port does not reliably inherit
+      // the beam process environment for these display-related variables.
+      let wayland_env =
+        [
+          envoy.get("WAYLAND_DISPLAY")
+            |> result.map(fn(v) { #("WAYLAND_DISPLAY", v) }),
+          envoy.get("XDG_RUNTIME_DIR")
+            |> result.map(fn(v) { #("XDG_RUNTIME_DIR", v) }),
+        ]
+        |> list.filter_map(fn(r) { r })
       case
         shellout.command(
           run: "wlr-randr",
           with: ["--output", output, flag],
           in: ".",
-          opt: [],
+          opt: [shellout.SetEnvironment(wayland_env)],
         )
       {
         Ok(out) -> {
