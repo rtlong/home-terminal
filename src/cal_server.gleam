@@ -13,9 +13,11 @@
 
 import cal.{type Event}
 import cal_dav
+import demo_data
 import gleam/dict
 import gleam/erlang/process.{type Subject}
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/order
 import gleam/otp/actor
 import gleam/string
@@ -91,6 +93,9 @@ type State {
     ical_last_fetched: dict.Dict(String, Int),
     /// Per-iCal-feed cached events (URL → events from last fetch).
     ical_cached_events: dict.Dict(String, List(Event)),
+    /// When set, the server is in demo mode: no CalDAV fetches are performed;
+    /// events are generated deterministically from this config on each poll.
+    demo_cfg: Option(demo_data.DemoConfig),
   )
 }
 
@@ -184,6 +189,48 @@ pub fn start(
           leg_cache: travel_caches.leg_cache,
           ical_last_fetched: ical_cache.last_fetched,
           ical_cached_events: ical_cache.cached_events,
+          demo_cfg: None,
+        )
+      actor.initialised(actor_state) |> actor.returning(self_subject) |> Ok
+    })
+    |> actor.on_message(handle_message)
+    |> actor.start
+
+  case result {
+    Ok(started) -> Ok(started.data)
+    Error(err) -> Error(err)
+  }
+}
+
+/// Start the calendar server in demo mode.
+/// No CalDAV credentials are required.  Events are generated deterministically
+/// from a seed derived from the current day, and regenerated on each poll so
+/// they always refer to the correct "next 7 days" window.
+pub fn start_demo() -> Result(Server, actor.StartError) {
+  let seed = demo_data.daily_seed()
+  let demo_cfg = demo_data.generate_config(seed)
+
+  log.println("[cal_server] demo mode — seed " <> string.inspect(seed))
+
+  let result =
+    actor.new_with_initialiser(5000, fn(self_subject) {
+      process.send(self_subject, PollTimerFired)
+      let actor_state =
+        State(
+          self: self_subject,
+          dav_config: cal_dav.empty_config(),
+          config_dir: "",
+          cache_dir: "",
+          clients: [],
+          events: Error("Loading…"),
+          calendar_names: [],
+          cal_config: demo_cfg.config,
+          fetched_at: 0,
+          travel_cache: demo_cfg.travel_cache,
+          leg_cache: demo_cfg.leg_cache,
+          ical_last_fetched: dict.new(),
+          ical_cached_events: dict.new(),
+          demo_cfg: Some(demo_cfg),
         )
       actor.initialised(actor_state) |> actor.returning(self_subject) |> Ok
     })
@@ -286,26 +333,47 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
       )
 
     PollTimerFired -> {
-      log.println("[cal_server] fetching events...")
-      // Spawn the fetch so the actor mailbox stays unblocked.
-      // ClientConnected messages (and the cached-data immediate reply) are
-      // processed while the fetch is in flight.
-      let self = state.self
-      let dav_config = state.dav_config
-      let ical_urls = state.cal_config.ical_urls
-      let ical_lf = state.ical_last_fetched
-      let ical_ce = state.ical_cached_events
-      process.spawn(fn() {
-        let dav_result = cal_dav.fetch_events(dav_config)
-        let now_secs = unix_seconds_now()
-        // Fetch external iCal feeds, respecting per-feed refresh intervals.
-        let ics_result =
-          ical_fetch.fetch_all(ical_urls, now_secs, ical_lf, ical_ce)
-        process.send(self, FetchCompleted(dav_result:, ics_result:))
-      })
       process.send_after(state.self, poll_interval_ms, PollTimerFired)
       |> ignore_timer
-      actor.continue(state)
+      case state.demo_cfg {
+        // ── Demo mode: generate events deterministically, no network I/O ──
+        Some(demo_cfg) -> {
+          let now = timestamp.system_time()
+          let today = timestamp.to_calendar(now, calendar.local_offset()).0
+          let #(events, cal_names) = demo_data.generate_events(demo_cfg, today)
+          log.println(
+            "[cal_server] demo — generated "
+            <> string.inspect(list.length(events))
+            <> " events",
+          )
+          let new_state =
+            State(
+              ..state,
+              events: Ok(events),
+              calendar_names: cal_names,
+              fetched_at: unix_seconds_now(),
+            )
+          broadcast(new_state)
+          actor.continue(new_state)
+        }
+        // ── Normal mode: spawn a fetch process ────────────────────────────
+        None -> {
+          log.println("[cal_server] fetching events...")
+          let self = state.self
+          let dav_config = state.dav_config
+          let ical_urls = state.cal_config.ical_urls
+          let ical_lf = state.ical_last_fetched
+          let ical_ce = state.ical_cached_events
+          process.spawn(fn() {
+            let dav_result = cal_dav.fetch_events(dav_config)
+            let now_secs = unix_seconds_now()
+            let ics_result =
+              ical_fetch.fetch_all(ical_urls, now_secs, ical_lf, ical_ce)
+            process.send(self, FetchCompleted(dav_result:, ics_result:))
+          })
+          actor.continue(state)
+        }
+      }
     }
 
     FetchCompleted(dav_result:, ics_result:) -> {
@@ -319,7 +387,22 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
           ))
         Error(err) ->
           case ics_result.events {
-            [] -> Error(err)
+            // No iCal events either — fall back to whatever we already have
+            // cached in state rather than clobbering the UI with an error.
+            [] ->
+              case state.events {
+                Ok(cached) -> {
+                  log.println(
+                    "[cal_server] fetch error: "
+                    <> err
+                    <> " — keeping "
+                    <> string.inspect(list.length(cached))
+                    <> " cached events",
+                  )
+                  Ok(#(state.calendar_names, cached))
+                }
+                Error(_) -> Error(err)
+              }
             _ -> Ok(#(ics_result.names, ics_result.events))
           }
       }

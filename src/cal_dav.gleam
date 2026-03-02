@@ -36,6 +36,11 @@ pub type Config {
   Config(url: String, username: String, password: String)
 }
 
+/// An empty/placeholder Config for demo mode (no real server).
+pub fn empty_config() -> Config {
+  Config(url: "", username: "", password: "")
+}
+
 // PUBLIC API ------------------------------------------------------------------
 
 /// Fetch all events in the next 7 days from the CalDAV server.

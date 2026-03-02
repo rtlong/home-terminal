@@ -57,15 +57,25 @@ pub fn main() {
   trap_sigterm()
 
   log.println("[app] starting")
-  log.println("[app] config_dir: " <> state.config_dir())
-  log.println("[app] cache_dir:  " <> state.cache_dir())
-  log.println("[app] state_dir:  " <> state.state_dir())
+  let demo_mode = envoy.get("DEMO_MODE") == Ok("1")
 
-  // Load CalDAV credentials and start the shared calendar server.
-  // Crash hard on misconfiguration rather than silently serving stale data.
-  let assert Ok(config) = cal_dav.config_from_env()
-  let assert Ok(cal_server) =
-    cal_server.start(config, state.config_dir(), state.cache_dir())
+  case demo_mode {
+    True -> log.println("[app] DEMO MODE — no CalDAV credentials required")
+    False -> {
+      log.println("[app] config_dir: " <> state.config_dir())
+      log.println("[app] cache_dir:  " <> state.cache_dir())
+      log.println("[app] state_dir:  " <> state.state_dir())
+    }
+  }
+
+  // Start the calendar server.  In demo mode no credentials are needed.
+  let assert Ok(cal_server) = case demo_mode {
+    True -> cal_server.start_demo()
+    False -> {
+      let assert Ok(config) = cal_dav.config_from_env()
+      cal_server.start(config, state.config_dir(), state.cache_dir())
+    }
+  }
 
   // Optionally start Home Assistant MQTT integration.
   let ha = case ha_client.config_from_env() {
