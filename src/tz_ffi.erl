@@ -1,5 +1,5 @@
 -module(tz_ffi).
--export([local_to_utc/7]).
+-export([local_to_utc/7, system_timezone/0]).
 
 %% local_to_utc(Year, Month, Day, Hour, Minute, Second, Timezone)
 %%   -> GregorianSeconds (integer, UTC)
@@ -36,4 +36,23 @@ local_to_utc(Year, Month, Day, Hour, Minute, Second, Timezone) ->
             calendar:datetime_to_gregorian_seconds(Utc);
         Utc ->
             calendar:datetime_to_gregorian_seconds(Utc)
+    end.
+
+%% system_timezone() -> binary() | undefined
+%%
+%% Returns the system's IANA timezone identifier (e.g., "America/New_York")
+%% by reading /etc/localtime symlink. Returns 'undefined' if unable to determine.
+system_timezone() ->
+    case file:read_link("/etc/localtime") of
+        {ok, Target} ->
+            %% Target is something like "/var/db/timezone/zoneinfo/America/New_York"
+            %% or "../usr/share/zoneinfo/America/New_York"
+            %% Extract the IANA timezone name (everything after "zoneinfo/")
+            TargetStr = binary_to_list(Target),
+            case string:split(TargetStr, "zoneinfo/", trailing) of
+                [_, TzName] -> list_to_binary(TzName);
+                _ -> undefined
+            end;
+        {error, _} ->
+            undefined
     end.

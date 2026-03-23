@@ -45,6 +45,42 @@ fn tz_local_to_utc(
   tz: String,
 ) -> Int
 
+/// Get the system's IANA timezone identifier (e.g., "America/New_York").
+/// Returns an atom that can be checked with is_atom/1 - if it's the atom 'undefined',
+/// no system timezone could be determined.
+@external(erlang, "tz_ffi", "system_timezone")
+fn tz_system_timezone() -> a
+
+@external(erlang, "erlang", "is_binary")
+fn is_binary(a: a) -> Bool
+
+/// Get the system timezone as a String, or Error if unavailable.
+/// This uses an unsafe coercion since we've checked it's a binary (String in Gleam).
+fn get_system_timezone() -> Result(String, Nil) {
+  let tz = tz_system_timezone()
+  case is_binary(tz) {
+    True -> {
+      // SAFETY: We just checked it's a binary with is_binary/1.
+      // In Gleam/Erlang, binaries and Strings are the same type at runtime.
+      let tz_str = force_string(tz)
+      Ok(tz_str)
+    }
+    False -> Error(Nil)
+  }
+}
+
+// Unsafe coercion from dynamic value to String.
+// Only safe to call after verifying it's a binary with is_binary/1.
+@external(erlang, "erlang", "binary_to_list")
+fn binary_to_list(a: a) -> List(Int)
+
+@external(erlang, "erlang", "list_to_binary")
+fn list_to_binary(a: List(Int)) -> String
+
+fn force_string(a: a) -> String {
+  a |> binary_to_list |> list_to_binary
+}
+
 // PUBLIC API ------------------------------------------------------------------
 
 /// Parse all VEVENT blocks found in `ical_text` and return events that fall
@@ -56,6 +92,7 @@ pub fn parse_events(
   window_end: timestamp.Timestamp,
 ) -> List(Event) {
   let local_offset = calendar.local_offset()
+  let system_tz = get_system_timezone()
   let raw_vevents =
     ical_text
     |> unfold_lines
@@ -73,6 +110,7 @@ pub fn parse_events(
       overrides,
       calendar_name,
       local_offset,
+      system_tz,
       window_start,
       window_end,
     )
@@ -136,6 +174,7 @@ fn expand_vevent(
   overrides: List(List(String)),
   calendar_name: String,
   local_offset: duration.Duration,
+  system_tz: Result(String, Nil),
   window_start: timestamp.Timestamp,
   window_end: timestamp.Timestamp,
 ) -> List(Event) {
@@ -173,8 +212,8 @@ fn expand_vevent(
       case get_prop_prefix(props, "DTSTART"), get_prop_prefix(props, "DTEND") {
         Ok(dtstart_raw), Ok(dtend_raw) -> {
           case
-            parse_event_time(dtstart_raw, dtstart_tzid, local_offset),
-            parse_event_time(dtend_raw, dtend_tzid, local_offset)
+            parse_event_time(dtstart_raw, dtstart_tzid, system_tz),
+            parse_event_time(dtend_raw, dtend_tzid, system_tz)
           {
             Ok(start), Ok(end) -> {
               // Check for RRULE:FREQ=WEEKLY
@@ -206,7 +245,7 @@ fn expand_vevent(
                 }
                 True -> {
                   // Collect EXDATEs as a list of raw date strings to exclude
-                  let exdates = collect_exdates(lines, local_offset)
+                  let exdates = collect_exdates(lines, system_tz)
 
                   // Find overrides for this UID
                   let uid_overrides =
@@ -233,6 +272,7 @@ fn expand_vevent(
                     exdates,
                     uid_overrides,
                     local_offset,
+                    system_tz,
                     window_start,
                     window_end,
                   )
@@ -267,12 +307,13 @@ fn expand_weekly(
   exdates: List(timestamp.Timestamp),
   uid_overrides: List(List(String)),
   local_offset: duration.Duration,
+  system_tz: Result(String, Nil),
   window_start: timestamp.Timestamp,
   window_end: timestamp.Timestamp,
 ) -> List(Event) {
   let override_events =
     list.filter_map(uid_overrides, fn(lines) {
-      parse_override_event(lines, uid, calendar_name, local_offset)
+      parse_override_event(lines, uid, calendar_name, local_offset, system_tz)
     })
 
   let instances = case master_start {
@@ -291,6 +332,7 @@ fn expand_weekly(
         description,
         url,
         local_offset,
+        system_tz,
         window_start,
         window_end,
         [],
@@ -318,6 +360,7 @@ fn expand_weekly(
         description,
         url,
         local_offset,
+        system_tz,
         window_start_date,
         window_end_date,
         [],
@@ -440,6 +483,7 @@ fn generate_weekly_allday(
   description: String,
   url: String,
   local_offset: duration.Duration,
+  system_tz: Result(String, Nil),
   window_start_date: calendar.Date,
   window_end_date: calendar.Date,
   acc: List(Event),
@@ -478,6 +522,7 @@ fn generate_weekly_allday(
             description,
             url,
             local_offset,
+            system_tz,
             window_start_date,
             window_end_date,
             acc,
@@ -505,6 +550,7 @@ fn generate_weekly_allday(
                 description,
                 url,
                 local_offset,
+                system_tz,
                 window_start_date,
                 window_end_date,
                 acc,
@@ -516,7 +562,7 @@ fn generate_weekly_allday(
                   let oprops = list.filter_map(ol, parse_property)
                   case get_prop_prefix(oprops, "RECURRENCE-ID") {
                     Ok(rec_raw) -> {
-                      case parse_event_time(rec_raw, Error(Nil), local_offset) {
+                      case parse_event_time(rec_raw, Error(Nil), system_tz) {
                         Ok(AllDay(rec_date)) ->
                           case rec_date == current_date {
                             True ->
@@ -525,6 +571,7 @@ fn generate_weekly_allday(
                                 uid,
                                 calendar_name,
                                 local_offset,
+                                system_tz,
                               )
                             False -> Error(Nil)
                           }
@@ -538,6 +585,7 @@ fn generate_weekly_allday(
                                 uid,
                                 calendar_name,
                                 local_offset,
+                                system_tz,
                               )
                             False -> Error(Nil)
                           }
@@ -578,6 +626,7 @@ fn generate_weekly_allday(
                 description,
                 url,
                 local_offset,
+                system_tz,
                 window_start_date,
                 window_end_date,
                 [event, ..acc],
@@ -604,6 +653,7 @@ fn generate_weekly_timed(
   description: String,
   url: String,
   local_offset: duration.Duration,
+  system_tz: Result(String, Nil),
   window_start: timestamp.Timestamp,
   window_end: timestamp.Timestamp,
   acc: List(Event),
@@ -645,6 +695,7 @@ fn generate_weekly_timed(
             description,
             url,
             local_offset,
+            system_tz,
             window_start,
             window_end,
             acc,
@@ -671,6 +722,7 @@ fn generate_weekly_timed(
                 description,
                 url,
                 local_offset,
+                system_tz,
                 window_start,
                 window_end,
                 acc,
@@ -684,7 +736,7 @@ fn generate_weekly_timed(
                   case get_prop_prefix(oprops, "RECURRENCE-ID") {
                     Ok(rec_raw) -> {
                       case
-                        parse_event_time(rec_raw, rec_id_tzid, local_offset)
+                        parse_event_time(rec_raw, rec_id_tzid, system_tz)
                       {
                         Ok(rec_time) -> {
                           case
@@ -700,6 +752,7 @@ fn generate_weekly_timed(
                                 uid,
                                 calendar_name,
                                 local_offset,
+                                system_tz,
                               )
                             False -> Error(Nil)
                           }
@@ -740,6 +793,7 @@ fn generate_weekly_timed(
                 description,
                 url,
                 local_offset,
+                system_tz,
                 window_start,
                 window_end,
                 [event, ..acc],
@@ -757,7 +811,8 @@ fn parse_override_event(
   lines: List(String),
   uid: String,
   calendar_name: String,
-  local_offset: duration.Duration,
+  _local_offset: duration.Duration,
+  system_tz: Result(String, Nil),
 ) -> Result(Event, Nil) {
   let props = list.filter_map(lines, parse_property)
   use summary <- result.try(get_prop(props, "SUMMARY"))
@@ -783,12 +838,12 @@ fn parse_override_event(
   use start <- result.try(parse_event_time(
     dtstart_raw,
     dtstart_tzid,
-    local_offset,
+    system_tz,
   ))
   use end <- result.try(parse_event_time(
     dtend_raw,
     dtend_tzid,
-    local_offset,
+    system_tz,
   ))
   Ok(Event(
     uid:,
@@ -806,7 +861,7 @@ fn parse_override_event(
 /// Collect all EXDATE values as Timestamps.
 fn collect_exdates(
   lines: List(String),
-  local_offset: duration.Duration,
+  system_tz: Result(String, Nil),
 ) -> List(timestamp.Timestamp) {
   list.filter_map(lines, fn(line) {
     let upper = string.uppercase(line)
@@ -814,7 +869,7 @@ fn collect_exdates(
       True, Ok(#(_param_part, value)) -> {
         // Reuse get_tzid_param by passing the single line as a one-element list.
         let tzid = get_tzid_param([line], "EXDATE")
-        parse_event_time(string.trim(value), tzid, local_offset)
+        parse_event_time(string.trim(value), tzid, system_tz)
         |> result.try(fn(et) {
           case et {
             AtTime(ts) -> Ok(ts)
@@ -985,11 +1040,11 @@ fn is_floating_datetime(value: String) -> Bool {
 ///   Ok("America/Chicago") — TZID-annotated: converted via qdate_localtime FFI
 ///   Error(Nil)            — UTC (Z suffix) or floating (server-local fallback)
 ///
-/// `local_offset` is used only for floating datetimes (no Z, no TZID).
+/// `system_tz` is the system's IANA timezone, used for floating datetimes (no Z, no TZID).
 fn parse_event_time(
   value: String,
   tzid: Result(String, Nil),
-  local_offset: duration.Duration,
+  system_tz: Result(String, Nil),
 ) -> Result(EventTime, Nil) {
   let trimmed = string.trim(value)
   case string.length(trimmed) {
@@ -1004,19 +1059,19 @@ fn parse_event_time(
           Ok(AtTime(ts))
         }
         Error(Nil) -> {
-          use ts <- result.try(parse_datetime(trimmed))
-          let adjusted = case is_floating_datetime(trimmed) {
-            // Floating datetime: treat as server-local wall clock.
-            // Subtract local offset so that to_calendar(ts, local_offset) = wall clock.
-            True -> {
-              let offset_secs = duration.to_seconds(local_offset)
-              let neg_offset = duration.seconds(0 - float.truncate(offset_secs))
-              timestamp.add(ts, neg_offset)
+          case is_floating_datetime(trimmed), system_tz {
+            // Floating datetime with known system timezone: treat as wall clock in system TZ.
+            // Use the same DST-aware conversion as TZID-annotated events.
+            True, Ok(tz) -> {
+              use ts <- result.try(parse_datetime_with_tz(trimmed, tz))
+              Ok(AtTime(ts))
             }
-            // UTC (Z suffix): ts is already correct.
-            False -> ts
+            // UTC (Z suffix) or floating with unknown system TZ: parse as UTC.
+            _, _ -> {
+              use ts <- result.try(parse_datetime(trimmed))
+              Ok(AtTime(ts))
+            }
           }
-          Ok(AtTime(adjusted))
         }
       }
     }
