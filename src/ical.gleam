@@ -20,6 +20,7 @@
 import cal.{type Event, type EventTime, AllDay, AtTime, Event}
 import gleam/float
 import gleam/int
+import gleam/io
 import gleam/list
 import gleam/order.{Eq, Lt}
 import gleam/result
@@ -1047,6 +1048,20 @@ fn parse_event_time(
   system_tz: Result(String, Nil),
 ) -> Result(EventTime, Nil) {
   let trimmed = string.trim(value)
+  
+  // DEBUG: Log datetime parsing
+  let _ = case string.length(trimmed), tzid, is_floating_datetime(trimmed) {
+    len, Ok(tz), _ -> {
+      io.println("DEBUG: Parsing datetime: '" <> trimmed <> "' with TZID=" <> tz <> " (len=" <> int.to_string(len) <> ")")
+    }
+    len, Error(Nil), True -> {
+      io.println("DEBUG: Parsing FLOATING datetime: '" <> trimmed <> "' with system_tz=" <> result.unwrap(system_tz, "UNKNOWN") <> " (len=" <> int.to_string(len) <> ")")
+    }
+    len, Error(Nil), False -> {
+      io.println("DEBUG: Parsing UTC datetime: '" <> trimmed <> "' (len=" <> int.to_string(len) <> ")")
+    }
+  }
+  
   case string.length(trimmed) {
     // DATE format: YYYYMMDD
     8 -> parse_date(trimmed) |> result.map(AllDay)
