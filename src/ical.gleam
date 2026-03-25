@@ -4,9 +4,11 @@
 // cal.Event values. Only the fields used by the 7-day view are extracted:
 //   UID, SUMMARY, DTSTART, DTEND, LOCATION.
 //
-// Recurring events (RRULE:FREQ=WEEKLY) are expanded into individual instances
-// within the supplied time window. EXDATE exclusions are respected.
-// RECURRENCE-ID overrides replace the corresponding generated instance.
+// Recurring events (RRULE with FREQ=DAILY/WEEKLY/MONTHLY/YEARLY) are expanded 
+// into individual instances within the supplied time window. EXDATE exclusions 
+// are respected. RECURRENCE-ID overrides replace the corresponding generated instance.
+// Recurrence expansion is DST-aware: events maintain their wall-clock time across 
+// DST transitions (e.g., "5:00 PM every week" stays at 5:00 PM regardless of DST).
 //
 // DTSTART/DTEND can be in one of three formats:
 //   20240115              — all-day (DATE)
@@ -80,6 +82,56 @@ fn list_to_binary(a: List(Int)) -> String
 
 fn force_string(a: a) -> String {
   a |> binary_to_list |> list_to_binary
+}
+
+// RECURRENCE TYPES ------------------------------------------------------------
+
+/// Recurrence frequency types from RRULE
+type RecurrenceFreq {
+  Daily
+  Weekly
+  Monthly
+  Yearly
+}
+
+/// Parsed RRULE data
+type RecurrenceRule {
+  RecurrenceRule(freq: RecurrenceFreq, interval: Int)
+}
+
+/// Parse an RRULE string to extract FREQ and INTERVAL.
+/// Example: "FREQ=WEEKLY;INTERVAL=2" -> RecurrenceRule(Weekly, 2)
+/// Returns Error if FREQ is missing or unrecognized.
+fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
+  let upper = string.uppercase(rrule)
+  let parts = string.split(upper, ";")
+  
+  // Extract FREQ
+  let freq_result = {
+    list.find(parts, fn(part) { string.starts_with(part, "FREQ=") })
+    |> result.try(fn(freq_part) {
+      case string.replace(freq_part, "FREQ=", "") {
+        "DAILY" -> Ok(Daily)
+        "WEEKLY" -> Ok(Weekly)
+        "MONTHLY" -> Ok(Monthly)
+        "YEARLY" -> Ok(Yearly)
+        _ -> Error(Nil)
+      }
+    })
+  }
+  
+  // Extract INTERVAL (default to 1 if not present)
+  let interval = {
+    list.find(parts, fn(part) { string.starts_with(part, "INTERVAL=") })
+    |> result.try(fn(interval_part) {
+      string.replace(interval_part, "INTERVAL=", "")
+      |> int.parse
+    })
+    |> result.unwrap(1)
+  }
+  
+  use freq <- result.try(freq_result)
+  Ok(RecurrenceRule(freq:, interval:))
 }
 
 // PUBLIC API ------------------------------------------------------------------
@@ -224,15 +276,14 @@ fn expand_vevent(
             parse_event_time(dtend_raw, dtend_tzid, system_tz)
           {
             Ok(start), Ok(end) -> {
-              // Check for RRULE:FREQ=WEEKLY
-              let has_weekly_rrule = case get_prop(props, "RRULE") {
-                Ok(rrule) ->
-                  string.contains(string.uppercase(rrule), "FREQ=WEEKLY")
-                Error(Nil) -> False
+              // Parse RRULE to check for recurrence
+              let recurrence = case get_prop(props, "RRULE") {
+                Ok(rrule) -> parse_rrule(rrule)
+                Error(Nil) -> Error(Nil)
               }
 
-              case has_weekly_rrule {
-                False -> {
+              case recurrence {
+                Error(Nil) -> {
                   // Non-recurring: include if it overlaps the window
                   case event_in_window(start, end, window_start, window_end) {
                     True -> [
@@ -251,7 +302,7 @@ fn expand_vevent(
                     False -> []
                   }
                 }
-                True -> {
+                Ok(rrule) -> {
                   // Collect EXDATEs as a list of raw date strings to exclude
                   let exdates = collect_exdates(lines, system_tz)
 
@@ -265,10 +316,11 @@ fn expand_vevent(
                   // Compute event duration to apply to each instance
                   let duration_secs = event_duration_secs(start, end)
 
-                  // Generate weekly instances within window
+                  // Generate recurring instances within window
                   // Determine the event timezone: TZID if present, otherwise system_tz for floating
                   let event_tz = result.or(dtstart_tzid, system_tz)
-                  expand_weekly(
+                  expand_recurring(
+                    rrule,
                     uid,
                     summary,
                     calendar_name,
@@ -300,11 +352,12 @@ fn expand_vevent(
   }
 }
 
-/// Generate weekly occurrences of a recurring event within [window_start, window_end).
+/// Generate recurring occurrences of an event within [window_start, window_end).
 /// - Skip dates in exdates
 /// - Replace instances that have a matching RECURRENCE-ID override
 /// Dispatches to timed or all-day expansion based on master_start type.
-fn expand_weekly(
+fn expand_recurring(
+  rrule: RecurrenceRule,
   uid: String,
   summary: String,
   calendar_name: String,
@@ -330,8 +383,9 @@ fn expand_weekly(
 
   let instances = case master_start {
     AtTime(base_ts) ->
-      // Timed recurring event: expand by advancing timestamps weekly.
-      generate_weekly_timed(
+      // Timed recurring event: expand by advancing timestamps.
+      generate_recurring_timed(
+        rrule,
         base_ts,
         duration_secs,
         exdates,
@@ -352,7 +406,7 @@ fn expand_weekly(
       )
     AllDay(base_date) -> {
       // All-day recurring event: compute the event's day-count duration,
-      // then expand by advancing the date by 7 days at a time.
+      // then expand by advancing the date.
       let day_count = case master_end {
         AllDay(end_date) -> date_day_count(base_date, end_date)
         _ -> 1
@@ -360,7 +414,8 @@ fn expand_weekly(
       let window_start_date =
         timestamp.to_calendar(window_start, local_offset).0
       let window_end_date = timestamp.to_calendar(window_end, local_offset).0
-      generate_weekly_allday(
+      generate_recurring_allday(
+        rrule,
         base_date,
         day_count,
         exdates,
@@ -400,6 +455,27 @@ fn advance_date_by_n(date: calendar.Date, n: Int) -> calendar.Date {
   case n <= 0 {
     True -> date
     False -> advance_date_by_n(advance_one_day(date), n - 1)
+  }
+}
+
+/// Advance a Date by exactly `n` months using calendar arithmetic.
+fn advance_date_by_months(date: calendar.Date, n: Int) -> calendar.Date {
+  case n <= 0 {
+    True -> date
+    False -> advance_date_by_months(advance_one_month(date), n - 1)
+  }
+}
+
+/// Advance a Date by exactly `n` years using calendar arithmetic.
+fn advance_date_by_years(date: calendar.Date, n: Int) -> calendar.Date {
+  calendar.Date(..date, year: date.year + n)
+}
+
+fn advance_one_month(date: calendar.Date) -> calendar.Date {
+  case date.month {
+    calendar.December ->
+      calendar.Date(year: date.year + 1, month: calendar.January, day: date.day)
+    _ -> calendar.Date(..date, month: next_month_cal(date.month))
   }
 }
 
@@ -482,8 +558,9 @@ fn date_before(a: calendar.Date, b: calendar.Date) -> Bool {
   calendar.naive_date_compare(a, b) == order.Lt
 }
 
-/// Expand an all-day weekly recurring event within [window_start_date, window_end_date).
-fn generate_weekly_allday(
+/// Expand an all-day recurring event within [window_start_date, window_end_date).
+fn generate_recurring_allday(
+  rrule: RecurrenceRule,
   current_date: calendar.Date,
   day_count: Int,
   exdates: List(timestamp.Timestamp),
@@ -501,8 +578,10 @@ fn generate_weekly_allday(
   window_end_date: calendar.Date,
   acc: List(Event),
 ) -> List(Event) {
+  let RecurrenceRule(freq, interval) = rrule
+  
   // Stop when current_date >= window_end_date (no more overlap possible).
-  // Guard against infinite loops: if we've gone more than 500 weeks past the window.
+  // Guard against infinite loops: if we've gone more than 500 intervals past the window.
   let past_end = !date_before(current_date, window_end_date)
   let too_far =
     !date_before(current_date, advance_date_by_n(window_end_date, 500 * 7))
@@ -510,7 +589,14 @@ fn generate_weekly_allday(
   case past_end || too_far {
     True -> list.reverse(acc)
     False -> {
-      let next_date = advance_date_by_n(current_date, 7)
+      // Advance the date based on frequency and interval
+      let next_date = case freq {
+        Daily -> advance_date_by_n(current_date, interval)
+        Weekly -> advance_date_by_n(current_date, interval * 7)
+        Monthly -> advance_date_by_months(current_date, interval)
+        Yearly -> advance_date_by_years(current_date, interval)
+      }
+      
       let instance_end_date = advance_date_by_n(current_date, day_count)
 
       // In window if instance start < window_end AND instance end > window_start
@@ -522,7 +608,8 @@ fn generate_weekly_allday(
 
       let new_acc = case in_window {
         False ->
-          generate_weekly_allday(
+          generate_recurring_allday(
+            rrule,
             next_date,
             day_count,
             exdates,
@@ -550,7 +637,8 @@ fn generate_weekly_allday(
 
           case is_excluded {
             True ->
-              generate_weekly_allday(
+              generate_recurring_allday(
+                rrule,
                 next_date,
                 day_count,
                 exdates,
@@ -626,7 +714,8 @@ fn generate_weekly_allday(
                   )
               }
 
-              generate_weekly_allday(
+              generate_recurring_allday(
+                rrule,
                 next_date,
                 day_count,
                 exdates,
@@ -653,7 +742,8 @@ fn generate_weekly_allday(
   }
 }
 
-fn generate_weekly_timed(
+fn generate_recurring_timed(
+  rrule: RecurrenceRule,
   current_ts: timestamp.Timestamp,
   duration_secs: Int,
   exdates: List(timestamp.Timestamp),
@@ -672,6 +762,8 @@ fn generate_weekly_timed(
   window_end: timestamp.Timestamp,
   acc: List(Event),
 ) -> List(Event) {
+  let RecurrenceRule(freq, interval) = rrule
+  
   // Stop if we've gone past window_end or too far beyond it (loop guard)
   let past_end = timestamp.compare(current_ts, window_end) != Lt
   let too_far =
@@ -684,8 +776,8 @@ fn generate_weekly_timed(
   case past_end || too_far {
     True -> list.reverse(acc)
     False -> {
-      // Add 7 days while preserving wall-clock time across DST transitions
-      let next_ts = add_week_dst_aware(current_ts, event_tz, local_offset)
+      // Advance by the recurrence interval while preserving wall-clock time across DST transitions
+      let next_ts = add_recurrence_dst_aware(current_ts, freq, interval, event_tz, local_offset)
 
       // Only emit if current_ts is within or overlapping the window
       let instance_end_ts =
@@ -696,7 +788,8 @@ fn generate_weekly_timed(
 
       let new_acc = case in_window {
         False ->
-          generate_weekly_timed(
+          generate_recurring_timed(
+            rrule,
             next_ts,
             duration_secs,
             exdates,
@@ -724,7 +817,8 @@ fn generate_weekly_timed(
 
           case is_excluded {
             True ->
-              generate_weekly_timed(
+              generate_recurring_timed(
+                rrule,
                 next_ts,
                 duration_secs,
                 exdates,
@@ -796,7 +890,8 @@ fn generate_weekly_timed(
                   )
               }
 
-              generate_weekly_timed(
+              generate_recurring_timed(
+                rrule,
                 next_ts,
                 duration_secs,
                 exdates,
@@ -1110,11 +1205,12 @@ fn parse_event_time(
   }
 }
 
-/// Add one week to a timestamp while preserving wall-clock time across DST transitions.
-/// This ensures recurring events maintain their local time (e.g., "5:00 PM every week")
-/// even when crossing DST boundaries.
-fn add_week_dst_aware(
+/// Add a recurrence interval to a timestamp while preserving wall-clock time across DST transitions.
+/// This ensures recurring events maintain their local time even when crossing DST boundaries.
+fn add_recurrence_dst_aware(
   ts: timestamp.Timestamp,
+  freq: RecurrenceFreq,
+  interval: Int,
   event_tz: Result(String, Nil),
   local_offset: duration.Duration,
 ) -> timestamp.Timestamp {
@@ -1124,8 +1220,14 @@ fn add_week_dst_aware(
       let #(date, time) = timestamp.to_calendar(ts, local_offset)
       let calendar.TimeOfDay(hour, minute, second, _) = time
       
-      // Add 7 days to the date
-      let new_date = advance_date_by_n(date, 7)
+      // Advance the date based on frequency and interval
+      let new_date = case freq {
+        Daily -> advance_date_by_n(date, interval)
+        Weekly -> advance_date_by_n(date, interval * 7)
+        Monthly -> advance_date_by_months(date, interval)
+        Yearly -> advance_date_by_years(date, interval)
+      }
+      
       let Date(new_year, new_month, new_day) = new_date
       let new_month_int = calendar.month_to_int(new_month)
       
@@ -1136,8 +1238,14 @@ fn add_week_dst_aware(
       timestamp.from_unix_seconds(unix_secs)
     }
     Error(Nil) -> {
-      // No timezone info: fall back to simple 7-day addition
-      timestamp.add(ts, duration.seconds(7 * 86_400))
+      // No timezone info: fall back to simple time addition
+      let seconds = case freq {
+        Daily -> interval * 86_400
+        Weekly -> interval * 7 * 86_400
+        Monthly -> interval * 30 * 86_400  // Approximate
+        Yearly -> interval * 365 * 86_400  // Approximate
+      }
+      timestamp.add(ts, duration.seconds(seconds))
     }
   }
 }
