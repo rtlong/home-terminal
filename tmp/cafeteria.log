@@ -1,0 +1,1000 @@
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                        {line,27}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                   {home_terminal@@main,run_module,1,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                       [{file,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                            "/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/home_terminal@@main.erl"},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                        {line,24}]}]
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     neighbour:
+Mar 25 16:11:13 cafeteria home_terminal[22327]:       pid: <0.127.0>
+Mar 25 16:11:13 cafeteria home_terminal[22327]:       registered_name: []
+Mar 25 16:11:13 cafeteria home_terminal[22327]:       initial call: gleam@otp@actor:'-start/1-anonymous-0-'/0
+Mar 25 16:11:13 cafeteria home_terminal[22327]:       current_function: {gleam_erlang_ffi,select,2}
+Mar 25 16:11:13 cafeteria home_terminal[22327]:       ancestors: [<0.83.0>]
+Mar 25 16:11:13 cafeteria home_terminal[22327]:       message_queue_len: 0
+Mar 25 16:11:13 cafeteria home_terminal[22327]:       links: [<0.83.0>,<0.128.0>]
+Mar 25 16:11:13 cafeteria home_terminal[22327]:       trap_exit: false
+Mar 25 16:11:13 cafeteria home_terminal[22327]:       status: waiting
+Mar 25 16:11:13 cafeteria home_terminal[22327]:       heap_size: 514838
+Mar 25 16:11:13 cafeteria home_terminal[22327]:       stack_size: 12
+Mar 25 16:11:13 cafeteria home_terminal[22327]:       reductions: 4893397
+Mar 25 16:11:13 cafeteria home_terminal[22327]:       current_stacktrace: [{gleam_erlang_ffi,select,2,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                       [{file,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                        {line,52}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                   {gleam_erlang_ffi,select,1,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                       [{file,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                        {line,49}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                   {gleam@otp@actor,loop,1,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                       [{file,"src/gleam/otp/actor.gleam"},{line,466}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                   {proc_lib,init_p,3,[{file,"proc_lib.erl"},{line,317}]}]
+Mar 25 16:11:13 cafeteria home_terminal[22327]: runtime error: Erlang exit
+Mar 25 16:11:13 cafeteria home_terminal[22327]: An error occurred outside of Gleam.
+Mar 25 16:11:13 cafeteria home_terminal[22327]: erlang:exit(Badarg)
+Mar 25 16:11:13 cafeteria home_terminal[22327]: stacktrace:
+Mar 25 16:11:13 cafeteria home_terminal[22327]:   erlang.binary_to_list unknown source
+Mar 25 16:11:13 cafeteria home_terminal[22327]:   tz_ffi.system_timezone /build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl:51
+Mar 25 16:11:13 cafeteria home_terminal[22327]:   ical.parse_events src/ical.gleam:69
+Mar 25 16:11:13 cafeteria home_terminal[22327]:   gleam/list.map_loop src/gleam/list.gleam:391
+Mar 25 16:11:13 cafeteria home_terminal[22327]:   gleam/list.flat_map src/gleam/list.gleam:392
+Mar 25 16:11:13 cafeteria home_terminal[22327]:   cal_dav.-fetch_calendar_events/5-anonymous-1- src/cal_dav.gleam:225
+Mar 25 16:11:13 cafeteria home_terminal[22327]:   cal_dav.-fetch_events/1-anonymous-1- src/cal_dav.gleam:78
+Mar 25 16:11:13 cafeteria home_terminal[22327]:   gleam/list.map_loop src/gleam/list.gleam:391
+Mar 25 16:11:13 cafeteria home_terminal[22327]: =ERROR REPORT==== 25-Mar-2026::16:11:13.646717 ===
+Mar 25 16:11:13 cafeteria home_terminal[22327]: ** Generic server <0.142.0> terminating
+Mar 25 16:11:13 cafeteria home_terminal[22327]: ** Last message in was {'EXIT',<0.83.0>,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                         {badarg,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          [{erlang,binary_to_list,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                            ["/etc/zoneinfo/America/New_York"],
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                            [{error_info,#{module => erl_erts_errors}}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                           {tz_ffi,system_timezone,0,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                            [{file,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              "/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl"},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                             {line,51}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                           {ical,parse_events,4,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                            [{file,"src/ical.gleam"},{line,69}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                           {gleam@list,map_loop,3,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                            [{file,"src/gleam/list.gleam"},{line,391}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                           {gleam@list,flat_map,2,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                            [{file,"src/gleam/list.gleam"},{line,392}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                           {cal_dav,'-fetch_calendar_events/5-anonymous-1-',4,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                            [{file,"src/cal_dav.gleam"},{line,225}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                           {cal_dav,'-fetch_events/1-anonymous-1-',4,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                            [{file,"src/cal_dav.gleam"},{line,78}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                           {gleam@list,map_loop,3,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                            [{file,"src/gleam/list.gleam"},{line,391}]}]}}
+Mar 25 16:11:13 cafeteria home_terminal[22327]: ** When Server state == {state,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          {<0.142.0>,gleam@otp@static_supervisor},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          one_for_one,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          {[1,0],
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                           #{0 =>
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              {child,<0.143.0>,0,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                                start_child_callback,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                               permanent,false,5000,worker,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                               [gleam@otp@static_supervisor]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                             1 =>
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              {child,<0.144.0>,1,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                                start_child_callback,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                               permanent,false,infinity,supervisor,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                               [gleam@otp@static_supervisor]}}},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          undefined,2,5,[],0,0,never,1000,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          #Ref<0.2095402700.3946053633.57397>,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          gleam@otp@static_supervisor,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          {#{intensity => 2,period => 5,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                             strategy => one_for_one,auto_shutdown => never},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                           [#{id => 0,restart => permanent,shutdown => 5000,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              start =>
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                                start_child_callback,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              type => worker,significant => false},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                            #{id => 1,restart => permanent,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              shutdown => infinity,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              start =>
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                                start_child_callback,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              type => supervisor,significant => false}]}}
+Mar 25 16:11:13 cafeteria home_terminal[22327]: ** Reason for termination ==
+Mar 25 16:11:13 cafeteria home_terminal[22327]: ** {badarg,[{erlang,binary_to_list,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                     ["/etc/zoneinfo/America/New_York"],
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                     [{error_info,#{module => erl_erts_errors}}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:             {tz_ffi,system_timezone,0,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                     [{file,"/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl"},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                      {line,51}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:             {ical,parse_events,4,[{file,"src/ical.gleam"},{line,69}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:             {gleam@list,map_loop,3,[{file,"src/gleam/list.gleam"},{line,391}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:             {gleam@list,flat_map,2,[{file,"src/gleam/list.gleam"},{line,392}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:             {cal_dav,'-fetch_calendar_events/5-anonymous-1-',4,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                      [{file,"src/cal_dav.gleam"},{line,225}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:             {cal_dav,'-fetch_events/1-anonymous-1-',4,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                      [{file,"src/cal_dav.gleam"},{line,78}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:             {gleam@list,map_loop,3,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                         [{file,"src/gleam/list.gleam"},{line,391}]}]}
+Mar 25 16:11:13 cafeteria home_terminal[22327]: =CRASH REPORT==== 25-Mar-2026::16:11:13.648202 ===
+Mar 25 16:11:13 cafeteria home_terminal[22327]:   crasher:
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     initial call: supervisor:gleam@otp@static_supervisor/1
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     pid: <0.142.0>
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     registered_name: []
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     exception exit: {badarg,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                         [{erlang,binary_to_list,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              ["/etc/zoneinfo/America/New_York"],
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              [{error_info,#{module => erl_erts_errors}}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          {tz_ffi,system_timezone,0,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              [{file,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                                   "/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl"},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                               {line,51}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          {ical,parse_events,4,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              [{file,"src/ical.gleam"},{line,69}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          {gleam@list,map_loop,3,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              [{file,"src/gleam/list.gleam"},{line,391}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          {gleam@list,flat_map,2,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              [{file,"src/gleam/list.gleam"},{line,392}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          {cal_dav,'-fetch_calendar_events/5-anonymous-1-',4,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              [{file,"src/cal_dav.gleam"},{line,225}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          {cal_dav,'-fetch_events/1-anonymous-1-',4,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              [{file,"src/cal_dav.gleam"},{line,78}]},
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                          {gleam@list,map_loop,3,
+Mar 25 16:11:13 cafeteria home_terminal[22327]:                              [{file,"src/gleam/list.gleam"},{line,391}]}]}
+Mar 25 16:11:13 cafeteria home_terminal[22327]:       in function  gen_server:decode_msg/6 (gen_server.erl:2379)
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     ancestors: [<0.83.0>]
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     message_queue_len: 0
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     messages: []
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     links: []
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     dictionary: []
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     trap_exit: true
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     status: running
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     heap_size: 17731
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     stack_size: 29
+Mar 25 16:11:13 cafeteria home_terminal[22327]:     reductions: 25492
+Mar 25 16:11:13 cafeteria home_terminal[22327]:   neighbours:
+Mar 25 16:11:14 cafeteria systemd[1]: home-terminal.service: Main process exited, code=exited, status=1/FAILURE
+Mar 25 16:11:14 cafeteria systemd[1]: home-terminal.service: Failed with result 'exit-code'.
+Mar 25 16:11:14 cafeteria systemd[1]: home-terminal.service: Consumed 4.030s CPU time over 11.674s wall clock time, 87M memory peak, 94.9K incoming IP traffic, 16K outgoing IP traffic.
+Mar 25 16:11:19 cafeteria systemd[1]: home-terminal.service: Scheduled restart job, restart counter is at 19.
+Mar 25 16:11:19 cafeteria systemd[1]: Started home-terminal kiosk dashboard.
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [app] starting
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [app] config_dir: /var/lib/kiosk/.config/home-terminal
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [app] cache_dir:  /var/lib/kiosk/.cache/home-terminal
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [app] state_dir:  /var/lib/kiosk/.local/state/home-terminal
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [cal_server] config_dir: /var/lib/kiosk/.config/home-terminal
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [cal_server] cache_dir:  /var/lib/kiosk/.cache/home-terminal
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [cal_server] /var/lib/kiosk/.cache/home-terminal/cache.json — loaded 1172 events
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [cal_server] /var/lib/kiosk/.config/home-terminal/config.json — loaded (2 people, 2 ical urls)
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [cal_server] /var/lib/kiosk/.cache/home-terminal/travel_cache.json — loaded 18 travel entries, 47 leg entries
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [cal_server] /var/lib/kiosk/.cache/home-terminal/ical_cache.json — loaded 2 feed caches
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [cal_server] fetching events...
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [app] HA integration enabled, connecting to MQTT...
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [ha_client] connected to MQTT broker at homeassistant.lan
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [ha_client] recovered state: display_power=ON dark_mode=OFF
+Mar 25 16:11:21 cafeteria home_terminal[22367]: 2026-03-25T20:11:21 [ha_client] running: swaymsg output HDMI-A-2 power on
+Mar 25 16:11:22 cafeteria home_terminal[22367]: 2026-03-25T20:11:22 [ha_client] swaymsg output: [
+Mar 25 16:11:22 cafeteria home_terminal[22367]:   {
+Mar 25 16:11:22 cafeteria home_terminal[22367]:     "success": true
+Mar 25 16:11:22 cafeteria home_terminal[22367]:   }
+Mar 25 16:11:22 cafeteria home_terminal[22367]: ]
+Mar 25 16:11:22 cafeteria home_terminal[22367]: 2026-03-25T20:11:22 [ha_client] session established: discovery, state, subscriptions
+Mar 25 16:11:22 cafeteria home_terminal[22367]: 2026-03-25T20:11:22 [app] HA client started successfully
+Mar 25 16:11:22 cafeteria home_terminal[22367]: Listening on http://0.0.0.0:80
+Mar 25 16:11:25 cafeteria home_terminal[22367]: =CRASH REPORT==== 25-Mar-2026::16:11:25.203248 ===
+Mar 25 16:11:25 cafeteria home_terminal[22367]:   crasher:
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     initial call: cal_server:'-handle_message/2-anonymous-0-'/0
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     pid: <0.128.0>
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     registered_name: []
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     exception error: bad argument
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       in function  binary_to_list/1
+Mar 25 16:11:25 cafeteria home_terminal[22367]:          called as binary_to_list("/etc/zoneinfo/America/New_York")
+Mar 25 16:11:25 cafeteria home_terminal[22367]:          *** argument 1: not a binary
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       in call from tz_ffi:system_timezone/0 (/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl:51)
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       in call from ical:parse_events/4 (src/ical.gleam:69)
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       in call from gleam@list:map_loop/3 (src/gleam/list.gleam:391)
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       in call from gleam@list:flat_map/2 (src/gleam/list.gleam:392)
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       in call from cal_dav:'-fetch_calendar_events/5-anonymous-1-'/4 (src/cal_dav.gleam:225)
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       in call from cal_dav:'-fetch_events/1-anonymous-1-'/4 (src/cal_dav.gleam:78)
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       in call from gleam@list:map_loop/3 (src/gleam/list.gleam:391)
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     ancestors: [<0.127.0>,<0.83.0>]
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     message_queue_len: 0
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     messages: []
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     links: [<0.127.0>]
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     dictionary: []
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     trap_exit: false
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     status: running
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     heap_size: 75113
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     stack_size: 29
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     reductions: 1318258
+Mar 25 16:11:25 cafeteria home_terminal[22367]:   neighbours:
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     neighbour:
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       pid: <0.130.0>
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       registered_name: []
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       initial call: gleam@otp@actor:'-start/1-anonymous-0-'/0
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       current_function: {gleam_erlang_ffi,select,2}
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       ancestors: [<0.129.0>,<0.83.0>]
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       message_queue_len: 0
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       links: [<0.129.0>,#Port<0.12>]
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       trap_exit: false
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       status: waiting
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       heap_size: 1598
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       stack_size: 12
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       reductions: 7621
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       current_stacktrace: [{gleam_erlang_ffi,select,2,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                       [{file,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                        {line,52}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                   {gleam_erlang_ffi,select,1,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                       [{file,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                        {line,49}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                   {gleam@otp@actor,loop,1,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                       [{file,"src/gleam/otp/actor.gleam"},{line,466}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                   {proc_lib,init_p,3,[{file,"proc_lib.erl"},{line,317}]}]
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     neighbour:
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       pid: <0.129.0>
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       registered_name: []
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       initial call: gleam@otp@actor:'-start/1-anonymous-0-'/0
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       current_function: {gleam_erlang_ffi,select,2}
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       ancestors: [<0.83.0>]
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       message_queue_len: 0
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       links: [<0.130.0>,<0.83.0>]
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       trap_exit: false
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       status: waiting
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       heap_size: 987
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       stack_size: 12
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       reductions: 7191
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       current_stacktrace: [{gleam_erlang_ffi,select,2,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                       [{file,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                        {line,52}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                   {gleam_erlang_ffi,select,1,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                       [{file,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                        {line,49}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                   {gleam@otp@actor,loop,1,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                       [{file,"src/gleam/otp/actor.gleam"},{line,466}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                   {proc_lib,init_p,3,[{file,"proc_lib.erl"},{line,317}]}]
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     neighbour:
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       pid: <0.83.0>
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       registered_name: []
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       initial_call: {erlang,apply,2}
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       current_function: {timer,sleep,1}
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       ancestors: []
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       message_queue_len: 0
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       links: [<0.127.0>,<0.129.0>,<0.142.0>,<0.10.0>]
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       trap_exit: false
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       status: waiting
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       heap_size: 233
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       stack_size: 5
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       reductions: 11528
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       current_stacktrace: [{timer,sleep,1,[{file,"timer.erl"},{line,552}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                   {gleam_erlang_ffi,sleep_forever,0,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                       [{file,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                        {line,27}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                   {home_terminal@@main,run_module,1,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                       [{file,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            "/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/home_terminal@@main.erl"},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                        {line,24}]}]
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     neighbour:
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       pid: <0.127.0>
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       registered_name: []
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       initial call: gleam@otp@actor:'-start/1-anonymous-0-'/0
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       current_function: {gleam_erlang_ffi,select,2}
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       ancestors: [<0.83.0>]
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       message_queue_len: 0
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       links: [<0.83.0>,<0.128.0>]
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       trap_exit: false
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       status: waiting
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       heap_size: 514838
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       stack_size: 12
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       reductions: 4879694
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       current_stacktrace: [{gleam_erlang_ffi,select,2,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                       [{file,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                        {line,52}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                   {gleam_erlang_ffi,select,1,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                       [{file,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                        {line,49}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                   {gleam@otp@actor,loop,1,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                       [{file,"src/gleam/otp/actor.gleam"},{line,466}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                   {proc_lib,init_p,3,[{file,"proc_lib.erl"},{line,317}]}]
+Mar 25 16:11:25 cafeteria home_terminal[22367]: runtime error: Erlang exit
+Mar 25 16:11:25 cafeteria home_terminal[22367]: An error occurred outside of Gleam.
+Mar 25 16:11:25 cafeteria home_terminal[22367]: erlang:exit(Badarg)
+Mar 25 16:11:25 cafeteria home_terminal[22367]: stacktrace:
+Mar 25 16:11:25 cafeteria home_terminal[22367]:   erlang.binary_to_list unknown source
+Mar 25 16:11:25 cafeteria home_terminal[22367]:   tz_ffi.system_timezone /build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl:51
+Mar 25 16:11:25 cafeteria home_terminal[22367]:   ical.parse_events src/ical.gleam:69
+Mar 25 16:11:25 cafeteria home_terminal[22367]:   gleam/list.map_loop src/gleam/list.gleam:391
+Mar 25 16:11:25 cafeteria home_terminal[22367]:   gleam/list.flat_map src/gleam/list.gleam:392
+Mar 25 16:11:25 cafeteria home_terminal[22367]:   cal_dav.-fetch_calendar_events/5-anonymous-1- src/cal_dav.gleam:225
+Mar 25 16:11:25 cafeteria home_terminal[22367]:   cal_dav.-fetch_events/1-anonymous-1- src/cal_dav.gleam:78
+Mar 25 16:11:25 cafeteria home_terminal[22367]:   gleam/list.map_loop src/gleam/list.gleam:391
+Mar 25 16:11:25 cafeteria home_terminal[22367]: =ERROR REPORT==== 25-Mar-2026::16:11:25.269866 ===
+Mar 25 16:11:25 cafeteria home_terminal[22367]: ** Generic server <0.142.0> terminating
+Mar 25 16:11:25 cafeteria home_terminal[22367]: ** Last message in was {'EXIT',<0.83.0>,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                         {badarg,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          [{erlang,binary_to_list,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            ["/etc/zoneinfo/America/New_York"],
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            [{error_info,#{module => erl_erts_errors}}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                           {tz_ffi,system_timezone,0,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            [{file,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              "/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl"},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                             {line,51}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                           {ical,parse_events,4,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            [{file,"src/ical.gleam"},{line,69}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                           {gleam@list,map_loop,3,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            [{file,"src/gleam/list.gleam"},{line,391}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                           {gleam@list,flat_map,2,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            [{file,"src/gleam/list.gleam"},{line,392}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                           {cal_dav,'-fetch_calendar_events/5-anonymous-1-',4,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            [{file,"src/cal_dav.gleam"},{line,225}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                           {cal_dav,'-fetch_events/1-anonymous-1-',4,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            [{file,"src/cal_dav.gleam"},{line,78}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                           {gleam@list,map_loop,3,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            [{file,"src/gleam/list.gleam"},{line,391}]}]}}
+Mar 25 16:11:25 cafeteria home_terminal[22367]: ** When Server state == {state,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          {<0.142.0>,gleam@otp@static_supervisor},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          one_for_one,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          {[1,0],
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                           #{0 =>
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              {child,<0.143.0>,0,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                                start_child_callback,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                               permanent,false,5000,worker,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                               [gleam@otp@static_supervisor]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                             1 =>
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              {child,<0.144.0>,1,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                                start_child_callback,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                               permanent,false,infinity,supervisor,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                               [gleam@otp@static_supervisor]}}},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          undefined,2,5,[],0,0,never,1000,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          #Ref<0.3055569543.2872049665.96957>,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          gleam@otp@static_supervisor,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          {#{intensity => 2,period => 5,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                             strategy => one_for_one,auto_shutdown => never},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                           [#{id => 0,restart => permanent,shutdown => 5000,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              start =>
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                                start_child_callback,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              type => worker,significant => false},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                            #{id => 1,restart => permanent,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              shutdown => infinity,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              start =>
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                                start_child_callback,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              type => supervisor,significant => false}]}}
+Mar 25 16:11:25 cafeteria home_terminal[22367]: ** Reason for termination ==
+Mar 25 16:11:25 cafeteria home_terminal[22367]: ** {badarg,[{erlang,binary_to_list,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                     ["/etc/zoneinfo/America/New_York"],
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                     [{error_info,#{module => erl_erts_errors}}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:             {tz_ffi,system_timezone,0,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                     [{file,"/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl"},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                      {line,51}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:             {ical,parse_events,4,[{file,"src/ical.gleam"},{line,69}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:             {gleam@list,map_loop,3,[{file,"src/gleam/list.gleam"},{line,391}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:             {gleam@list,flat_map,2,[{file,"src/gleam/list.gleam"},{line,392}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:             {cal_dav,'-fetch_calendar_events/5-anonymous-1-',4,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                      [{file,"src/cal_dav.gleam"},{line,225}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:             {cal_dav,'-fetch_events/1-anonymous-1-',4,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                      [{file,"src/cal_dav.gleam"},{line,78}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:             {gleam@list,map_loop,3,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                         [{file,"src/gleam/list.gleam"},{line,391}]}]}
+Mar 25 16:11:25 cafeteria home_terminal[22367]: =CRASH REPORT==== 25-Mar-2026::16:11:25.271745 ===
+Mar 25 16:11:25 cafeteria home_terminal[22367]:   crasher:
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     initial call: supervisor:gleam@otp@static_supervisor/1
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     pid: <0.142.0>
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     registered_name: []
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     exception exit: {badarg,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                         [{erlang,binary_to_list,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              ["/etc/zoneinfo/America/New_York"],
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              [{error_info,#{module => erl_erts_errors}}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          {tz_ffi,system_timezone,0,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              [{file,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                                   "/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl"},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                               {line,51}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          {ical,parse_events,4,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              [{file,"src/ical.gleam"},{line,69}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          {gleam@list,map_loop,3,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              [{file,"src/gleam/list.gleam"},{line,391}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          {gleam@list,flat_map,2,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              [{file,"src/gleam/list.gleam"},{line,392}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          {cal_dav,'-fetch_calendar_events/5-anonymous-1-',4,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              [{file,"src/cal_dav.gleam"},{line,225}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          {cal_dav,'-fetch_events/1-anonymous-1-',4,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              [{file,"src/cal_dav.gleam"},{line,78}]},
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                          {gleam@list,map_loop,3,
+Mar 25 16:11:25 cafeteria home_terminal[22367]:                              [{file,"src/gleam/list.gleam"},{line,391}]}]}
+Mar 25 16:11:25 cafeteria home_terminal[22367]:       in function  gen_server:decode_msg/6 (gen_server.erl:2379)
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     ancestors: [<0.83.0>]
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     message_queue_len: 0
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     messages: []
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     links: []
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     dictionary: []
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     trap_exit: true
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     status: running
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     heap_size: 17731
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     stack_size: 29
+Mar 25 16:11:25 cafeteria home_terminal[22367]:     reductions: 25492
+Mar 25 16:11:25 cafeteria home_terminal[22367]:   neighbours:
+Mar 25 16:11:26 cafeteria systemd[1]: home-terminal.service: Main process exited, code=exited, status=1/FAILURE
+Mar 25 16:11:26 cafeteria systemd[1]: home-terminal.service: Failed with result 'exit-code'.
+Mar 25 16:11:26 cafeteria systemd[1]: home-terminal.service: Consumed 4.178s CPU time over 11.616s wall clock time, 90.8M memory peak, 94.9K incoming IP traffic, 15.9K outgoing IP traffic.
+Mar 25 16:11:31 cafeteria systemd[1]: home-terminal.service: Scheduled restart job, restart counter is at 20.
+Mar 25 16:11:31 cafeteria systemd[1]: Started home-terminal kiosk dashboard.
+Mar 25 16:11:32 cafeteria home_terminal[22420]: 2026-03-25T20:11:32 [app] starting
+Mar 25 16:11:32 cafeteria home_terminal[22420]: 2026-03-25T20:11:32 [app] config_dir: /var/lib/kiosk/.config/home-terminal
+Mar 25 16:11:32 cafeteria home_terminal[22420]: 2026-03-25T20:11:32 [app] cache_dir:  /var/lib/kiosk/.cache/home-terminal
+Mar 25 16:11:32 cafeteria home_terminal[22420]: 2026-03-25T20:11:32 [app] state_dir:  /var/lib/kiosk/.local/state/home-terminal
+Mar 25 16:11:32 cafeteria home_terminal[22420]: 2026-03-25T20:11:32 [cal_server] config_dir: /var/lib/kiosk/.config/home-terminal
+Mar 25 16:11:32 cafeteria home_terminal[22420]: 2026-03-25T20:11:32 [cal_server] cache_dir:  /var/lib/kiosk/.cache/home-terminal
+Mar 25 16:11:32 cafeteria home_terminal[22420]: 2026-03-25T20:11:32 [cal_server] /var/lib/kiosk/.cache/home-terminal/cache.json — loaded 1172 events
+Mar 25 16:11:32 cafeteria home_terminal[22420]: 2026-03-25T20:11:32 [cal_server] /var/lib/kiosk/.config/home-terminal/config.json — loaded (2 people, 2 ical urls)
+Mar 25 16:11:32 cafeteria home_terminal[22420]: 2026-03-25T20:11:32 [cal_server] /var/lib/kiosk/.cache/home-terminal/travel_cache.json — loaded 18 travel entries, 47 leg entries
+Mar 25 16:11:32 cafeteria home_terminal[22420]: 2026-03-25T20:11:32 [cal_server] /var/lib/kiosk/.cache/home-terminal/ical_cache.json — loaded 2 feed caches
+Mar 25 16:11:32 cafeteria home_terminal[22420]: 2026-03-25T20:11:32 [cal_server] fetching events...
+Mar 25 16:11:32 cafeteria home_terminal[22420]: 2026-03-25T20:11:32 [app] HA integration enabled, connecting to MQTT...
+Mar 25 16:11:33 cafeteria home_terminal[22420]: 2026-03-25T20:11:33 [ha_client] connected to MQTT broker at homeassistant.lan
+Mar 25 16:11:33 cafeteria home_terminal[22420]: 2026-03-25T20:11:33 [ha_client] recovered state: display_power=ON dark_mode=OFF
+Mar 25 16:11:33 cafeteria home_terminal[22420]: 2026-03-25T20:11:33 [ha_client] running: swaymsg output HDMI-A-2 power on
+Mar 25 16:11:33 cafeteria home_terminal[22420]: 2026-03-25T20:11:33 [ha_client] swaymsg output: [
+Mar 25 16:11:33 cafeteria home_terminal[22420]:   {
+Mar 25 16:11:33 cafeteria home_terminal[22420]:     "success": true
+Mar 25 16:11:33 cafeteria home_terminal[22420]:   }
+Mar 25 16:11:33 cafeteria home_terminal[22420]: ]
+Mar 25 16:11:33 cafeteria home_terminal[22420]: 2026-03-25T20:11:33 [ha_client] session established: discovery, state, subscriptions
+Mar 25 16:11:33 cafeteria home_terminal[22420]: 2026-03-25T20:11:33 [app] HA client started successfully
+Mar 25 16:11:33 cafeteria home_terminal[22420]: Listening on http://0.0.0.0:80
+Mar 25 16:11:36 cafeteria home_terminal[22420]: =CRASH REPORT==== 25-Mar-2026::16:11:36.817314 ===
+Mar 25 16:11:36 cafeteria home_terminal[22420]:   crasher:
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     initial call: cal_server:'-handle_message/2-anonymous-0-'/0
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     pid: <0.128.0>
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     registered_name: []
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     exception error: bad argument
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       in function  binary_to_list/1
+Mar 25 16:11:36 cafeteria home_terminal[22420]:          called as binary_to_list("/etc/zoneinfo/America/New_York")
+Mar 25 16:11:36 cafeteria home_terminal[22420]:          *** argument 1: not a binary
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       in call from tz_ffi:system_timezone/0 (/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl:51)
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       in call from ical:parse_events/4 (src/ical.gleam:69)
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       in call from gleam@list:map_loop/3 (src/gleam/list.gleam:391)
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       in call from gleam@list:flat_map/2 (src/gleam/list.gleam:392)
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       in call from cal_dav:'-fetch_calendar_events/5-anonymous-1-'/4 (src/cal_dav.gleam:225)
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       in call from cal_dav:'-fetch_events/1-anonymous-1-'/4 (src/cal_dav.gleam:78)
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       in call from gleam@list:map_loop/3 (src/gleam/list.gleam:391)
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     ancestors: [<0.127.0>,<0.83.0>]
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     message_queue_len: 0
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     messages: []
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     links: [<0.127.0>]
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     dictionary: []
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     trap_exit: false
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     status: running
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     heap_size: 75113
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     stack_size: 29
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     reductions: 1302226
+Mar 25 16:11:36 cafeteria home_terminal[22420]:   neighbours:
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     neighbour:
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       pid: <0.130.0>
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       registered_name: []
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       initial call: gleam@otp@actor:'-start/1-anonymous-0-'/0
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       current_function: {gleam_erlang_ffi,select,2}
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       ancestors: [<0.129.0>,<0.83.0>]
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       message_queue_len: 0
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       links: [<0.129.0>,#Port<0.12>]
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       trap_exit: false
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       status: waiting
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       heap_size: 610
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       stack_size: 12
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       reductions: 7633
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       current_stacktrace: [{gleam_erlang_ffi,select,2,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                       [{file,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                        {line,52}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                   {gleam_erlang_ffi,select,1,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                       [{file,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                        {line,49}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                   {gleam@otp@actor,loop,1,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                       [{file,"src/gleam/otp/actor.gleam"},{line,466}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                   {proc_lib,init_p,3,[{file,"proc_lib.erl"},{line,317}]}]
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     neighbour:
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       pid: <0.129.0>
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       registered_name: []
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       initial call: gleam@otp@actor:'-start/1-anonymous-0-'/0
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       current_function: {gleam_erlang_ffi,select,2}
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       ancestors: [<0.83.0>]
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       message_queue_len: 0
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       links: [<0.130.0>,<0.83.0>]
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       trap_exit: false
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       status: waiting
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       heap_size: 987
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       stack_size: 12
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       reductions: 7192
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       current_stacktrace: [{gleam_erlang_ffi,select,2,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                       [{file,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                        {line,52}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                   {gleam_erlang_ffi,select,1,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                       [{file,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                        {line,49}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                   {gleam@otp@actor,loop,1,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                       [{file,"src/gleam/otp/actor.gleam"},{line,466}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                   {proc_lib,init_p,3,[{file,"proc_lib.erl"},{line,317}]}]
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     neighbour:
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       pid: <0.83.0>
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       registered_name: []
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       initial_call: {erlang,apply,2}
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       current_function: {timer,sleep,1}
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       ancestors: []
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       message_queue_len: 0
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       links: [<0.127.0>,<0.129.0>,<0.142.0>,<0.10.0>]
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       trap_exit: false
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       status: waiting
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       heap_size: 233
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       stack_size: 5
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       reductions: 11507
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       current_stacktrace: [{timer,sleep,1,[{file,"timer.erl"},{line,552}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                   {gleam_erlang_ffi,sleep_forever,0,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                       [{file,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                        {line,27}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                   {home_terminal@@main,run_module,1,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                       [{file,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            "/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/home_terminal@@main.erl"},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                        {line,24}]}]
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     neighbour:
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       pid: <0.127.0>
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       registered_name: []
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       initial call: gleam@otp@actor:'-start/1-anonymous-0-'/0
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       current_function: {gleam_erlang_ffi,select,2}
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       ancestors: [<0.83.0>]
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       message_queue_len: 0
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       links: [<0.83.0>,<0.128.0>]
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       trap_exit: false
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       status: waiting
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       heap_size: 514838
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       stack_size: 12
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       reductions: 4877451
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       current_stacktrace: [{gleam_erlang_ffi,select,2,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                       [{file,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                        {line,52}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                   {gleam_erlang_ffi,select,1,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                       [{file,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                        {line,49}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                   {gleam@otp@actor,loop,1,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                       [{file,"src/gleam/otp/actor.gleam"},{line,466}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                   {proc_lib,init_p,3,[{file,"proc_lib.erl"},{line,317}]}]
+Mar 25 16:11:36 cafeteria home_terminal[22420]: runtime error: Erlang exit
+Mar 25 16:11:36 cafeteria home_terminal[22420]: An error occurred outside of Gleam.
+Mar 25 16:11:36 cafeteria home_terminal[22420]: erlang:exit(Badarg)
+Mar 25 16:11:36 cafeteria home_terminal[22420]: stacktrace:
+Mar 25 16:11:36 cafeteria home_terminal[22420]:   erlang.binary_to_list unknown source
+Mar 25 16:11:36 cafeteria home_terminal[22420]:   tz_ffi.system_timezone /build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl:51
+Mar 25 16:11:36 cafeteria home_terminal[22420]:   ical.parse_events src/ical.gleam:69
+Mar 25 16:11:36 cafeteria home_terminal[22420]:   gleam/list.map_loop src/gleam/list.gleam:391
+Mar 25 16:11:36 cafeteria home_terminal[22420]:   gleam/list.flat_map src/gleam/list.gleam:392
+Mar 25 16:11:36 cafeteria home_terminal[22420]:   cal_dav.-fetch_calendar_events/5-anonymous-1- src/cal_dav.gleam:225
+Mar 25 16:11:36 cafeteria home_terminal[22420]:   cal_dav.-fetch_events/1-anonymous-1- src/cal_dav.gleam:78
+Mar 25 16:11:36 cafeteria home_terminal[22420]:   gleam/list.map_loop src/gleam/list.gleam:391
+Mar 25 16:11:36 cafeteria home_terminal[22420]: =ERROR REPORT==== 25-Mar-2026::16:11:36.881564 ===
+Mar 25 16:11:36 cafeteria home_terminal[22420]: ** Generic server <0.142.0> terminating
+Mar 25 16:11:36 cafeteria home_terminal[22420]: ** Last message in was {'EXIT',<0.83.0>,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                         {badarg,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          [{erlang,binary_to_list,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            ["/etc/zoneinfo/America/New_York"],
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            [{error_info,#{module => erl_erts_errors}}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                           {tz_ffi,system_timezone,0,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            [{file,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              "/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl"},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                             {line,51}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                           {ical,parse_events,4,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            [{file,"src/ical.gleam"},{line,69}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                           {gleam@list,map_loop,3,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            [{file,"src/gleam/list.gleam"},{line,391}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                           {gleam@list,flat_map,2,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            [{file,"src/gleam/list.gleam"},{line,392}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                           {cal_dav,'-fetch_calendar_events/5-anonymous-1-',4,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            [{file,"src/cal_dav.gleam"},{line,225}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                           {cal_dav,'-fetch_events/1-anonymous-1-',4,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            [{file,"src/cal_dav.gleam"},{line,78}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                           {gleam@list,map_loop,3,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            [{file,"src/gleam/list.gleam"},{line,391}]}]}}
+Mar 25 16:11:36 cafeteria home_terminal[22420]: ** When Server state == {state,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          {<0.142.0>,gleam@otp@static_supervisor},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          one_for_one,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          {[1,0],
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                           #{0 =>
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              {child,<0.143.0>,0,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                                start_child_callback,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                               permanent,false,5000,worker,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                               [gleam@otp@static_supervisor]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                             1 =>
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              {child,<0.144.0>,1,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                                start_child_callback,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                               permanent,false,infinity,supervisor,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                               [gleam@otp@static_supervisor]}}},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          undefined,2,5,[],0,0,never,1000,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          #Ref<0.2728588990.1530396674.99808>,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          gleam@otp@static_supervisor,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          {#{intensity => 2,period => 5,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                             strategy => one_for_one,auto_shutdown => never},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                           [#{id => 0,restart => permanent,shutdown => 5000,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              start =>
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                                start_child_callback,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              type => worker,significant => false},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                            #{id => 1,restart => permanent,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              shutdown => infinity,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              start =>
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                                start_child_callback,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              type => supervisor,significant => false}]}}
+Mar 25 16:11:36 cafeteria home_terminal[22420]: ** Reason for termination ==
+Mar 25 16:11:36 cafeteria home_terminal[22420]: ** {badarg,[{erlang,binary_to_list,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                     ["/etc/zoneinfo/America/New_York"],
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                     [{error_info,#{module => erl_erts_errors}}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:             {tz_ffi,system_timezone,0,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                     [{file,"/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl"},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                      {line,51}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:             {ical,parse_events,4,[{file,"src/ical.gleam"},{line,69}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:             {gleam@list,map_loop,3,[{file,"src/gleam/list.gleam"},{line,391}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:             {gleam@list,flat_map,2,[{file,"src/gleam/list.gleam"},{line,392}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:             {cal_dav,'-fetch_calendar_events/5-anonymous-1-',4,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                      [{file,"src/cal_dav.gleam"},{line,225}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:             {cal_dav,'-fetch_events/1-anonymous-1-',4,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                      [{file,"src/cal_dav.gleam"},{line,78}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:             {gleam@list,map_loop,3,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                         [{file,"src/gleam/list.gleam"},{line,391}]}]}
+Mar 25 16:11:36 cafeteria home_terminal[22420]: =CRASH REPORT==== 25-Mar-2026::16:11:36.883164 ===
+Mar 25 16:11:36 cafeteria home_terminal[22420]:   crasher:
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     initial call: supervisor:gleam@otp@static_supervisor/1
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     pid: <0.142.0>
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     registered_name: []
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     exception exit: {badarg,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                         [{erlang,binary_to_list,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              ["/etc/zoneinfo/America/New_York"],
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              [{error_info,#{module => erl_erts_errors}}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          {tz_ffi,system_timezone,0,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              [{file,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                                   "/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl"},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                               {line,51}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          {ical,parse_events,4,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              [{file,"src/ical.gleam"},{line,69}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          {gleam@list,map_loop,3,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              [{file,"src/gleam/list.gleam"},{line,391}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          {gleam@list,flat_map,2,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              [{file,"src/gleam/list.gleam"},{line,392}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          {cal_dav,'-fetch_calendar_events/5-anonymous-1-',4,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              [{file,"src/cal_dav.gleam"},{line,225}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          {cal_dav,'-fetch_events/1-anonymous-1-',4,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              [{file,"src/cal_dav.gleam"},{line,78}]},
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                          {gleam@list,map_loop,3,
+Mar 25 16:11:36 cafeteria home_terminal[22420]:                              [{file,"src/gleam/list.gleam"},{line,391}]}]}
+Mar 25 16:11:36 cafeteria home_terminal[22420]:       in function  gen_server:decode_msg/6 (gen_server.erl:2379)
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     ancestors: [<0.83.0>]
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     message_queue_len: 0
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     messages: []
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     links: []
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     dictionary: []
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     trap_exit: true
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     status: running
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     heap_size: 17731
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     stack_size: 29
+Mar 25 16:11:36 cafeteria home_terminal[22420]:     reductions: 25492
+Mar 25 16:11:36 cafeteria home_terminal[22420]:   neighbours:
+Mar 25 16:11:38 cafeteria systemd[1]: home-terminal.service: Main process exited, code=exited, status=1/FAILURE
+Mar 25 16:11:38 cafeteria systemd[1]: home-terminal.service: Failed with result 'exit-code'.
+Mar 25 16:11:38 cafeteria systemd[1]: home-terminal.service: Consumed 4.158s CPU time over 11.624s wall clock time, 93.2M memory peak, 94.8K incoming IP traffic, 16K outgoing IP traffic.
+Mar 25 16:11:43 cafeteria systemd[1]: home-terminal.service: Scheduled restart job, restart counter is at 21.
+Mar 25 16:11:43 cafeteria systemd[1]: Started home-terminal kiosk dashboard.
+Mar 25 16:11:44 cafeteria home_terminal[22459]: 2026-03-25T20:11:44 [app] starting
+Mar 25 16:11:44 cafeteria home_terminal[22459]: 2026-03-25T20:11:44 [app] config_dir: /var/lib/kiosk/.config/home-terminal
+Mar 25 16:11:44 cafeteria home_terminal[22459]: 2026-03-25T20:11:44 [app] cache_dir:  /var/lib/kiosk/.cache/home-terminal
+Mar 25 16:11:44 cafeteria home_terminal[22459]: 2026-03-25T20:11:44 [app] state_dir:  /var/lib/kiosk/.local/state/home-terminal
+Mar 25 16:11:44 cafeteria home_terminal[22459]: 2026-03-25T20:11:44 [cal_server] config_dir: /var/lib/kiosk/.config/home-terminal
+Mar 25 16:11:44 cafeteria home_terminal[22459]: 2026-03-25T20:11:44 [cal_server] cache_dir:  /var/lib/kiosk/.cache/home-terminal
+Mar 25 16:11:44 cafeteria home_terminal[22459]: 2026-03-25T20:11:44 [cal_server] /var/lib/kiosk/.cache/home-terminal/cache.json — loaded 1172 events
+Mar 25 16:11:44 cafeteria home_terminal[22459]: 2026-03-25T20:11:44 [cal_server] /var/lib/kiosk/.config/home-terminal/config.json — loaded (2 people, 2 ical urls)
+Mar 25 16:11:44 cafeteria home_terminal[22459]: 2026-03-25T20:11:44 [cal_server] /var/lib/kiosk/.cache/home-terminal/travel_cache.json — loaded 18 travel entries, 47 leg entries
+Mar 25 16:11:44 cafeteria home_terminal[22459]: 2026-03-25T20:11:44 [cal_server] /var/lib/kiosk/.cache/home-terminal/ical_cache.json — loaded 2 feed caches
+Mar 25 16:11:44 cafeteria home_terminal[22459]: 2026-03-25T20:11:44 [cal_server] fetching events...
+Mar 25 16:11:44 cafeteria home_terminal[22459]: 2026-03-25T20:11:44 [app] HA integration enabled, connecting to MQTT...
+Mar 25 16:11:45 cafeteria home_terminal[22459]: 2026-03-25T20:11:45 [ha_client] connected to MQTT broker at homeassistant.lan
+Mar 25 16:11:45 cafeteria home_terminal[22459]: 2026-03-25T20:11:45 [ha_client] recovered state: display_power=ON dark_mode=OFF
+Mar 25 16:11:45 cafeteria home_terminal[22459]: 2026-03-25T20:11:45 [ha_client] running: swaymsg output HDMI-A-2 power on
+Mar 25 16:11:45 cafeteria home_terminal[22459]: 2026-03-25T20:11:45 [ha_client] swaymsg output: [
+Mar 25 16:11:45 cafeteria home_terminal[22459]:   {
+Mar 25 16:11:45 cafeteria home_terminal[22459]:     "success": true
+Mar 25 16:11:45 cafeteria home_terminal[22459]:   }
+Mar 25 16:11:45 cafeteria home_terminal[22459]: ]
+Mar 25 16:11:45 cafeteria home_terminal[22459]: 2026-03-25T20:11:45 [ha_client] session established: discovery, state, subscriptions
+Mar 25 16:11:45 cafeteria home_terminal[22459]: 2026-03-25T20:11:45 [app] HA client started successfully
+Mar 25 16:11:45 cafeteria home_terminal[22459]: Listening on http://0.0.0.0:80
+Mar 25 16:11:48 cafeteria home_terminal[22459]: runtime error: Erlang exit
+Mar 25 16:11:48 cafeteria home_terminal[22459]: An error occurred outside of Gleam.
+Mar 25 16:11:48 cafeteria home_terminal[22459]: erlang:exit(Badarg)
+Mar 25 16:11:48 cafeteria home_terminal[22459]: stacktrace:
+Mar 25 16:11:48 cafeteria home_terminal[22459]:   erlang.binary_to_list unknown source
+Mar 25 16:11:48 cafeteria home_terminal[22459]:   tz_ffi.system_timezone /build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl:51
+Mar 25 16:11:48 cafeteria home_terminal[22459]:   ical.parse_events src/ical.gleam:69
+Mar 25 16:11:48 cafeteria home_terminal[22459]:   gleam/list.map_loop src/gleam/list.gleam:391
+Mar 25 16:11:48 cafeteria home_terminal[22459]:   gleam/list.flat_map src/gleam/list.gleam:392
+Mar 25 16:11:48 cafeteria home_terminal[22459]:   cal_dav.-fetch_calendar_events/5-anonymous-1- src/cal_dav.gleam:225
+Mar 25 16:11:48 cafeteria home_terminal[22459]:   cal_dav.-fetch_events/1-anonymous-1- src/cal_dav.gleam:78
+Mar 25 16:11:48 cafeteria home_terminal[22459]:   gleam/list.map_loop src/gleam/list.gleam:391
+Mar 25 16:11:48 cafeteria home_terminal[22459]: =CRASH REPORT==== 25-Mar-2026::16:11:48.588125 ===
+Mar 25 16:11:48 cafeteria home_terminal[22459]:   crasher:
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     initial call: cal_server:'-handle_message/2-anonymous-0-'/0
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     pid: <0.128.0>
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     registered_name: []
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     exception error: bad argument
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       in function  binary_to_list/1
+Mar 25 16:11:48 cafeteria home_terminal[22459]:          called as binary_to_list("/etc/zoneinfo/America/New_York")
+Mar 25 16:11:48 cafeteria home_terminal[22459]:          *** argument 1: not a binary
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       in call from tz_ffi:system_timezone/0 (/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl:51)
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       in call from ical:parse_events/4 (src/ical.gleam:69)
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       in call from gleam@list:map_loop/3 (src/gleam/list.gleam:391)
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       in call from gleam@list:flat_map/2 (src/gleam/list.gleam:392)
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       in call from cal_dav:'-fetch_calendar_events/5-anonymous-1-'/4 (src/cal_dav.gleam:225)
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       in call from cal_dav:'-fetch_events/1-anonymous-1-'/4 (src/cal_dav.gleam:78)
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       in call from gleam@list:map_loop/3 (src/gleam/list.gleam:391)
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     ancestors: [<0.127.0>,<0.83.0>]
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     message_queue_len: 0
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     messages: []
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     links: [<0.127.0>]
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     dictionary: []
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     trap_exit: false
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     status: running
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     heap_size: 75113
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     stack_size: 29
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     reductions: 1206414
+Mar 25 16:11:48 cafeteria home_terminal[22459]:   neighbours:
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     neighbour:
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       pid: <0.130.0>
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       registered_name: []
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       initial call: gleam@otp@actor:'-start/1-anonymous-0-'/0
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       current_function: {gleam_erlang_ffi,select,2}
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       ancestors: [<0.129.0>,<0.83.0>]
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       message_queue_len: 0
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       links: [<0.129.0>,#Port<0.12>]
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       trap_exit: false
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       status: waiting
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       heap_size: 1598
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       stack_size: 12
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       reductions: 7901
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       current_stacktrace: [{gleam_erlang_ffi,select,2,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                       [{file,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                        {line,52}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                   {gleam_erlang_ffi,select,1,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                       [{file,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                        {line,49}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                   {gleam@otp@actor,loop,1,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                       [{file,"src/gleam/otp/actor.gleam"},{line,466}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                   {proc_lib,init_p,3,[{file,"proc_lib.erl"},{line,317}]}]
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     neighbour:
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       pid: <0.129.0>
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       registered_name: []
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       initial call: gleam@otp@actor:'-start/1-anonymous-0-'/0
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       current_function: {gleam_erlang_ffi,select,2}
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       ancestors: [<0.83.0>]
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       message_queue_len: 0
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       links: [<0.130.0>,<0.83.0>]
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       trap_exit: false
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       status: waiting
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       heap_size: 987
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       stack_size: 12
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       reductions: 7183
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       current_stacktrace: [{gleam_erlang_ffi,select,2,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                       [{file,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                        {line,52}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                   {gleam_erlang_ffi,select,1,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                       [{file,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                        {line,49}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                   {gleam@otp@actor,loop,1,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                       [{file,"src/gleam/otp/actor.gleam"},{line,466}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                   {proc_lib,init_p,3,[{file,"proc_lib.erl"},{line,317}]}]
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     neighbour:
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       pid: <0.83.0>
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       registered_name: []
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       initial_call: {erlang,apply,2}
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       current_function: {timer,sleep,1}
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       ancestors: []
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       message_queue_len: 0
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       links: [<0.127.0>,<0.129.0>,<0.142.0>,<0.10.0>]
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       trap_exit: false
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       status: waiting
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       heap_size: 233
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       stack_size: 5
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       reductions: 11528
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       current_stacktrace: [{timer,sleep,1,[{file,"timer.erl"},{line,552}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                   {gleam_erlang_ffi,sleep_forever,0,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                       [{file,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                        {line,27}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                   {home_terminal@@main,run_module,1,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                       [{file,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            "/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/home_terminal@@main.erl"},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                        {line,24}]}]
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     neighbour:
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       pid: <0.127.0>
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       registered_name: []
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       initial call: gleam@otp@actor:'-start/1-anonymous-0-'/0
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       current_function: {gleam_erlang_ffi,select,2}
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       ancestors: [<0.83.0>]
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       message_queue_len: 0
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       links: [<0.83.0>,<0.128.0>]
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       trap_exit: false
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       status: waiting
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       heap_size: 514838
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       stack_size: 12
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       reductions: 4876552
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       current_stacktrace: [{gleam_erlang_ffi,select,2,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                       [{file,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                        {line,52}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                   {gleam_erlang_ffi,select,1,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                       [{file,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            "/build/source/build/prod/erlang/gleam_erlang/_gleam_artefacts/gleam_erlang_ffi.erl"},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                        {line,49}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                   {gleam@otp@actor,loop,1,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                       [{file,"src/gleam/otp/actor.gleam"},{line,466}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                   {proc_lib,init_p,3,[{file,"proc_lib.erl"},{line,317}]}]
+Mar 25 16:11:48 cafeteria home_terminal[22459]: =ERROR REPORT==== 25-Mar-2026::16:11:48.640363 ===
+Mar 25 16:11:48 cafeteria home_terminal[22459]: ** Generic server <0.142.0> terminating
+Mar 25 16:11:48 cafeteria home_terminal[22459]: ** Last message in was {'EXIT',<0.83.0>,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                         {badarg,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          [{erlang,binary_to_list,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            ["/etc/zoneinfo/America/New_York"],
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            [{error_info,#{module => erl_erts_errors}}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                           {tz_ffi,system_timezone,0,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            [{file,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              "/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl"},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                             {line,51}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                           {ical,parse_events,4,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            [{file,"src/ical.gleam"},{line,69}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                           {gleam@list,map_loop,3,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            [{file,"src/gleam/list.gleam"},{line,391}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                           {gleam@list,flat_map,2,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            [{file,"src/gleam/list.gleam"},{line,392}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                           {cal_dav,'-fetch_calendar_events/5-anonymous-1-',4,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            [{file,"src/cal_dav.gleam"},{line,225}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                           {cal_dav,'-fetch_events/1-anonymous-1-',4,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            [{file,"src/cal_dav.gleam"},{line,78}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                           {gleam@list,map_loop,3,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            [{file,"src/gleam/list.gleam"},{line,391}]}]}}
+Mar 25 16:11:48 cafeteria home_terminal[22459]: ** When Server state == {state,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          {<0.142.0>,gleam@otp@static_supervisor},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          one_for_one,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          {[1,0],
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                           #{0 =>
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              {child,<0.143.0>,0,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                                start_child_callback,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                               permanent,false,5000,worker,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                               [gleam@otp@static_supervisor]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                             1 =>
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              {child,<0.144.0>,1,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                                start_child_callback,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                               permanent,false,infinity,supervisor,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                               [gleam@otp@static_supervisor]}}},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          undefined,2,5,[],0,0,never,1000,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          #Ref<0.2667779533.456392705.161515>,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          gleam@otp@static_supervisor,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          {#{intensity => 2,period => 5,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                             strategy => one_for_one,auto_shutdown => never},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                           [#{id => 0,restart => permanent,shutdown => 5000,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              start =>
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                                start_child_callback,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              type => worker,significant => false},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                            #{id => 1,restart => permanent,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              shutdown => infinity,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              start =>
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                               {gleam@otp@static_supervisor,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                                start_child_callback,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                                [#Fun<gleam@otp@supervision.0.45226599>]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              type => supervisor,significant => false}]}}
+Mar 25 16:11:48 cafeteria home_terminal[22459]: ** Reason for termination ==
+Mar 25 16:11:48 cafeteria home_terminal[22459]: ** {badarg,[{erlang,binary_to_list,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                     ["/etc/zoneinfo/America/New_York"],
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                     [{error_info,#{module => erl_erts_errors}}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:             {tz_ffi,system_timezone,0,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                     [{file,"/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl"},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                      {line,51}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:             {ical,parse_events,4,[{file,"src/ical.gleam"},{line,69}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:             {gleam@list,map_loop,3,[{file,"src/gleam/list.gleam"},{line,391}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:             {gleam@list,flat_map,2,[{file,"src/gleam/list.gleam"},{line,392}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:             {cal_dav,'-fetch_calendar_events/5-anonymous-1-',4,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                      [{file,"src/cal_dav.gleam"},{line,225}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:             {cal_dav,'-fetch_events/1-anonymous-1-',4,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                      [{file,"src/cal_dav.gleam"},{line,78}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:             {gleam@list,map_loop,3,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                         [{file,"src/gleam/list.gleam"},{line,391}]}]}
+Mar 25 16:11:48 cafeteria home_terminal[22459]: =CRASH REPORT==== 25-Mar-2026::16:11:48.641990 ===
+Mar 25 16:11:48 cafeteria home_terminal[22459]:   crasher:
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     initial call: supervisor:gleam@otp@static_supervisor/1
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     pid: <0.142.0>
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     registered_name: []
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     exception exit: {badarg,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                         [{erlang,binary_to_list,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              ["/etc/zoneinfo/America/New_York"],
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              [{error_info,#{module => erl_erts_errors}}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          {tz_ffi,system_timezone,0,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              [{file,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                                   "/build/source/build/prod/erlang/home_terminal/_gleam_artefacts/tz_ffi.erl"},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                               {line,51}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          {ical,parse_events,4,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              [{file,"src/ical.gleam"},{line,69}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          {gleam@list,map_loop,3,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              [{file,"src/gleam/list.gleam"},{line,391}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          {gleam@list,flat_map,2,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              [{file,"src/gleam/list.gleam"},{line,392}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          {cal_dav,'-fetch_calendar_events/5-anonymous-1-',4,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              [{file,"src/cal_dav.gleam"},{line,225}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          {cal_dav,'-fetch_events/1-anonymous-1-',4,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              [{file,"src/cal_dav.gleam"},{line,78}]},
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                          {gleam@list,map_loop,3,
+Mar 25 16:11:48 cafeteria home_terminal[22459]:                              [{file,"src/gleam/list.gleam"},{line,391}]}]}
+Mar 25 16:11:48 cafeteria home_terminal[22459]:       in function  gen_server:decode_msg/6 (gen_server.erl:2379)
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     ancestors: [<0.83.0>]
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     message_queue_len: 0
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     messages: []
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     links: []
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     dictionary: []
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     trap_exit: true
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     status: running
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     heap_size: 17731
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     stack_size: 29
+Mar 25 16:11:48 cafeteria home_terminal[22459]:     reductions: 25492
+Mar 25 16:11:48 cafeteria home_terminal[22459]:   neighbours:
+Mar 25 16:11:49 cafeteria systemd[1]: home-terminal.service: Main process exited, code=exited, status=1/FAILURE
+Mar 25 16:11:49 cafeteria systemd[1]: home-terminal.service: Failed with result 'exit-code'.
+Mar 25 16:11:49 cafeteria systemd[1]: home-terminal.service: Consumed 3.955s CPU time over 11.711s wall clock time, 88M memory peak, 94.7K incoming IP traffic, 15.9K outgoing IP traffic.
+Mar 25 16:11:54 cafeteria systemd[1]: home-terminal.service: Scheduled restart job, restart counter is at 22.
+Mar 25 16:11:54 cafeteria systemd[1]: Started home-terminal kiosk dashboard.
+Mar 25 16:11:56 cafeteria home_terminal[22499]: 2026-03-25T20:11:56 [app] starting
+Mar 25 16:11:56 cafeteria home_terminal[22499]: 2026-03-25T20:11:56 [app] config_dir: /var/lib/kiosk/.config/home-terminal
+Mar 25 16:11:56 cafeteria home_terminal[22499]: 2026-03-25T20:11:56 [app] cache_dir:  /var/lib/kiosk/.cache/home-terminal
+Mar 25 16:11:56 cafeteria home_terminal[22499]: 2026-03-25T20:11:56 [app] state_dir:  /var/lib/kiosk/.local/state/home-terminal
+Mar 25 16:11:56 cafeteria home_terminal[22499]: 2026-03-25T20:11:56 [cal_server] config_dir: /var/lib/kiosk/.config/home-terminal
+Mar 25 16:11:56 cafeteria home_terminal[22499]: 2026-03-25T20:11:56 [cal_server] cache_dir:  /var/lib/kiosk/.cache/home-terminal
+Mar 25 16:11:56 cafeteria home_terminal[22499]: 2026-03-25T20:11:56 [cal_server] /var/lib/kiosk/.cache/home-terminal/cache.json — loaded 1172 events
+Mar 25 16:11:56 cafeteria home_terminal[22499]: 2026-03-25T20:11:56 [cal_server] /var/lib/kiosk/.config/home-terminal/config.json — loaded (2 people, 2 ical urls)
+Mar 25 16:11:56 cafeteria home_terminal[22499]: 2026-03-25T20:11:56 [cal_server] /var/lib/kiosk/.cache/home-terminal/travel_cache.json — loaded 18 travel entries, 47 leg entries
+Mar 25 16:11:56 cafeteria home_terminal[22499]: 2026-03-25T20:11:56 [cal_server] /var/lib/kiosk/.cache/home-terminal/ical_cache.json — loaded 2 feed caches
+Mar 25 16:11:56 cafeteria home_terminal[22499]: 2026-03-25T20:11:56 [cal_server] fetching events...
+Mar 25 16:11:56 cafeteria home_terminal[22499]: 2026-03-25T20:11:56 [app] HA integration enabled, connecting to MQTT...
+Mar 25 16:11:56 cafeteria home_terminal[22499]: 2026-03-25T20:11:56 [ha_client] connected to MQTT broker at homeassistant.lan
+Mar 25 16:11:57 cafeteria home_terminal[22499]: 2026-03-25T20:11:57 [ha_client] recovered state: display_power=ON dark_mode=OFF
+Mar 25 16:11:57 cafeteria home_terminal[22499]: 2026-03-25T20:11:57 [ha_client] running: swaymsg output HDMI-A-2 power on
+Mar 25 16:11:57 cafeteria home_terminal[22499]: 2026-03-25T20:11:57 [ha_client] swaymsg output: [
+Mar 25 16:11:57 cafeteria home_terminal[22499]:   {
+Mar 25 16:11:57 cafeteria home_terminal[22499]:     "success": true
+Mar 25 16:11:57 cafeteria home_terminal[22499]:   }
+Mar 25 16:11:57 cafeteria home_terminal[22499]: ]
+Mar 25 16:11:57 cafeteria home_terminal[22499]: 2026-03-25T20:11:57 [ha_client] session established: discovery, state, subscriptions
+Mar 25 16:11:57 cafeteria home_terminal[22499]: 2026-03-25T20:11:57 [app] HA client started successfully
+Mar 25 16:11:57 cafeteria home_terminal[22499]: Listening on http://0.0.0.0:80

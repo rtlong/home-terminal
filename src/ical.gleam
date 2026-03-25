@@ -57,31 +57,20 @@ fn tz_system_timezone() -> a
 @external(erlang, "erlang", "is_binary")
 fn is_binary(a: a) -> Bool
 
+@external(erlang, "gleam_stdlib", "identity")
+fn unsafe_coerce(a: a) -> b
+
 /// Get the system timezone as a String, or Error if unavailable.
-/// This uses an unsafe coercion since we've checked it's a binary (String in Gleam).
 fn get_system_timezone() -> Result(String, Nil) {
   let tz = tz_system_timezone()
   case is_binary(tz) {
     True -> {
       // SAFETY: We just checked it's a binary with is_binary/1.
       // In Gleam/Erlang, binaries and Strings are the same type at runtime.
-      let tz_str = force_string(tz)
-      Ok(tz_str)
+      Ok(unsafe_coerce(tz))
     }
     False -> Error(Nil)
   }
-}
-
-// Unsafe coercion from dynamic value to String.
-// Only safe to call after verifying it's a binary with is_binary/1.
-@external(erlang, "erlang", "binary_to_list")
-fn binary_to_list(a: a) -> List(Int)
-
-@external(erlang, "erlang", "list_to_binary")
-fn list_to_binary(a: List(Int)) -> String
-
-fn force_string(a: a) -> String {
-  a |> binary_to_list |> list_to_binary
 }
 
 // RECURRENCE TYPES ------------------------------------------------------------
