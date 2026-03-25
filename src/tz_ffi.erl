@@ -1,5 +1,5 @@
 -module(tz_ffi).
--export([local_to_utc/7, system_timezone/0]).
+-export([local_to_utc/7, utc_to_local/7, system_timezone/0]).
 
 %% local_to_utc(Year, Month, Day, Hour, Minute, Second, Timezone)
 %%   -> GregorianSeconds (integer, UTC)
@@ -36,6 +36,22 @@ local_to_utc(Year, Month, Day, Hour, Minute, Second, Timezone) ->
             calendar:datetime_to_gregorian_seconds(Utc);
         Utc ->
             calendar:datetime_to_gregorian_seconds(Utc)
+    end.
+
+%% utc_to_local(Year, Month, Day, Hour, Minute, Second, Timezone)
+%%   -> GregorianSeconds (integer, in the local timezone)
+%%
+%% Converts a UTC date/time to wall-clock time in the named IANA timezone,
+%% returned as Gregorian seconds.
+%%
+%% On unknown timezone, returns the input as-is (treats as UTC).
+utc_to_local(Year, Month, Day, Hour, Minute, Second, Timezone) ->
+    UtcDateTime = {{Year, Month, Day}, {Hour, Minute, Second}},
+    case localtime:utc_to_local(UtcDateTime, Timezone) of
+        {error, unknown_tz} ->
+            calendar:datetime_to_gregorian_seconds(UtcDateTime);
+        LocalDateTime ->
+            calendar:datetime_to_gregorian_seconds(LocalDateTime)
     end.
 
 %% system_timezone() -> binary() | undefined

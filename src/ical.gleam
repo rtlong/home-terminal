@@ -48,6 +48,20 @@ fn tz_local_to_utc(
   tz: String,
 ) -> Int
 
+/// Convert a UTC date/time to wall-clock time in the named IANA timezone.
+/// Returns Gregorian seconds representing the local time.
+/// On unknown timezone, returns the input as-is (treats as UTC).
+@external(erlang, "tz_ffi", "utc_to_local")
+fn tz_utc_to_local(
+  year: Int,
+  month: Int,
+  day: Int,
+  hour: Int,
+  minute: Int,
+  second: Int,
+  tz: String,
+) -> Int
+
 /// Get the system's IANA timezone identifier (e.g., "America/New_York").
 /// Returns an atom that can be checked with is_atom/1 - if it's the atom 'undefined',
 /// no system timezone could be determined.
@@ -72,6 +86,13 @@ fn get_system_timezone() -> Result(String, Nil) {
     False -> Error(Nil)
   }
 }
+
+/// Convert Gregorian seconds to a datetime tuple.
+/// Returns {{Year, Month, Day}, {Hour, Minute, Second}}
+@external(erlang, "calendar", "gregorian_seconds_to_datetime")
+fn gregorian_seconds_to_datetime(
+  gregorian_secs: Int,
+) -> #(#(Int, Int, Int), #(Int, Int, Int))
 
 // RECURRENCE TYPES ------------------------------------------------------------
 
@@ -1201,30 +1222,46 @@ fn add_recurrence_dst_aware(
   freq: RecurrenceFreq,
   interval: Int,
   event_tz: Result(String, Nil),
-  local_offset: duration.Duration,
+  _local_offset: duration.Duration,
 ) -> timestamp.Timestamp {
   case event_tz {
     Ok(tz) -> {
-      // Convert to wall-clock time in the event's timezone
-      let #(date, time) = timestamp.to_calendar(ts, local_offset)
-      let calendar.TimeOfDay(hour, minute, second, _) = time
+      // Convert the UTC timestamp to Gregorian seconds
+      let unix_secs = duration.to_seconds(timestamp.difference(timestamp.unix_epoch, ts))
+      let utc_gregorian = float.truncate(unix_secs) + gregorian_epoch_offset
+      
+      // Convert to calendar date/time in UTC
+      let utc_datetime = gregorian_seconds_to_datetime(utc_gregorian)
+      let #(#(year, month_int, day), #(hour, minute, second)) = utc_datetime
+      
+      // Convert UTC to the event's local timezone
+      let local_gregorian = tz_utc_to_local(year, month_int, day, hour, minute, second, tz)
+      let local_datetime = gregorian_seconds_to_datetime(local_gregorian)
+      let #(#(local_year, local_month_int, local_day), #(local_hour, local_minute, local_second)) = local_datetime
+      
+      // Convert to Gleam Date type
+      let local_month = case int_to_month(local_month_int) {
+        Ok(m) -> m
+        Error(Nil) -> calendar.January  // Fallback, should never happen
+      }
+      let local_date = Date(year: local_year, month: local_month, day: local_day)
       
       // Advance the date based on frequency and interval
       let new_date = case freq {
-        Daily -> advance_date_by_n(date, interval)
-        Weekly -> advance_date_by_n(date, interval * 7)
-        Monthly -> advance_date_by_months(date, interval)
-        Yearly -> advance_date_by_years(date, interval)
+        Daily -> advance_date_by_n(local_date, interval)
+        Weekly -> advance_date_by_n(local_date, interval * 7)
+        Monthly -> advance_date_by_months(local_date, interval)
+        Yearly -> advance_date_by_years(local_date, interval)
       }
       
       let Date(new_year, new_month, new_day) = new_date
       let new_month_int = calendar.month_to_int(new_month)
       
       // Convert back to UTC using the timezone (this handles DST properly)
-      let utc_gregorian =
-        tz_local_to_utc(new_year, new_month_int, new_day, hour, minute, second, tz)
-      let unix_secs = utc_gregorian - gregorian_epoch_offset
-      timestamp.from_unix_seconds(unix_secs)
+      let new_utc_gregorian =
+        tz_local_to_utc(new_year, new_month_int, new_day, local_hour, local_minute, local_second, tz)
+      let new_unix_secs = new_utc_gregorian - gregorian_epoch_offset
+      timestamp.from_unix_seconds(new_unix_secs)
     }
     Error(Nil) -> {
       // No timezone info: fall back to simple time addition
