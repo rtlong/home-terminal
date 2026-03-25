@@ -48,7 +48,11 @@ system_timezone() ->
             %% Target is something like "/var/db/timezone/zoneinfo/America/New_York"
             %% or "../usr/share/zoneinfo/America/New_York"
             %% Extract the IANA timezone name (everything after "zoneinfo/")
-            TargetStr = binary_to_list(Target),
+            %% Target can be either a binary or a list depending on the Erlang version
+            TargetStr = case is_binary(Target) of
+                true -> binary_to_list(Target);
+                false -> Target  % Already a list
+            end,
             case string:split(TargetStr, "zoneinfo/", trailing) of
                 [_, TzName] -> list_to_binary(TzName);
                 _ -> undefined
