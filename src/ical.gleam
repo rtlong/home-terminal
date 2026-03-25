@@ -94,6 +94,13 @@ pub fn parse_events(
 ) -> List(Event) {
   let local_offset = calendar.local_offset()
   let system_tz = get_system_timezone()
+  
+  io.println("========================================")
+  io.println("DEBUG: Parsing calendar: " <> calendar_name)
+  io.println("DEBUG: System timezone: " <> result.unwrap(system_tz, "NONE DETECTED"))
+  io.println("DEBUG: Local offset seconds: " <> float.to_string(duration.to_seconds(local_offset)))
+  io.println("========================================")
+  
   let raw_vevents =
     ical_text
     |> unfold_lines
