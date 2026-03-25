@@ -266,6 +266,8 @@ fn expand_vevent(
                   let duration_secs = event_duration_secs(start, end)
 
                   // Generate weekly instances within window
+                  // Determine the event timezone: TZID if present, otherwise system_tz for floating
+                  let event_tz = result.or(dtstart_tzid, system_tz)
                   expand_weekly(
                     uid,
                     summary,
@@ -281,6 +283,7 @@ fn expand_vevent(
                     uid_overrides,
                     local_offset,
                     system_tz,
+                    event_tz,
                     window_start,
                     window_end,
                   )
@@ -316,6 +319,7 @@ fn expand_weekly(
   uid_overrides: List(List(String)),
   local_offset: duration.Duration,
   system_tz: Result(String, Nil),
+  event_tz: Result(String, Nil),
   window_start: timestamp.Timestamp,
   window_end: timestamp.Timestamp,
 ) -> List(Event) {
@@ -341,6 +345,7 @@ fn expand_weekly(
         url,
         local_offset,
         system_tz,
+        event_tz,
         window_start,
         window_end,
         [],
@@ -662,6 +667,7 @@ fn generate_weekly_timed(
   url: String,
   local_offset: duration.Duration,
   system_tz: Result(String, Nil),
+  event_tz: Result(String, Nil),
   window_start: timestamp.Timestamp,
   window_end: timestamp.Timestamp,
   acc: List(Event),
@@ -678,8 +684,8 @@ fn generate_weekly_timed(
   case past_end || too_far {
     True -> list.reverse(acc)
     False -> {
-      let week = duration.seconds(7 * 86_400)
-      let next_ts = timestamp.add(current_ts, week)
+      // Add 7 days while preserving wall-clock time across DST transitions
+      let next_ts = add_week_dst_aware(current_ts, event_tz, local_offset)
 
       // Only emit if current_ts is within or overlapping the window
       let instance_end_ts =
@@ -704,6 +710,7 @@ fn generate_weekly_timed(
             url,
             local_offset,
             system_tz,
+            event_tz,
             window_start,
             window_end,
             acc,
@@ -731,6 +738,7 @@ fn generate_weekly_timed(
                 url,
                 local_offset,
                 system_tz,
+                event_tz,
                 window_start,
                 window_end,
                 acc,
@@ -802,6 +810,7 @@ fn generate_weekly_timed(
                 url,
                 local_offset,
                 system_tz,
+                event_tz,
                 window_start,
                 window_end,
                 [event, ..acc],
@@ -1098,6 +1107,38 @@ fn parse_event_time(
       }
     }
     _ -> Error(Nil)
+  }
+}
+
+/// Add one week to a timestamp while preserving wall-clock time across DST transitions.
+/// This ensures recurring events maintain their local time (e.g., "5:00 PM every week")
+/// even when crossing DST boundaries.
+fn add_week_dst_aware(
+  ts: timestamp.Timestamp,
+  event_tz: Result(String, Nil),
+  local_offset: duration.Duration,
+) -> timestamp.Timestamp {
+  case event_tz {
+    Ok(tz) -> {
+      // Convert to wall-clock time in the event's timezone
+      let #(date, time) = timestamp.to_calendar(ts, local_offset)
+      let calendar.TimeOfDay(hour, minute, second, _) = time
+      
+      // Add 7 days to the date
+      let new_date = advance_date_by_n(date, 7)
+      let Date(new_year, new_month, new_day) = new_date
+      let new_month_int = calendar.month_to_int(new_month)
+      
+      // Convert back to UTC using the timezone (this handles DST properly)
+      let utc_gregorian =
+        tz_local_to_utc(new_year, new_month_int, new_day, hour, minute, second, tz)
+      let unix_secs = utc_gregorian - gregorian_epoch_offset
+      timestamp.from_unix_seconds(unix_secs)
+    }
+    Error(Nil) -> {
+      // No timezone info: fall back to simple 7-day addition
+      timestamp.add(ts, duration.seconds(7 * 86_400))
+    }
   }
 }
 
