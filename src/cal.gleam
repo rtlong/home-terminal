@@ -143,6 +143,7 @@ pub fn view_gantt(
 
   // Build a per-event travel-minutes lookup: event uid → #(drive_to_min, drive_from_min).
   // Computed once here so view_gantt_day can use it without re-querying the cache.
+  // Drive times > 6 hours are filtered out as they're likely part of travel and not useful.
   let travel_mins_for =
     case home_address {
       "" -> fn(_uid: String) { #(0, 0) }
@@ -159,7 +160,11 @@ pub fn view_gantt(
                   dict.get(leg_cache, travel.leg_cache_key(loc, addr))
                   |> result.map(fn(s) { { s + 30 } / 60 })
                   |> result.unwrap(0)
-                Ok(#(e.uid, #(to_min, from_min)))
+                // Filter out drive times > 6 hours (360 minutes)
+                case to_min > 360 || from_min > 360 {
+                  True -> Ok(#(e.uid, #(0, 0)))
+                  False -> Ok(#(e.uid, #(to_min, from_min)))
+                }
               }
               _, _, _ -> Error(Nil)
             }
@@ -2114,6 +2119,7 @@ pub fn view_event_detail(
   }
 
   // Travel info from home to the event location.
+  // Hide drive times > 6 hours as they're likely part of travel and not useful.
   let travel_row = case e.location {
     "" -> element.none()
     loc -> {
@@ -2123,8 +2129,16 @@ pub fn view_event_detail(
         |> result.or(dict.get(leg_cache, travel.leg_cache_key(loc, home_address)))
       let travel_detail = case info, leg_secs {
         Ok(ti), _ ->
-          ti.duration_text <> " · " <> ti.distance_text <> " from home"
-        Error(_), Ok(secs) -> secs_to_min_text(secs) <> " min from home"
+          case ti.duration_secs > 21_600 {
+            True -> ""
+            False ->
+              ti.duration_text <> " · " <> ti.distance_text <> " from home"
+          }
+        Error(_), Ok(secs) ->
+          case secs > 21_600 {
+            True -> ""
+            False -> secs_to_min_text(secs) <> " min from home"
+          }
         Error(_), Error(_) -> ""
       }
       html.div(
