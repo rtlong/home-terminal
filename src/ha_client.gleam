@@ -155,6 +155,10 @@ type Msg {
   MqttMessage(topic: String, payload: BitArray)
   MqttConnectionChanged(mqtt.ConnectionState)
   Reconnect
+  /// Periodic watchdog tick. Independent of the disconnect → reconnect path,
+  /// this guards against silent-stuck states by forcing a reconnect whenever
+  /// we believe we are not connected and no retry is already in flight.
+  HealthCheck
 }
 
 type State {
@@ -165,8 +169,28 @@ type State {
     dark_mode: Bool,
     clients: List(ClientCallback),
     self: Subject(Msg),
+    /// True while we believe an MQTT session is established (between
+    /// ConnectAccepted and any subsequent disconnect).
+    connected: Bool,
+    /// Number of consecutive failed reconnect attempts since the last
+    /// successful ConnectAccepted. Used to compute exponential backoff.
+    /// Reset to 0 on each successful ConnectAccepted.
+    reconnect_attempt: Int,
+    /// True when a reconnect task has been scheduled but not yet fired,
+    /// preventing multiple overlapping reconnect spawns when several
+    /// connection events arrive in quick succession.
+    reconnect_pending: Bool,
   )
 }
+
+// Backoff schedule constants (milliseconds).
+const initial_backoff_ms = 5000
+
+const max_backoff_ms = 60_000
+
+// Watchdog tick interval. Long enough not to spam logs, short enough to
+// recover from silent-stuck states within ~1 minute.
+const watchdog_interval_ms = 60_000
 
 // ACTOR INIT ------------------------------------------------------------------
 
@@ -246,8 +270,15 @@ fn init_mqtt(
       dark_mode:,
       clients: [],
       self:,
+      connected: True,
+      reconnect_attempt: 0,
+      reconnect_pending: False,
     )
   setup_session(client, prefix, initial_state)
+
+  // Start the watchdog loop. It runs independently of the actor's mailbox
+  // and just pings us every watchdog_interval_ms.
+  start_watchdog(self)
 
   Ok(#(initial_state, updates_subject))
 }
@@ -471,32 +502,77 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
 
     MqttConnectionChanged(mqtt.DisconnectedUnexpectedly(reason:)) -> {
       log.println("[ha_client] disconnected unexpectedly: " <> reason)
-      // Schedule reconnect after 5 seconds
-      let self = state.self
-      let _ = process.spawn_unlinked(fn() {
-        process.sleep(5000)
-        process.send(self, Reconnect)
-      })
+      // Mark disconnected and (re)schedule a reconnect using the current
+      // backoff. We deliberately do NOT reset reconnect_attempt here — if we
+      // were already in a reconnect loop and the broker briefly accepted us
+      // before failing again, we should keep backing off rather than reset.
+      // (reconnect_attempt is reset only on a fully successful ConnectAccepted.)
+      let state = State(..state, connected: False)
+      let state = maybe_schedule_reconnect(state, "disconnect")
+      actor.continue(state)
+    }
+
+    MqttConnectionChanged(mqtt.Disconnected) -> {
+      // Clean disconnect — usually a deliberate shutdown. Still treat as a
+      // condition to recover from in case it was unexpected from our POV.
+      log.println("[ha_client] disconnected (clean)")
+      let state = State(..state, connected: False)
+      let state = maybe_schedule_reconnect(state, "clean disconnect")
       actor.continue(state)
     }
 
     MqttConnectionChanged(mqtt.ConnectAccepted(_)) -> {
-      log.println("[ha_client] connected, re-establishing session")
+      log.println(
+        "[ha_client] connected, re-establishing session"
+        <> case state.reconnect_attempt {
+          0 -> ""
+          n -> " (after " <> int.to_string(n) <> " failed attempt(s))"
+        },
+      )
       let prefix = state.config.device_prefix
       // Re-publish discovery, availability, current state, and re-subscribe
       setup_session(state.mqtt_client, prefix, state)
+      // Reset backoff state — we're healthy again.
+      let state =
+        State(
+          ..state,
+          connected: True,
+          reconnect_attempt: 0,
+          reconnect_pending: False,
+        )
       actor.continue(state)
     }
 
-    MqttConnectionChanged(conn_state) -> {
+    MqttConnectionChanged(mqtt.ConnectFailed(reason)) -> {
+      log.println("[ha_client] connect failed: " <> reason)
+      let state = State(..state, connected: False, reconnect_pending: False)
+      let state = maybe_schedule_reconnect(state, "connect failed")
+      actor.continue(state)
+    }
+
+    MqttConnectionChanged(mqtt.ConnectRejected(reason)) -> {
+      // Broker actively rejected (auth failure, bad client id, etc.).
+      // Retrying immediately is unlikely to help — the spoke library reports
+      // these as terminal protocol errors. We still retry on the same backoff
+      // ladder so that a transient broker config issue can recover, but the
+      // logs make it clear what happened.
       log.println(
-        "[ha_client] connection state: " <> string.inspect(conn_state),
+        "[ha_client] connect rejected: " <> string.inspect(reason),
       )
+      let state = State(..state, connected: False, reconnect_pending: False)
+      let state = maybe_schedule_reconnect(state, "connect rejected")
       actor.continue(state)
     }
 
     Reconnect -> {
-      log.println("[ha_client] attempting reconnect...")
+      // Mark the pending flag false now that the scheduled task has fired
+      // and we're about to act on it.
+      let attempt = state.reconnect_attempt + 1
+      log.println(
+        "[ha_client] attempting reconnect (attempt "
+        <> int.to_string(attempt)
+        <> ")...",
+      )
       let will =
         mqtt.PublishData(
           topic: state.config.device_prefix <> "/availability",
@@ -505,7 +581,35 @@ fn handle_message(state: State, msg: Msg) -> actor.Next(State, Msg) {
           retain: True,
         )
       mqtt_actor.connect(state.mqtt_client, True, Some(will))
-      actor.continue(state)
+      // The outcome will arrive as a ConnectionStateChanged update which we
+      // translate into MqttConnectionChanged. We bump reconnect_attempt now
+      // so the count is correct regardless of which branch handles the
+      // outcome.
+      actor.continue(
+        State(
+          ..state,
+          reconnect_attempt: attempt,
+          reconnect_pending: False,
+        ),
+      )
+    }
+
+    HealthCheck -> {
+      // Watchdog: if we believe we are not connected and no reconnect is
+      // already in flight, kick one off immediately. This is the
+      // belt-and-suspenders safety net against any unforeseen state machine
+      // bug that might lead to a silent-stuck actor.
+      case state.connected, state.reconnect_pending {
+        True, _ -> actor.continue(state)
+        False, True -> actor.continue(state)
+        False, False -> {
+          log.println(
+            "[ha_client] watchdog: not connected and no reconnect pending; forcing one",
+          )
+          let state = maybe_schedule_reconnect(state, "watchdog")
+          actor.continue(state)
+        }
+      }
     }
   }
 }
@@ -514,6 +618,95 @@ fn broadcast(state: State) -> Nil {
   let ha_state =
     HaState(display_power: state.display_power, dark_mode: state.dark_mode)
   list.each(state.clients, fn(callback) { callback(ha_state) })
+}
+
+// RECONNECT / WATCHDOG --------------------------------------------------------
+
+/// Compute the next reconnect delay using a capped exponential backoff:
+///
+///   attempt 0 (first failure)  → 5s   (initial_backoff_ms)
+///   attempt 1                  → 10s
+///   attempt 2                  → 20s
+///   attempt 3                  → 40s
+///   attempt 4+                 → 60s  (max_backoff_ms)
+///
+/// `attempt` is the number of consecutive failed attempts SO FAR (so the
+/// caller passes state.reconnect_attempt before incrementing).
+fn backoff_delay_ms(attempt: Int) -> Int {
+  let shift = case attempt < 0 {
+    True -> 0
+    False -> attempt
+  }
+  // 5000 * 2^shift, capped at max_backoff_ms.
+  let raw = initial_backoff_ms * pow2(shift)
+  case raw > max_backoff_ms || raw < 0 {
+    True -> max_backoff_ms
+    False -> raw
+  }
+}
+
+/// Simple integer 2^n with a small cap to avoid overflow. The cap is well
+/// above what the backoff schedule will ever pass in.
+fn pow2(n: Int) -> Int {
+  case n <= 0 {
+    True -> 1
+    False ->
+      case n > 30 {
+        True -> 1_073_741_824
+        // 2^30
+        False -> 2 * pow2(n - 1)
+      }
+  }
+}
+
+/// Spawn a one-shot unlinked task that sleeps `delay_ms` then sends Reconnect
+/// to the actor.
+fn schedule_reconnect(self: Subject(Msg), delay_ms: Int) -> Nil {
+  let _ = process.spawn_unlinked(fn() {
+    process.sleep(delay_ms)
+    process.send(self, Reconnect)
+  })
+  Nil
+}
+
+/// Idempotent scheduler: only schedule a reconnect if one isn't already
+/// pending. Returns the updated state with reconnect_pending set.
+fn maybe_schedule_reconnect(state: State, source: String) -> State {
+  case state.reconnect_pending {
+    True -> {
+      log.println(
+        "[ha_client] reconnect already pending; skipping " <> source <> " trigger",
+      )
+      state
+    }
+    False -> {
+      let delay = backoff_delay_ms(state.reconnect_attempt)
+      log.println(
+        "[ha_client] scheduling reconnect in "
+        <> int.to_string(delay)
+        <> "ms (trigger="
+        <> source
+        <> ", attempt="
+        <> int.to_string(state.reconnect_attempt + 1)
+        <> ")",
+      )
+      schedule_reconnect(state.self, delay)
+      State(..state, reconnect_pending: True)
+    }
+  }
+}
+
+/// Periodic watchdog. Sends HealthCheck to the actor every
+/// watchdog_interval_ms forever. The actor decides what to do with it.
+fn start_watchdog(self: Subject(Msg)) -> Nil {
+  let _ = process.spawn_unlinked(fn() { watchdog_loop(self) })
+  Nil
+}
+
+fn watchdog_loop(self: Subject(Msg)) -> Nil {
+  process.sleep(watchdog_interval_ms)
+  process.send(self, HealthCheck)
+  watchdog_loop(self)
 }
 
 // MQTT PUBLISHING -------------------------------------------------------------
