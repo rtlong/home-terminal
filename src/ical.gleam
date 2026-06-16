@@ -104,13 +104,31 @@ type RecurrenceFreq {
   Yearly
 }
 
-/// Parsed RRULE data
-type RecurrenceRule {
-  RecurrenceRule(freq: RecurrenceFreq, interval: Int)
+/// Days of the week (used for RRULE BYDAY).
+type Weekday {
+  Monday
+  Tuesday
+  Wednesday
+  Thursday
+  Friday
+  Saturday
+  Sunday
 }
 
-/// Parse an RRULE string to extract FREQ and INTERVAL.
-/// Example: "FREQ=WEEKLY;INTERVAL=2" -> RecurrenceRule(Weekly, 2)
+/// Parsed RRULE data
+type RecurrenceRule {
+  RecurrenceRule(
+    freq: RecurrenceFreq,
+    interval: Int,
+    /// BYDAY days, only honoured for FREQ=WEEKLY (the only freq Apple Calendar uses BYDAY with).
+    /// Empty list means "use DTSTART's day-of-week".
+    byday: List(Weekday),
+  )
+}
+
+/// Parse an RRULE string to extract FREQ, INTERVAL, and (for weekly) BYDAY.
+/// Example: "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH" ->
+///   RecurrenceRule(Weekly, 2, [Tuesday, Thursday])
 /// Returns Error if FREQ is missing or unrecognized.
 fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
   let upper = string.uppercase(rrule)
@@ -139,9 +157,132 @@ fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
     })
     |> result.unwrap(1)
   }
-  
+
+  // Extract BYDAY (only honoured for weekly recurrence below).
+  // Format: BYDAY=MO,TU,WE  or BYDAY=-1FR,2MO (we ignore the numeric prefix).
+  let byday =
+    list.find(parts, fn(part) { string.starts_with(part, "BYDAY=") })
+    |> result.map(fn(byday_part) {
+      string.replace(byday_part, "BYDAY=", "")
+      |> parse_byday
+    })
+    |> result.unwrap([])
+
   use freq <- result.try(freq_result)
-  Ok(RecurrenceRule(freq:, interval:))
+  Ok(RecurrenceRule(freq:, interval:, byday:))
+}
+
+/// Parse a BYDAY value list (comma-separated). Strips any numeric prefix
+/// (e.g. "-1FR" → Friday) since we only support weekly BYDAY semantics.
+fn parse_byday(s: String) -> List(Weekday) {
+  string.split(s, ",")
+  |> list.filter_map(fn(part) { parse_weekday(string.trim(part)) })
+}
+
+/// Parse an RFC 5545 weekday token. Strips any leading +/-N prefix
+/// (e.g. "-1FR" → Friday) by keeping only the trailing 2 chars.
+fn parse_weekday(s: String) -> Result(Weekday, Nil) {
+  let len = string.length(s)
+  let day_str = case len > 2 {
+    True -> string.slice(s, len - 2, 2)
+    False -> s
+  }
+  case string.uppercase(day_str) {
+    "MO" -> Ok(Monday)
+    "TU" -> Ok(Tuesday)
+    "WE" -> Ok(Wednesday)
+    "TH" -> Ok(Thursday)
+    "FR" -> Ok(Friday)
+    "SA" -> Ok(Saturday)
+    "SU" -> Ok(Sunday)
+    _ -> Error(Nil)
+  }
+}
+
+/// Index 0=Mon..6=Sun (matches WKST=MO weekly semantics).
+fn weekday_to_mon0(w: Weekday) -> Int {
+  case w {
+    Monday -> 0
+    Tuesday -> 1
+    Wednesday -> 2
+    Thursday -> 3
+    Friday -> 4
+    Saturday -> 5
+    Sunday -> 6
+  }
+}
+
+/// Compute day-of-week for a Date using Sakamoto's algorithm. 0=Mon..6=Sun.
+fn date_weekday_mon0(date: calendar.Date) -> Int {
+  let t = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]
+  let y = case calendar.month_to_int(date.month) < 3 {
+    True -> date.year - 1
+    False -> date.year
+  }
+  let m_idx = calendar.month_to_int(date.month) - 1
+  let tm = case list.take(list.drop(t, m_idx), 1) {
+    [v] -> v
+    _ -> 0
+  }
+  // Zeller-style: returns 0=Sun..6=Sat. Convert to 0=Mon..6=Sun.
+  let sun0 =
+    { y + y / 4 - y / 100 + y / 400 + tm + date.day }
+    |> int.remainder(7)
+    |> result.unwrap(0)
+  let sun0_pos = case sun0 < 0 {
+    True -> sun0 + 7
+    False -> sun0
+  }
+  // 0=Sun..6=Sat → 0=Mon..6=Sun
+  case sun0_pos {
+    0 -> 6
+    _ -> sun0_pos - 1
+  }
+}
+
+/// Move a Date by exactly `n` days (n may be negative).
+fn shift_date_days(date: calendar.Date, n: Int) -> calendar.Date {
+  case int.compare(n, 0) {
+    order.Eq -> date
+    order.Gt -> shift_date_days(advance_one_day(date), n - 1)
+    order.Lt -> shift_date_days(retreat_one_day(date), n + 1)
+  }
+}
+
+fn retreat_one_day(date: calendar.Date) -> calendar.Date {
+  case date.day > 1 {
+    True -> calendar.Date(..date, day: date.day - 1)
+    False ->
+      case date.month {
+        calendar.January ->
+          calendar.Date(
+            year: date.year - 1,
+            month: calendar.December,
+            day: 31,
+          )
+        _ -> {
+          let prev = prev_month_cal(date.month)
+          calendar.Date(..date, month: prev, day: days_in_month(prev, date.year))
+        }
+      }
+  }
+}
+
+fn prev_month_cal(m: calendar.Month) -> calendar.Month {
+  case m {
+    calendar.January -> calendar.December
+    calendar.February -> calendar.January
+    calendar.March -> calendar.February
+    calendar.April -> calendar.March
+    calendar.May -> calendar.April
+    calendar.June -> calendar.May
+    calendar.July -> calendar.June
+    calendar.August -> calendar.July
+    calendar.September -> calendar.August
+    calendar.October -> calendar.September
+    calendar.November -> calendar.October
+    calendar.December -> calendar.November
+  }
 }
 
 // PUBLIC API ------------------------------------------------------------------
@@ -588,11 +729,20 @@ fn generate_recurring_allday(
   window_end_date: calendar.Date,
   acc: List(Event),
 ) -> List(Event) {
-  let RecurrenceRule(freq, interval) = rrule
-  
+  let RecurrenceRule(freq, interval, byday) = rrule
+
+  // When BYDAY is used, an iteration's emitted days may fall up to 6 days
+  // before the anchor — extend the termination guard by one week.
+  let buffer_days = case freq, byday {
+    Weekly, [_, ..] -> 7
+    _, _ -> 0
+  }
+  let buffered_window_end_date =
+    advance_date_by_n(window_end_date, buffer_days)
+
   // Stop when current_date >= window_end_date (no more overlap possible).
   // Guard against infinite loops: if we've gone more than 500 intervals past the window.
-  let past_end = !date_before(current_date, window_end_date)
+  let past_end = !date_before(current_date, buffered_window_end_date)
   let too_far =
     !date_before(current_date, advance_date_by_n(window_end_date, 500 * 7))
 
@@ -606,21 +756,17 @@ fn generate_recurring_allday(
         Monthly -> advance_date_by_months(current_date, interval)
         Yearly -> advance_date_by_years(current_date, interval)
       }
-      
-      let instance_end_date = advance_date_by_n(current_date, day_count)
 
-      // In window if instance start < window_end AND instance end > window_start
-      let in_window =
-        date_before(current_date, window_end_date)
-        && !date_before(instance_end_date, window_start_date)
-        && calendar.naive_date_compare(instance_end_date, window_start_date)
-        != order.Eq
+      // Determine all candidate dates for this iteration's expansion.
+      let candidate_dates = case freq, byday {
+        Weekly, [_, ..] -> weekly_byday_dates(current_date, byday)
+        _, _ -> [current_date]
+      }
 
-      let new_acc = case in_window {
-        False ->
-          generate_recurring_allday(
-            rrule,
-            next_date,
+      let new_events =
+        list.filter_map(candidate_dates, fn(d) {
+          allday_instance_for_date(
+            d,
             day_count,
             exdates,
             uid_overrides,
@@ -635,121 +781,162 @@ fn generate_recurring_allday(
             system_tz,
             window_start_date,
             window_end_date,
-            acc,
           )
-        True -> {
-          // Check EXDATE: an EXDATE matching this date excludes the instance.
-          let is_excluded =
-            list.any(exdates, fn(ex) {
-              let #(ex_date, _) = timestamp.to_calendar(ex, local_offset)
-              ex_date == current_date
-            })
+        })
 
-          case is_excluded {
-            True ->
-              generate_recurring_allday(
-                rrule,
-                next_date,
-                day_count,
-                exdates,
-                uid_overrides,
-                uid,
-                summary,
-                calendar_name,
-                location,
-                free,
-                description,
-                url,
-                local_offset,
-                system_tz,
-                window_start_date,
-                window_end_date,
-                acc,
-              )
-            False -> {
-              // Check for RECURRENCE-ID override matching this date.
-              let override_event =
-                list.find_map(uid_overrides, fn(ol) {
-                  let oprops = list.filter_map(ol, parse_property)
-                  case get_prop_prefix(oprops, "RECURRENCE-ID") {
-                    Ok(rec_raw) -> {
-                      case parse_event_time(rec_raw, Error(Nil), system_tz) {
-                        Ok(AllDay(rec_date)) ->
-                          case rec_date == current_date {
-                            True ->
-                              parse_override_event(
-                                ol,
-                                uid,
-                                calendar_name,
-                                local_offset,
-                                system_tz,
-                              )
-                            False -> Error(Nil)
-                          }
-                        Ok(AtTime(rec_ts)) -> {
-                          let #(rec_date, _) =
-                            timestamp.to_calendar(rec_ts, local_offset)
-                          case rec_date == current_date {
-                            True ->
-                              parse_override_event(
-                                ol,
-                                uid,
-                                calendar_name,
-                                local_offset,
-                                system_tz,
-                              )
-                            False -> Error(Nil)
-                          }
-                        }
-                        Error(Nil) -> Error(Nil)
-                      }
-                    }
-                    Error(Nil) -> Error(Nil)
-                  }
-                })
+      let new_acc = list.fold(new_events, acc, fn(a, e) { [e, ..a] })
 
-              let event = case override_event {
-                Ok(e) -> e
-                Error(Nil) ->
-                  Event(
-                    uid:,
-                    summary:,
-                    start: AllDay(current_date),
-                    end: AllDay(instance_end_date),
-                    calendar_name:,
-                    location:,
-                    free:,
-                    description:,
-                    url:,
-                  )
-              }
-
-              generate_recurring_allday(
-                rrule,
-                next_date,
-                day_count,
-                exdates,
-                uid_overrides,
-                uid,
-                summary,
-                calendar_name,
-                location,
-                free,
-                description,
-                url,
-                local_offset,
-                system_tz,
-                window_start_date,
-                window_end_date,
-                [event, ..acc],
-              )
-            }
-          }
-        }
-      }
-      new_acc
+      generate_recurring_allday(
+        rrule,
+        next_date,
+        day_count,
+        exdates,
+        uid_overrides,
+        uid,
+        summary,
+        calendar_name,
+        location,
+        free,
+        description,
+        url,
+        local_offset,
+        system_tz,
+        window_start_date,
+        window_end_date,
+        new_acc,
+      )
     }
   }
+}
+
+/// Build an Event from a candidate all-day date, applying window, EXDATE, and
+/// RECURRENCE-ID override checks.
+fn allday_instance_for_date(
+  current_date: calendar.Date,
+  day_count: Int,
+  exdates: List(timestamp.Timestamp),
+  uid_overrides: List(List(String)),
+  uid: String,
+  summary: String,
+  calendar_name: String,
+  location: String,
+  free: Bool,
+  description: String,
+  url: String,
+  local_offset: duration.Duration,
+  system_tz: Result(String, Nil),
+  window_start_date: calendar.Date,
+  window_end_date: calendar.Date,
+) -> Result(Event, Nil) {
+  let instance_end_date = advance_date_by_n(current_date, day_count)
+
+  // In window if instance start < window_end AND instance end > window_start
+  let in_window =
+    date_before(current_date, window_end_date)
+    && !date_before(instance_end_date, window_start_date)
+    && calendar.naive_date_compare(instance_end_date, window_start_date)
+    != order.Eq
+
+  case in_window {
+    False -> Error(Nil)
+    True -> {
+      // Check EXDATE: an EXDATE matching this date excludes the instance.
+      let is_excluded =
+        list.any(exdates, fn(ex) {
+          let #(ex_date, _) = timestamp.to_calendar(ex, local_offset)
+          ex_date == current_date
+        })
+
+      case is_excluded {
+        True -> Error(Nil)
+        False ->
+          case
+            find_allday_override_for_date(
+              current_date,
+              uid_overrides,
+              uid,
+              calendar_name,
+              local_offset,
+              system_tz,
+            )
+          {
+            Ok(override_evt) -> Ok(override_evt)
+            Error(Nil) ->
+              Ok(Event(
+                uid:,
+                summary:,
+                start: AllDay(current_date),
+                end: AllDay(instance_end_date),
+                calendar_name:,
+                location:,
+                free:,
+                description:,
+                url:,
+              ))
+          }
+      }
+    }
+  }
+}
+
+fn find_allday_override_for_date(
+  current_date: calendar.Date,
+  uid_overrides: List(List(String)),
+  uid: String,
+  calendar_name: String,
+  local_offset: duration.Duration,
+  system_tz: Result(String, Nil),
+) -> Result(Event, Nil) {
+  list.find_map(uid_overrides, fn(ol) {
+    let oprops = list.filter_map(ol, parse_property)
+    case get_prop_prefix(oprops, "RECURRENCE-ID") {
+      Ok(rec_raw) ->
+        case parse_event_time(rec_raw, Error(Nil), system_tz) {
+          Ok(AllDay(rec_date)) ->
+            case rec_date == current_date {
+              True ->
+                parse_override_event(
+                  ol,
+                  uid,
+                  calendar_name,
+                  local_offset,
+                  system_tz,
+                )
+              False -> Error(Nil)
+            }
+          Ok(AtTime(rec_ts)) -> {
+            let #(rec_date, _) =
+              timestamp.to_calendar(rec_ts, local_offset)
+            case rec_date == current_date {
+              True ->
+                parse_override_event(
+                  ol,
+                  uid,
+                  calendar_name,
+                  local_offset,
+                  system_tz,
+                )
+              False -> Error(Nil)
+            }
+          }
+          Error(Nil) -> Error(Nil)
+        }
+      Error(Nil) -> Error(Nil)
+    }
+  })
+}
+
+/// For a weekly+BYDAY all-day recurrence, compute each BYDAY day's date in
+/// the iteration anchor's (Monday-start) week.
+fn weekly_byday_dates(
+  current_date: calendar.Date,
+  byday: List(Weekday),
+) -> List(calendar.Date) {
+  let current_dow = date_weekday_mon0(current_date)
+  list.map(byday, fn(d) {
+    let offset = weekday_to_mon0(d) - current_dow
+    shift_date_days(current_date, offset)
+  })
 }
 
 fn generate_recurring_timed(
@@ -772,10 +959,20 @@ fn generate_recurring_timed(
   window_end: timestamp.Timestamp,
   acc: List(Event),
 ) -> List(Event) {
-  let RecurrenceRule(freq, interval) = rrule
-  
+  let RecurrenceRule(freq, interval, byday) = rrule
+
+  // When BYDAY is used, an iteration's emitted days may fall up to 6 days
+  // before the anchor (e.g. anchor on Friday with BYDAY=MO). Extend the
+  // termination guard by one week to avoid skipping in-window emissions.
+  let lookahead_buffer = case freq, byday {
+    Weekly, [_, ..] -> 7 * 86_400
+    _, _ -> 0
+  }
+  let buffered_window_end =
+    timestamp.add(window_end, duration.seconds(lookahead_buffer))
+
   // Stop if we've gone past window_end or too far beyond it (loop guard)
-  let past_end = timestamp.compare(current_ts, window_end) != Lt
+  let past_end = timestamp.compare(current_ts, buffered_window_end) != Lt
   let too_far =
     timestamp.compare(
       current_ts,
@@ -789,18 +986,19 @@ fn generate_recurring_timed(
       // Advance by the recurrence interval while preserving wall-clock time across DST transitions
       let next_ts = add_recurrence_dst_aware(current_ts, freq, interval, event_tz, local_offset)
 
-      // Only emit if current_ts is within or overlapping the window
-      let instance_end_ts =
-        timestamp.add(current_ts, duration.seconds(duration_secs))
-      let in_window =
-        timestamp.compare(instance_end_ts, window_start) != Lt
-        && timestamp.compare(current_ts, window_end) == Lt
+      // Determine all candidate timestamps for this iteration's expansion.
+      // For weekly+BYDAY, emit one event per BYDAY day in the iteration's week.
+      // Otherwise, emit one event at current_ts.
+      let candidate_tses = case freq, byday {
+        Weekly, [_, ..] -> weekly_byday_timestamps(current_ts, byday, event_tz)
+        _, _ -> [current_ts]
+      }
 
-      let new_acc = case in_window {
-        False ->
-          generate_recurring_timed(
-            rrule,
-            next_ts,
+      // Build events for each candidate that passes all checks.
+      let new_events =
+        list.filter_map(candidate_tses, fn(ts) {
+          instance_for_ts(
+            ts,
             duration_secs,
             exdates,
             uid_overrides,
@@ -813,118 +1011,197 @@ fn generate_recurring_timed(
             url,
             local_offset,
             system_tz,
-            event_tz,
             window_start,
             window_end,
-            acc,
           )
-        True -> {
-          // Check if this occurrence is excluded
-          let is_excluded =
-            list.any(exdates, fn(ex) {
-              same_day_ts(current_ts, ex, local_offset)
-            })
+        })
 
-          case is_excluded {
-            True ->
-              generate_recurring_timed(
-                rrule,
-                next_ts,
-                duration_secs,
-                exdates,
-                uid_overrides,
-                uid,
-                summary,
-                calendar_name,
-                location,
-                free,
-                description,
-                url,
-                local_offset,
-                system_tz,
-                event_tz,
-                window_start,
-                window_end,
-                acc,
-              )
-            False -> {
-              // Check for a RECURRENCE-ID override matching this date
-              let override_event =
-                list.find_map(uid_overrides, fn(ol) {
-                  let oprops = list.filter_map(ol, parse_property)
-                  let rec_id_tzid = get_tzid_param(ol, "RECURRENCE-ID")
-                  case get_prop_prefix(oprops, "RECURRENCE-ID") {
-                    Ok(rec_raw) -> {
-                      case
-                        parse_event_time(rec_raw, rec_id_tzid, system_tz)
-                      {
-                        Ok(rec_time) -> {
-                          case
-                            same_day_event_time(
-                              current_ts,
-                              rec_time,
-                              local_offset,
-                            )
-                          {
-                            True ->
-                              parse_override_event(
-                                ol,
-                                uid,
-                                calendar_name,
-                                local_offset,
-                                system_tz,
-                              )
-                            False -> Error(Nil)
-                          }
-                        }
-                        Error(Nil) -> Error(Nil)
-                      }
-                    }
-                    Error(Nil) -> Error(Nil)
-                  }
-                })
+      // Prepend new events to acc preserving chronological order through the
+      // final list.reverse. fold processes left→right and prepends each, so
+      // candidates ordered [Tu, Th] become [Th, Tu, ..acc] and reverse to [.., Tu, Th].
+      let new_acc =
+        list.fold(new_events, acc, fn(a, e) { [e, ..a] })
 
-              let event = case override_event {
-                Ok(e) -> e
-                Error(Nil) ->
-                  Event(
-                    uid:,
-                    summary:,
-                    start: AtTime(current_ts),
-                    end: AtTime(instance_end_ts),
-                    calendar_name:,
-                    location:,
-                    free:,
-                    description:,
-                    url:,
-                  )
-              }
+      generate_recurring_timed(
+        rrule,
+        next_ts,
+        duration_secs,
+        exdates,
+        uid_overrides,
+        uid,
+        summary,
+        calendar_name,
+        location,
+        free,
+        description,
+        url,
+        local_offset,
+        system_tz,
+        event_tz,
+        window_start,
+        window_end,
+        new_acc,
+      )
+    }
+  }
+}
 
-              generate_recurring_timed(
-                rrule,
-                next_ts,
-                duration_secs,
-                exdates,
-                uid_overrides,
-                uid,
-                summary,
-                calendar_name,
-                location,
-                free,
-                description,
-                url,
-                local_offset,
-                system_tz,
-                event_tz,
-                window_start,
-                window_end,
-                [event, ..acc],
-              )
-            }
+/// Build an Event from a candidate timestamp, applying window, EXDATE, and
+/// RECURRENCE-ID override checks. Returns Error(Nil) if the instance should
+/// be skipped (not in window or excluded).
+fn instance_for_ts(
+  ts: timestamp.Timestamp,
+  duration_secs: Int,
+  exdates: List(timestamp.Timestamp),
+  uid_overrides: List(List(String)),
+  uid: String,
+  summary: String,
+  calendar_name: String,
+  location: String,
+  free: Bool,
+  description: String,
+  url: String,
+  local_offset: duration.Duration,
+  system_tz: Result(String, Nil),
+  window_start: timestamp.Timestamp,
+  window_end: timestamp.Timestamp,
+) -> Result(Event, Nil) {
+  let instance_end_ts =
+    timestamp.add(ts, duration.seconds(duration_secs))
+  let in_window =
+    timestamp.compare(instance_end_ts, window_start) != Lt
+    && timestamp.compare(ts, window_end) == Lt
+
+  case in_window {
+    False -> Error(Nil)
+    True -> {
+      let is_excluded =
+        list.any(exdates, fn(ex) { same_day_ts(ts, ex, local_offset) })
+      case is_excluded {
+        True -> Error(Nil)
+        False ->
+          case
+            find_override_for_ts(
+              ts,
+              uid_overrides,
+              uid,
+              calendar_name,
+              local_offset,
+              system_tz,
+            )
+          {
+            Ok(override_evt) -> Ok(override_evt)
+            Error(Nil) ->
+              Ok(Event(
+                uid:,
+                summary:,
+                start: AtTime(ts),
+                end: AtTime(instance_end_ts),
+                calendar_name:,
+                location:,
+                free:,
+                description:,
+                url:,
+              ))
           }
-        }
       }
-      new_acc
+    }
+  }
+}
+
+/// Look for a RECURRENCE-ID override whose RECURRENCE-ID falls on the same
+/// local day as `ts`. Returns the parsed override Event if found.
+fn find_override_for_ts(
+  ts: timestamp.Timestamp,
+  uid_overrides: List(List(String)),
+  uid: String,
+  calendar_name: String,
+  local_offset: duration.Duration,
+  system_tz: Result(String, Nil),
+) -> Result(Event, Nil) {
+  list.find_map(uid_overrides, fn(ol) {
+    let oprops = list.filter_map(ol, parse_property)
+    let rec_id_tzid = get_tzid_param(ol, "RECURRENCE-ID")
+    case get_prop_prefix(oprops, "RECURRENCE-ID") {
+      Ok(rec_raw) ->
+        case parse_event_time(rec_raw, rec_id_tzid, system_tz) {
+          Ok(rec_time) ->
+            case same_day_event_time(ts, rec_time, local_offset) {
+              True ->
+                parse_override_event(
+                  ol,
+                  uid,
+                  calendar_name,
+                  local_offset,
+                  system_tz,
+                )
+              False -> Error(Nil)
+            }
+          Error(Nil) -> Error(Nil)
+        }
+      Error(Nil) -> Error(Nil)
+    }
+  })
+}
+
+/// Given an iteration's anchor timestamp and a list of BYDAY weekdays, compute
+/// the corresponding UTC timestamps for each BYDAY day within the anchor's
+/// (Monday-start) week, preserving the anchor's wall-clock time-of-day.
+fn weekly_byday_timestamps(
+  current_ts: timestamp.Timestamp,
+  byday: List(Weekday),
+  event_tz: Result(String, Nil),
+) -> List(timestamp.Timestamp) {
+  case event_tz {
+    Ok(tz) -> {
+      // Decode the anchor timestamp into local date + time-of-day.
+      let unix_secs =
+        duration.to_seconds(
+          timestamp.difference(timestamp.unix_epoch, current_ts),
+        )
+      let utc_greg = float.truncate(unix_secs) + gregorian_epoch_offset
+      let #(#(y, m_int, d), #(h, mi, s)) =
+        gregorian_seconds_to_datetime(utc_greg)
+      let local_greg = tz_utc_to_local(y, m_int, d, h, mi, s, tz)
+      let #(#(ly, lm_int, ld), #(lh, lmi, ls)) =
+        gregorian_seconds_to_datetime(local_greg)
+      let lm = case int_to_month(lm_int) {
+        Ok(mo) -> mo
+        Error(Nil) -> calendar.January
+      }
+      let local_date = Date(year: ly, month: lm, day: ld)
+      let current_dow = date_weekday_mon0(local_date)
+
+      list.map(byday, fn(d) {
+        let offset = weekday_to_mon0(d) - current_dow
+        let target_date = shift_date_days(local_date, offset)
+        let Date(ty, tm, td) = target_date
+        let tm_int = calendar.month_to_int(tm)
+        let target_utc_greg =
+          tz_local_to_utc(ty, tm_int, td, lh, lmi, ls, tz)
+        timestamp.from_unix_seconds(target_utc_greg - gregorian_epoch_offset)
+      })
+    }
+    Error(Nil) -> {
+      // Floating event (no tz): treat current_ts as naive UTC for dow arithmetic.
+      let unix_secs =
+        duration.to_seconds(
+          timestamp.difference(timestamp.unix_epoch, current_ts),
+        )
+      let days_since_epoch = float.truncate(unix_secs) / 86_400
+      // 1970-01-01 was a Thursday → index 3 in 0=Mon..6=Sun
+      let current_dow_raw =
+        { days_since_epoch + 3 }
+        |> int.remainder(7)
+        |> result.unwrap(0)
+      let current_dow = case current_dow_raw < 0 {
+        True -> current_dow_raw + 7
+        False -> current_dow_raw
+      }
+      list.map(byday, fn(d) {
+        let offset = weekday_to_mon0(d) - current_dow
+        timestamp.add(current_ts, duration.seconds(offset * 86_400))
+      })
     }
   }
 }
