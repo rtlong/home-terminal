@@ -127,12 +127,16 @@ type RecurrenceRule {
     /// COUNT bound on the recurrence set (RFC 5545 §3.3.10). None = unbounded.
     /// DTSTART always counts as the first occurrence.
     count: Option(Int),
+    /// UNTIL bound on the recurrence set (RFC 5545 §3.3.10). None = unbounded.
+    /// Inclusive: the last occurrence whose DTSTART equals UNTIL is part of the set.
+    /// Same value-type as DTSTART: AllDay for DATE form, AtTime for UTC DATE-TIME form.
+    until: Option(EventTime),
   )
 }
 
-/// Parse an RRULE string to extract FREQ, INTERVAL, BYDAY, and COUNT.
+/// Parse an RRULE string to extract FREQ, INTERVAL, BYDAY, COUNT, and UNTIL.
 /// Example: "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;COUNT=10" ->
-///   RecurrenceRule(Weekly, 2, [Tuesday, Thursday], Some(10))
+///   RecurrenceRule(Weekly, 2, [Tuesday, Thursday], Some(10), None)
 /// Returns Error if FREQ is missing or unrecognized.
 fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
   let upper = string.uppercase(rrule)
@@ -180,8 +184,30 @@ fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
     })
     |> option.from_result
 
+  // Extract UNTIL (optional; RFC 5545 §3.3.10). Same value-type as DTSTART:
+  // DATE form (8 digits) → AllDay; UTC DATE-TIME form (ending "Z") → AtTime.
+  // Malformed UNTIL → ignored (None).
+  let until =
+    list.find(parts, fn(part) { string.starts_with(part, "UNTIL=") })
+    |> result.map(fn(until_part) {
+      string.replace(until_part, "UNTIL=", "")
+    })
+    |> option.from_result
+    |> option.then(fn(until_str) {
+      case string.ends_with(until_str, "Z") {
+        True ->
+          parse_datetime(until_str)
+          |> result.map(AtTime)
+          |> option.from_result
+        False ->
+          parse_date(until_str)
+          |> result.map(AllDay)
+          |> option.from_result
+      }
+    })
+
   use freq <- result.try(freq_result)
-  Ok(RecurrenceRule(freq:, interval:, byday:, count:))
+  Ok(RecurrenceRule(freq:, interval:, byday:, count:, until:))
 }
 
 /// Parse a BYDAY value list (comma-separated). Strips any numeric prefix
@@ -747,7 +773,7 @@ fn generate_recurring_allday(
   window_end_date: calendar.Date,
   acc: List(Event),
 ) -> List(Event) {
-  let RecurrenceRule(freq, interval, byday, _count) = rrule
+  let RecurrenceRule(freq, interval, byday, _count, until) = rrule
 
   // When BYDAY is used, an iteration's emitted days may fall up to 6 days
   // before the anchor — extend the termination guard by one week.
@@ -764,8 +790,18 @@ fn generate_recurring_allday(
   let too_far =
     !date_before(current_date, advance_date_by_n(window_end_date, 500 * 7))
   let count_done = remaining == Some(0)
+  // Stop when current_date is past UNTIL (plus BYDAY buffer) — no candidate
+  // can be ≤ UNTIL after that point. Only honoured when UNTIL has the same
+  // value-type as DTSTART (DATE here).
+  let until_done = case until {
+    Some(AllDay(u_date)) -> {
+      let cutoff = advance_date_by_n(u_date, buffer_days)
+      date_before(cutoff, current_date)
+    }
+    _ -> False
+  }
 
-  case past_end || too_far || count_done {
+  case past_end || too_far || count_done || until_done {
     True -> list.reverse(acc)
     False -> {
       // Advance the date based on frequency and interval
@@ -778,14 +814,20 @@ fn generate_recurring_allday(
 
       // Determine all candidate dates for this iteration's expansion, then
       // drop any that fall before DTSTART (phantom first-week BYDAY days that
-      // are not part of the recurrence set).
+      // are not part of the recurrence set) or after UNTIL (RFC 5545 §3.3.10
+      // bound; UNTIL is inclusive).
       let raw_candidates = case freq, byday {
         Weekly, [_, ..] -> weekly_byday_dates(current_date, byday)
         _, _ -> [current_date]
       }
       let candidate_dates =
         list.filter(raw_candidates, fn(d) {
-          !date_before(d, master_start_date)
+          let after_start = !date_before(d, master_start_date)
+          let until_ok = case until {
+            Some(AllDay(u_date)) -> !date_before(u_date, d)
+            _ -> True
+          }
+          after_start && until_ok
         })
 
       // Apply COUNT bound: take at most `remaining` candidates this iteration.
@@ -998,7 +1040,7 @@ fn generate_recurring_timed(
   window_end: timestamp.Timestamp,
   acc: List(Event),
 ) -> List(Event) {
-  let RecurrenceRule(freq, interval, byday, _count) = rrule
+  let RecurrenceRule(freq, interval, byday, _count, until) = rrule
 
   // When BYDAY is used, an iteration's emitted days may fall up to 6 days
   // before the anchor (e.g. anchor on Friday with BYDAY=MO). Extend the
@@ -1019,8 +1061,19 @@ fn generate_recurring_timed(
     )
     != Lt
   let count_done = remaining == Some(0)
+  // Stop when current_ts is past UNTIL (plus BYDAY buffer) — no candidate can
+  // be ≤ UNTIL after that point. Only honoured when UNTIL has the same
+  // value-type as DTSTART (AtTime here).
+  let until_done = case until {
+    Some(AtTime(u_ts)) -> {
+      let cutoff_ts =
+        timestamp.add(u_ts, duration.seconds(lookahead_buffer))
+      timestamp.compare(cutoff_ts, current_ts) == Lt
+    }
+    _ -> False
+  }
 
-  case past_end || too_far || count_done {
+  case past_end || too_far || count_done || until_done {
     True -> list.reverse(acc)
     False -> {
       // Advance by the recurrence interval while preserving wall-clock time across DST transitions
@@ -1030,14 +1083,20 @@ fn generate_recurring_timed(
       // For weekly+BYDAY, emit one event per BYDAY day in the iteration's week.
       // Otherwise, emit one event at current_ts. Phantom pre-DTSTART candidates
       // (BYDAY days earlier in the first week than DTSTART) are dropped so they
-      // do not consume COUNT slots.
+      // do not consume COUNT slots. Candidates after UNTIL are likewise dropped
+      // (RFC 5545 §3.3.10; UNTIL is inclusive).
       let raw_candidate_tses = case freq, byday {
         Weekly, [_, ..] -> weekly_byday_timestamps(current_ts, byday, event_tz)
         _, _ -> [current_ts]
       }
       let candidate_tses =
         list.filter(raw_candidate_tses, fn(ts) {
-          timestamp.compare(ts, master_start_ts) != Lt
+          let after_start = timestamp.compare(ts, master_start_ts) != Lt
+          let until_ok = case until {
+            Some(AtTime(u_ts)) -> timestamp.compare(ts, u_ts) != order.Gt
+            _ -> True
+          }
+          after_start && until_ok
         })
 
       // Apply COUNT bound: take at most `remaining` candidates this iteration.
