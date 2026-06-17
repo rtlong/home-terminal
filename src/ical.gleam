@@ -512,7 +512,7 @@ fn expand_recurring(
   master_start: EventTime,
   master_end: EventTime,
   duration_secs: Int,
-  exdates: List(timestamp.Timestamp),
+  exdates: List(EventTime),
   uid_overrides: List(List(String)),
   local_offset: duration.Duration,
   system_tz: Result(String, Nil),
@@ -707,7 +707,7 @@ fn generate_recurring_allday(
   rrule: RecurrenceRule,
   current_date: calendar.Date,
   day_count: Int,
-  exdates: List(timestamp.Timestamp),
+  exdates: List(EventTime),
   uid_overrides: List(List(String)),
   uid: String,
   summary: String,
@@ -807,7 +807,7 @@ fn generate_recurring_allday(
 fn allday_instance_for_date(
   current_date: calendar.Date,
   day_count: Int,
-  exdates: List(timestamp.Timestamp),
+  exdates: List(EventTime),
   uid_overrides: List(List(String)),
   uid: String,
   summary: String,
@@ -836,8 +836,7 @@ fn allday_instance_for_date(
       // Check EXDATE: an EXDATE matching this date excludes the instance.
       let is_excluded =
         list.any(exdates, fn(ex) {
-          let #(ex_date, _) = timestamp.to_calendar(ex, local_offset)
-          ex_date == current_date
+          exdate_matches_date(current_date, ex, local_offset)
         })
 
       case is_excluded {
@@ -936,7 +935,7 @@ fn generate_recurring_timed(
   rrule: RecurrenceRule,
   current_ts: timestamp.Timestamp,
   duration_secs: Int,
-  exdates: List(timestamp.Timestamp),
+  exdates: List(EventTime),
   uid_overrides: List(List(String)),
   uid: String,
   summary: String,
@@ -1045,7 +1044,7 @@ fn generate_recurring_timed(
 fn instance_for_ts(
   ts: timestamp.Timestamp,
   duration_secs: Int,
-  exdates: List(timestamp.Timestamp),
+  exdates: List(EventTime),
   uid_overrides: List(List(String)),
   uid: String,
   summary: String,
@@ -1069,7 +1068,9 @@ fn instance_for_ts(
     False -> Error(Nil)
     True -> {
       let is_excluded =
-        list.any(exdates, fn(ex) { same_day_ts(ts, ex, local_offset) })
+        list.any(exdates, fn(ex) {
+          same_day_event_time(ts, ex, local_offset)
+        })
       case is_excluded {
         True -> Error(Nil)
         False ->
@@ -1250,26 +1251,24 @@ fn parse_override_event(
   ))
 }
 
-/// Collect all EXDATE values as Timestamps.
+/// Collect all EXDATE values, preserving both timed (AtTime) and all-day
+/// (AllDay) forms. Per RFC 5545 §3.8.5.1, a single EXDATE line may carry
+/// multiple comma-separated values; this splits them.
 fn collect_exdates(
   lines: List(String),
   system_tz: Result(String, Nil),
-) -> List(timestamp.Timestamp) {
-  list.filter_map(lines, fn(line) {
+) -> List(EventTime) {
+  list.flat_map(lines, fn(line) {
     let upper = string.uppercase(line)
     case string.starts_with(upper, "EXDATE"), string.split_once(line, ":") {
       True, Ok(#(_param_part, value)) -> {
-        // Reuse get_tzid_param by passing the single line as a one-element list.
         let tzid = get_tzid_param([line], "EXDATE")
-        parse_event_time(string.trim(value), tzid, system_tz)
-        |> result.try(fn(et) {
-          case et {
-            AtTime(ts) -> Ok(ts)
-            AllDay(_) -> Error(Nil)
-          }
+        string.split(value, ",")
+        |> list.filter_map(fn(v) {
+          parse_event_time(string.trim(v), tzid, system_tz)
         })
       }
-      _, _ -> Error(Nil)
+      _, _ -> []
     }
   })
 }
@@ -1308,6 +1307,22 @@ fn same_day_event_time(
     AllDay(date) -> {
       let #(date_a, _) = timestamp.to_calendar(ts, local_offset)
       date_a == date
+    }
+  }
+}
+
+/// True if `date` matches the local-date of an `EventTime` (used for EXDATE
+/// matching against an all-day candidate).
+fn exdate_matches_date(
+  date: calendar.Date,
+  et: EventTime,
+  local_offset: duration.Duration,
+) -> Bool {
+  case et {
+    AllDay(d) -> d == date
+    AtTime(ts) -> {
+      let #(d, _) = timestamp.to_calendar(ts, local_offset)
+      d == date
     }
   }
 }
