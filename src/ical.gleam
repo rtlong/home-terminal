@@ -417,13 +417,13 @@ fn expand_vevent(
           }
       }
 
-      case get_prop_prefix(props, "DTSTART"), get_prop_prefix(props, "DTEND") {
-        Ok(dtstart_raw), Ok(dtend_raw) -> {
-          case
-            parse_event_time(dtstart_raw, dtstart_tzid, system_tz),
-            parse_event_time(dtend_raw, dtend_tzid, system_tz)
-          {
-            Ok(start), Ok(end) -> {
+      case get_prop_prefix(props, "DTSTART") {
+        Ok(dtstart_raw) -> {
+          case parse_event_time(dtstart_raw, dtstart_tzid, system_tz) {
+            Ok(start) -> {
+              case derive_event_end(start, props, lines, dtend_tzid, system_tz)
+              {
+                Ok(end) -> {
               // Parse RRULE to check for recurrence
               let recurrence = case get_prop(props, "RRULE") {
                 Ok(rrule) -> parse_rrule(rrule)
@@ -489,11 +489,14 @@ fn expand_vevent(
                   )
                 }
               }
+                }
+                Error(Nil) -> []
+              }
             }
-            _, _ -> []
+            Error(Nil) -> []
           }
         }
-        _, _ -> []
+        Error(Nil) -> []
       }
     }
     _, _ -> []
@@ -1215,13 +1218,17 @@ fn parse_override_event(
   use summary_raw <- result.try(get_prop(props, "SUMMARY"))
   let summary = unescape_text(summary_raw)
   use dtstart_raw <- result.try(get_prop_prefix(props, "DTSTART"))
-  use dtend_raw <- result.try(get_prop_prefix(props, "DTEND"))
   let dtstart_tzid = get_tzid_param(lines, "DTSTART")
+  // DTEND tzid: if DTEND is present and floating, inherit DTSTART's tzid.
   let dtend_tzid = case get_tzid_param(lines, "DTEND") {
     Ok(tz) -> Ok(tz)
     Error(Nil) ->
-      case dtstart_tzid, is_floating_datetime(dtend_raw) {
-        Ok(tz), True -> Ok(tz)
+      case dtstart_tzid, get_prop_prefix(props, "DTEND") {
+        Ok(tz), Ok(v) ->
+          case is_floating_datetime(v) {
+            True -> Ok(tz)
+            False -> Error(Nil)
+          }
         _, _ -> Error(Nil)
       }
   }
@@ -1240,8 +1247,10 @@ fn parse_override_event(
     dtstart_tzid,
     system_tz,
   ))
-  use end <- result.try(parse_event_time(
-    dtend_raw,
+  use end <- result.try(derive_event_end(
+    start,
+    props,
+    lines,
     dtend_tzid,
     system_tz,
   ))
@@ -1414,6 +1423,131 @@ fn unescape_text_loop(
     ["\\", ";", ..rest] ->
       unescape_text_loop(rest, string_tree.append(acc, ";"))
     [c, ..rest] -> unescape_text_loop(rest, string_tree.append(acc, c))
+  }
+}
+
+/// Parse an RFC 5545 §3.3.6 DURATION value into a count of whole seconds.
+///
+/// Grammar (subset, the spec also allows date+time combos and an explicit
+/// sign):
+///   dur-value  = ["+" / "-"] "P" ( dur-week / dur-date / dur-time )
+///   dur-week   = 1*DIGIT "W"
+///   dur-date   = dur-day [dur-time]
+///   dur-day    = 1*DIGIT "D"
+///   dur-time   = "T" ( dur-hour / dur-minute / dur-second )
+///   dur-hour   = 1*DIGIT "H" [dur-minute]
+///   dur-minute = 1*DIGIT "M" [dur-second]
+///   dur-second = 1*DIGIT "S"
+///
+/// Examples: PT1H30M, PT45S, P3D, P1W, P1DT12H, -PT15M
+fn parse_duration(s: String) -> Result(Int, Nil) {
+  let trimmed = string.trim(s)
+  let chars = string.to_graphemes(trimmed)
+  let #(sign, after_sign) = case chars {
+    ["-", ..rest] -> #(-1, rest)
+    ["+", ..rest] -> #(1, rest)
+    other -> #(1, other)
+  }
+  case after_sign {
+    ["P", ..body] ->
+      parse_duration_body(body, 0, False)
+      |> result.map(fn(n) { sign * n })
+    _ -> Error(Nil)
+  }
+}
+
+fn parse_duration_body(
+  chars: List(String),
+  acc: Int,
+  in_time: Bool,
+) -> Result(Int, Nil) {
+  case chars {
+    [] -> Ok(acc)
+    ["T", ..rest] -> parse_duration_body(rest, acc, True)
+    _ -> {
+      use #(n, after) <- result.try(take_int_graphemes(chars))
+      case after, in_time {
+        ["W", ..rest], False ->
+          parse_duration_body(rest, acc + n * 604_800, False)
+        ["D", ..rest], False ->
+          parse_duration_body(rest, acc + n * 86_400, False)
+        ["H", ..rest], True ->
+          parse_duration_body(rest, acc + n * 3600, True)
+        ["M", ..rest], True ->
+          parse_duration_body(rest, acc + n * 60, True)
+        ["S", ..rest], True -> parse_duration_body(rest, acc + n, True)
+        _, _ -> Error(Nil)
+      }
+    }
+  }
+}
+
+fn take_int_graphemes(
+  chars: List(String),
+) -> Result(#(Int, List(String)), Nil) {
+  let #(digit_chars, rest) = list.split_while(chars, is_digit_grapheme)
+  case digit_chars {
+    [] -> Error(Nil)
+    _ -> {
+      let s = string.concat(digit_chars)
+      use n <- result.try(int.parse(s))
+      Ok(#(n, rest))
+    }
+  }
+}
+
+fn is_digit_grapheme(c: String) -> Bool {
+  case c {
+    "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" -> True
+    _ -> False
+  }
+}
+
+/// Add `secs` seconds to an EventTime to derive a DTEND. For AtTime, this is
+/// straight timestamp addition. For AllDay, the duration must be a whole
+/// number of days (else Error).
+fn add_seconds_to_event_time(
+  start: EventTime,
+  secs: Int,
+) -> Result(EventTime, Nil) {
+  case start {
+    AtTime(ts) -> Ok(AtTime(timestamp.add(ts, duration.seconds(secs))))
+    AllDay(date) ->
+      case secs % 86_400 {
+        0 -> Ok(AllDay(advance_date_by_n(date, secs / 86_400)))
+        _ -> Error(Nil)
+      }
+  }
+}
+
+/// Determine the effective DTEND for a VEVENT given its parsed DTSTART and
+/// the property table. Falls back per RFC 5545 §3.6.1:
+///   * DTEND present → use it (existing behaviour)
+///   * DURATION present → DTEND = DTSTART + DURATION
+///   * Neither → AllDay: +1 day; AtTime: zero duration (end == start)
+fn derive_event_end(
+  start: EventTime,
+  props: List(#(String, String)),
+  lines: List(String),
+  dtend_tzid: Result(String, Nil),
+  system_tz: Result(String, Nil),
+) -> Result(EventTime, Nil) {
+  case get_prop_prefix(props, "DTEND") {
+    Ok(dtend_raw) -> {
+      let _ = lines
+      parse_event_time(dtend_raw, dtend_tzid, system_tz)
+    }
+    Error(Nil) ->
+      case get_prop(props, "DURATION") {
+        Ok(dur_raw) ->
+          parse_duration(dur_raw)
+          |> result.try(fn(secs) { add_seconds_to_event_time(start, secs) })
+        Error(Nil) ->
+          case start {
+            AllDay(d) -> Ok(AllDay(advance_date_by_n(d, 1)))
+            AtTime(_) -> Ok(start)
+          }
+      }
   }
 }
 
