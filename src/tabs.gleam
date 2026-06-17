@@ -2,6 +2,7 @@
 
 import cal
 import cal_server.{type Server}
+import event_filter
 import gleam/dict
 import gleam/dynamic/decode
 import gleam/erlang/process
@@ -362,6 +363,19 @@ fn view_active_tab(model: Model, pal: palette.Palette) -> Element(Msg) {
           let visible_events =
             list.filter(events, fn(e) {
               state.get_calendar_config(cfg, e.calendar_name).visible
+            })
+          // Apply per-calendar regex include/exclude filters. Regexes are
+          // compiled once per render and looked up by calendar name.
+          let compiled_filters =
+            dict.map_values(cfg.calendars, fn(_name, cal_cfg) {
+              event_filter.compile(cal_cfg)
+            })
+          let visible_events =
+            list.filter(visible_events, fn(e) {
+              case dict.get(compiled_filters, e.calendar_name) {
+                Ok(f) -> event_filter.keep(e, f)
+                Error(_) -> True
+              }
             })
           // Clear location on events whose calendar has show_location=False
           // so that travel-time blocks are not computed for them.

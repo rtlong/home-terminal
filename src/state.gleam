@@ -34,6 +34,20 @@ import gleam/time/timestamp
 
 // TYPES -----------------------------------------------------------------------
 
+/// An event field that a calendar filter can target.
+pub type EventField {
+  FieldSummary
+  FieldDescription
+  FieldLocation
+}
+
+/// A single regex filter targeting one event field.
+/// The pattern is matched case-insensitively (the regex itself can override
+/// with explicit anchors, e.g. `(?-i)` if a future regex engine supports it).
+pub type EventFilter {
+  EventFilter(field: EventField, pattern: String)
+}
+
 /// Per-calendar display configuration.
 pub type CalendarConfig {
   CalendarConfig(
@@ -41,6 +55,12 @@ pub type CalendarConfig {
     /// When False, location data for events on this calendar is ignored for
     /// travel-time calculations and display. Defaults to True.
     show_location: Bool,
+    /// If non-empty, an event is kept only if it matches AT LEAST ONE of
+    /// these filters. Applied before `exclude_filters`.
+    include_filters: List(EventFilter),
+    /// Events matching ANY of these filters are dropped from display.
+    /// Applied after `include_filters`.
+    exclude_filters: List(EventFilter),
   )
 }
 
@@ -95,7 +115,12 @@ pub fn empty_config() -> Config {
 
 /// Default config for a calendar not yet seen in config.json.
 pub fn default_calendar_config() -> CalendarConfig {
-  CalendarConfig(visible: True, show_location: True)
+  CalendarConfig(
+    visible: True,
+    show_location: True,
+    include_filters: [],
+    exclude_filters: [],
+  )
 }
 
 /// Parse a human-readable refresh interval string into seconds.
@@ -505,6 +530,14 @@ fn encode_config(config: Config) -> json.Json {
         json.object([
           #("visible", json.bool(cal_cfg.visible)),
           #("show_location", json.bool(cal_cfg.show_location)),
+          #(
+            "include_filters",
+            json.array(cal_cfg.include_filters, encode_event_filter),
+          ),
+          #(
+            "exclude_filters",
+            json.array(cal_cfg.exclude_filters, encode_event_filter),
+          ),
         ]),
       )
     })
@@ -538,6 +571,21 @@ fn encode_ical_url(ical_url: IcalUrl) -> json.Json {
     #("url", json.string(ical_url.url)),
     #("refresh", json.string(ical_url.refresh)),
   ])
+}
+
+fn encode_event_filter(filter: EventFilter) -> json.Json {
+  json.object([
+    #("field", json.string(encode_event_field(filter.field))),
+    #("pattern", json.string(filter.pattern)),
+  ])
+}
+
+fn encode_event_field(field: EventField) -> String {
+  case field {
+    FieldSummary -> "summary"
+    FieldDescription -> "description"
+    FieldLocation -> "location"
+  }
 }
 
 // JSON DECODING ---------------------------------------------------------------
@@ -642,7 +690,38 @@ fn calendar_config_decoder() -> decode.Decoder(CalendarConfig) {
     True,
     decode.bool,
   )
-  decode.success(CalendarConfig(visible:, show_location:))
+  use include_filters <- decode.optional_field(
+    "include_filters",
+    [],
+    decode.list(event_filter_decoder()),
+  )
+  use exclude_filters <- decode.optional_field(
+    "exclude_filters",
+    [],
+    decode.list(event_filter_decoder()),
+  )
+  decode.success(CalendarConfig(
+    visible:,
+    show_location:,
+    include_filters:,
+    exclude_filters:,
+  ))
+}
+
+fn event_filter_decoder() -> decode.Decoder(EventFilter) {
+  use field <- decode.field("field", event_field_decoder())
+  use pattern <- decode.field("pattern", decode.string)
+  decode.success(EventFilter(field:, pattern:))
+}
+
+fn event_field_decoder() -> decode.Decoder(EventField) {
+  use s <- decode.then(decode.string)
+  case string.lowercase(s) {
+    "summary" -> decode.success(FieldSummary)
+    "description" -> decode.success(FieldDescription)
+    "location" -> decode.success(FieldLocation)
+    _ -> decode.failure(FieldSummary, "EventField (summary|description|location)")
+  }
 }
 
 fn ical_url_decoder() -> decode.Decoder(IcalUrl) {

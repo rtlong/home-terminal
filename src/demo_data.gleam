@@ -268,7 +268,7 @@ pub fn generate_config(seed: Seed) -> DemoConfig {
   let calendars =
     dict.from_list(
       list.map(all_calendars, fn(name) {
-        #(name, state.CalendarConfig(visible: True, show_location: True))
+        #(name, state.default_calendar_config())
       }),
     )
 
