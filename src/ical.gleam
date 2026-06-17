@@ -26,6 +26,7 @@ import gleam/list
 import gleam/order.{Eq, Lt}
 import gleam/result
 import gleam/string
+import gleam/string_tree
 import gleam/time/calendar.{type Month, Date}
 import gleam/time/duration
 import gleam/time/timestamp
@@ -385,9 +386,12 @@ fn expand_vevent(
   let props = list.filter_map(lines, parse_property)
 
   case get_prop(props, "UID"), get_prop(props, "SUMMARY") {
-    Ok(uid), Ok(summary) -> {
-      let location = get_prop(props, "LOCATION") |> result.unwrap("")
-      let description = get_prop(props, "DESCRIPTION") |> result.unwrap("")
+    Ok(uid), Ok(summary_raw) -> {
+      let summary = unescape_text(summary_raw)
+      let location =
+        get_prop(props, "LOCATION") |> result.unwrap("") |> unescape_text
+      let description =
+        get_prop(props, "DESCRIPTION") |> result.unwrap("") |> unescape_text
       let url = get_prop(props, "URL") |> result.unwrap("")
       // TRANSP:TRANSPARENT means the event does not block the person as busy.
       let free =
@@ -1208,7 +1212,8 @@ fn parse_override_event(
   system_tz: Result(String, Nil),
 ) -> Result(Event, Nil) {
   let props = list.filter_map(lines, parse_property)
-  use summary <- result.try(get_prop(props, "SUMMARY"))
+  use summary_raw <- result.try(get_prop(props, "SUMMARY"))
+  let summary = unescape_text(summary_raw)
   use dtstart_raw <- result.try(get_prop_prefix(props, "DTSTART"))
   use dtend_raw <- result.try(get_prop_prefix(props, "DTEND"))
   let dtstart_tzid = get_tzid_param(lines, "DTSTART")
@@ -1220,8 +1225,10 @@ fn parse_override_event(
         _, _ -> Error(Nil)
       }
   }
-  let location = get_prop(props, "LOCATION") |> result.unwrap("")
-  let description = get_prop(props, "DESCRIPTION") |> result.unwrap("")
+  let location =
+    get_prop(props, "LOCATION") |> result.unwrap("") |> unescape_text
+  let description =
+    get_prop(props, "DESCRIPTION") |> result.unwrap("") |> unescape_text
   let url = get_prop(props, "URL") |> result.unwrap("")
   let free =
     get_prop(props, "TRANSP")
@@ -1367,6 +1374,46 @@ fn parse_property(line: String) -> Result(#(String, String), Nil) {
       Ok(#(string.uppercase(name), value))
     }
     Error(Nil) -> Error(Nil)
+  }
+}
+
+/// Unescape an RFC 5545 §3.3.11 TEXT value. Walks the string left-to-right
+/// (via graphemes) so that `\\n` correctly yields a literal backslash + 'n'
+/// rather than being mis-coalesced into a newline by naive replacement.
+///
+/// Recognized sequences:
+///   \\  -> \
+///   \;  -> ;
+///   \,  -> ,
+///   \n  -> LF
+///   \N  -> LF
+/// Any other `\x` is left as `\x` (per spec: unrecognised escapes are
+/// implementation-defined; preserving the bytes is the least lossy choice).
+fn unescape_text(s: String) -> String {
+  case string.contains(s, "\\") {
+    False -> s
+    True ->
+      string.to_graphemes(s)
+      |> unescape_text_loop(string_tree.new())
+      |> string_tree.to_string
+  }
+}
+
+fn unescape_text_loop(
+  chars: List(String),
+  acc: string_tree.StringTree,
+) -> string_tree.StringTree {
+  case chars {
+    [] -> acc
+    ["\\", "n", ..rest] | ["\\", "N", ..rest] ->
+      unescape_text_loop(rest, string_tree.append(acc, "\n"))
+    ["\\", "\\", ..rest] ->
+      unescape_text_loop(rest, string_tree.append(acc, "\\"))
+    ["\\", ",", ..rest] ->
+      unescape_text_loop(rest, string_tree.append(acc, ","))
+    ["\\", ";", ..rest] ->
+      unescape_text_loop(rest, string_tree.append(acc, ";"))
+    [c, ..rest] -> unescape_text_loop(rest, string_tree.append(acc, c))
   }
 }
 
