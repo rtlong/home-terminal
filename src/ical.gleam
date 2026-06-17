@@ -23,6 +23,7 @@ import cal.{type Event, type EventTime, AllDay, AtTime, Event}
 import gleam/float
 import gleam/int
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/order.{Eq, Lt}
 import gleam/result
 import gleam/string
@@ -123,12 +124,15 @@ type RecurrenceRule {
     /// BYDAY days, only honoured for FREQ=WEEKLY (the only freq Apple Calendar uses BYDAY with).
     /// Empty list means "use DTSTART's day-of-week".
     byday: List(Weekday),
+    /// COUNT bound on the recurrence set (RFC 5545 §3.3.10). None = unbounded.
+    /// DTSTART always counts as the first occurrence.
+    count: Option(Int),
   )
 }
 
-/// Parse an RRULE string to extract FREQ, INTERVAL, and (for weekly) BYDAY.
-/// Example: "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH" ->
-///   RecurrenceRule(Weekly, 2, [Tuesday, Thursday])
+/// Parse an RRULE string to extract FREQ, INTERVAL, BYDAY, and COUNT.
+/// Example: "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;COUNT=10" ->
+///   RecurrenceRule(Weekly, 2, [Tuesday, Thursday], Some(10))
 /// Returns Error if FREQ is missing or unrecognized.
 fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
   let upper = string.uppercase(rrule)
@@ -168,8 +172,16 @@ fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
     })
     |> result.unwrap([])
 
+  // Extract COUNT (optional; RFC 5545 §3.3.10). Invalid integer → ignored.
+  let count =
+    list.find(parts, fn(part) { string.starts_with(part, "COUNT=") })
+    |> result.try(fn(count_part) {
+      string.replace(count_part, "COUNT=", "") |> int.parse
+    })
+    |> option.from_result
+
   use freq <- result.try(freq_result)
-  Ok(RecurrenceRule(freq:, interval:, byday:))
+  Ok(RecurrenceRule(freq:, interval:, byday:, count:))
 }
 
 /// Parse a BYDAY value list (comma-separated). Strips any numeric prefix
@@ -538,6 +550,8 @@ fn expand_recurring(
       generate_recurring_timed(
         rrule,
         base_ts,
+        base_ts,
+        rrule.count,
         duration_secs,
         exdates,
         uid_overrides,
@@ -568,6 +582,8 @@ fn expand_recurring(
       generate_recurring_allday(
         rrule,
         base_date,
+        base_date,
+        rrule.count,
         day_count,
         exdates,
         uid_overrides,
@@ -713,6 +729,8 @@ fn date_before(a: calendar.Date, b: calendar.Date) -> Bool {
 fn generate_recurring_allday(
   rrule: RecurrenceRule,
   current_date: calendar.Date,
+  master_start_date: calendar.Date,
+  remaining: Option(Int),
   day_count: Int,
   exdates: List(EventTime),
   uid_overrides: List(List(String)),
@@ -729,7 +747,7 @@ fn generate_recurring_allday(
   window_end_date: calendar.Date,
   acc: List(Event),
 ) -> List(Event) {
-  let RecurrenceRule(freq, interval, byday) = rrule
+  let RecurrenceRule(freq, interval, byday, _count) = rrule
 
   // When BYDAY is used, an iteration's emitted days may fall up to 6 days
   // before the anchor — extend the termination guard by one week.
@@ -745,8 +763,9 @@ fn generate_recurring_allday(
   let past_end = !date_before(current_date, buffered_window_end_date)
   let too_far =
     !date_before(current_date, advance_date_by_n(window_end_date, 500 * 7))
+  let count_done = remaining == Some(0)
 
-  case past_end || too_far {
+  case past_end || too_far || count_done {
     True -> list.reverse(acc)
     False -> {
       // Advance the date based on frequency and interval
@@ -757,14 +776,31 @@ fn generate_recurring_allday(
         Yearly -> advance_date_by_years(current_date, interval)
       }
 
-      // Determine all candidate dates for this iteration's expansion.
-      let candidate_dates = case freq, byday {
+      // Determine all candidate dates for this iteration's expansion, then
+      // drop any that fall before DTSTART (phantom first-week BYDAY days that
+      // are not part of the recurrence set).
+      let raw_candidates = case freq, byday {
         Weekly, [_, ..] -> weekly_byday_dates(current_date, byday)
         _, _ -> [current_date]
       }
+      let candidate_dates =
+        list.filter(raw_candidates, fn(d) {
+          !date_before(d, master_start_date)
+        })
+
+      // Apply COUNT bound: take at most `remaining` candidates this iteration.
+      // Each taken candidate consumes one slot regardless of EXDATE / window.
+      let to_emit = case remaining {
+        Some(n) -> list.take(candidate_dates, n)
+        None -> candidate_dates
+      }
+      let new_remaining = case remaining {
+        Some(n) -> Some(n - list.length(to_emit))
+        None -> None
+      }
 
       let new_events =
-        list.filter_map(candidate_dates, fn(d) {
+        list.filter_map(to_emit, fn(d) {
           allday_instance_for_date(
             d,
             day_count,
@@ -789,6 +825,8 @@ fn generate_recurring_allday(
       generate_recurring_allday(
         rrule,
         next_date,
+        master_start_date,
+        new_remaining,
         day_count,
         exdates,
         uid_overrides,
@@ -941,6 +979,8 @@ fn weekly_byday_dates(
 fn generate_recurring_timed(
   rrule: RecurrenceRule,
   current_ts: timestamp.Timestamp,
+  master_start_ts: timestamp.Timestamp,
+  remaining: Option(Int),
   duration_secs: Int,
   exdates: List(EventTime),
   uid_overrides: List(List(String)),
@@ -958,7 +998,7 @@ fn generate_recurring_timed(
   window_end: timestamp.Timestamp,
   acc: List(Event),
 ) -> List(Event) {
-  let RecurrenceRule(freq, interval, byday) = rrule
+  let RecurrenceRule(freq, interval, byday, _count) = rrule
 
   // When BYDAY is used, an iteration's emitted days may fall up to 6 days
   // before the anchor (e.g. anchor on Friday with BYDAY=MO). Extend the
@@ -978,8 +1018,9 @@ fn generate_recurring_timed(
       timestamp.add(window_end, duration.seconds(500 * 7 * 86_400)),
     )
     != Lt
+  let count_done = remaining == Some(0)
 
-  case past_end || too_far {
+  case past_end || too_far || count_done {
     True -> list.reverse(acc)
     False -> {
       // Advance by the recurrence interval while preserving wall-clock time across DST transitions
@@ -987,15 +1028,31 @@ fn generate_recurring_timed(
 
       // Determine all candidate timestamps for this iteration's expansion.
       // For weekly+BYDAY, emit one event per BYDAY day in the iteration's week.
-      // Otherwise, emit one event at current_ts.
-      let candidate_tses = case freq, byday {
+      // Otherwise, emit one event at current_ts. Phantom pre-DTSTART candidates
+      // (BYDAY days earlier in the first week than DTSTART) are dropped so they
+      // do not consume COUNT slots.
+      let raw_candidate_tses = case freq, byday {
         Weekly, [_, ..] -> weekly_byday_timestamps(current_ts, byday, event_tz)
         _, _ -> [current_ts]
+      }
+      let candidate_tses =
+        list.filter(raw_candidate_tses, fn(ts) {
+          timestamp.compare(ts, master_start_ts) != Lt
+        })
+
+      // Apply COUNT bound: take at most `remaining` candidates this iteration.
+      let to_emit = case remaining {
+        Some(n) -> list.take(candidate_tses, n)
+        None -> candidate_tses
+      }
+      let new_remaining = case remaining {
+        Some(n) -> Some(n - list.length(to_emit))
+        None -> None
       }
 
       // Build events for each candidate that passes all checks.
       let new_events =
-        list.filter_map(candidate_tses, fn(ts) {
+        list.filter_map(to_emit, fn(ts) {
           instance_for_ts(
             ts,
             duration_secs,
@@ -1024,6 +1081,8 @@ fn generate_recurring_timed(
       generate_recurring_timed(
         rrule,
         next_ts,
+        master_start_ts,
+        new_remaining,
         duration_secs,
         exdates,
         uid_overrides,
