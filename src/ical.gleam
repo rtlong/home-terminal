@@ -1454,6 +1454,9 @@ fn has_prop(lines: List(String), prop_name: String) -> Bool {
 
 /// Extract the TZID value from a property line for `prop_name`, if present.
 /// E.g. "DTSTART;TZID=America/Chicago:20260307T064800" → Ok("America/Chicago")
+///
+/// Per RFC 5545 §3.2.19, parameter values may be wrapped in DQUOTEs. The
+/// DQUOTEs are NOT part of the value, so we strip them before returning.
 fn get_tzid_param(
   lines: List(String),
   prop_name: String,
@@ -1465,16 +1468,44 @@ fn get_tzid_param(
     case string.starts_with(upper, prefix) {
       False -> Error(Nil)
       True -> {
-        // Everything between ";TZID=" and the next ":" is the timezone name.
-        // Use the original case-preserved line so "America/Chicago" is not uppercased.
+        // Everything between ";TZID=" and the next ":" (outside of quotes)
+        // is the timezone name. Use the original case-preserved line so
+        // "America/Chicago" is not uppercased.
         let after_tzid = string.drop_start(line, string.length(prefix))
-        case string.split_once(after_tzid, ":") {
-          Ok(#(tz_name, _)) -> Ok(tz_name)
+        case extract_param_value(after_tzid) {
+          Ok(tz_name) -> Ok(tz_name)
           Error(Nil) -> Error(Nil)
         }
       }
     }
   })
+}
+
+/// Read a parameter value up to the next unquoted `:` or `;`, stripping
+/// surrounding DQUOTEs if the value is quoted. Returns the bare value.
+///
+/// Examples:
+///   "America/Chicago:20260307T064800"    -> Ok("America/Chicago")
+///   "\"America/New_York\":20260307..."    -> Ok("America/New_York")
+///   "\"GMT+05:30\":20260307..."           -> Ok("GMT+05:30")
+fn extract_param_value(s: String) -> Result(String, Nil) {
+  case string.starts_with(s, "\"") {
+    True -> {
+      // Quoted: scan up to the closing DQUOTE.
+      let inner = string.drop_start(s, 1)
+      case string.split_once(inner, "\"") {
+        Ok(#(value, _)) -> Ok(value)
+        Error(Nil) -> Error(Nil)
+      }
+    }
+    False -> {
+      // Unquoted: take up to the next ":" (parameter ends at value separator).
+      case string.split_once(s, ":") {
+        Ok(#(value, _)) -> Ok(value)
+        Error(Nil) -> Error(Nil)
+      }
+    }
+  }
 }
 
 
