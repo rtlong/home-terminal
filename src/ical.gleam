@@ -191,6 +191,21 @@ type RecurrenceRule {
     /// Invalid entries (0 or |x| > 366) and unresolvable day-of-year for the
     /// current year (e.g. day 366 in a non-leap year) are dropped.
     byyearday: List(Int),
+    /// BYWEEKNO values (RFC 5545 §3.3.10). Each entry is an ISO 8601 week
+    /// number (1..53 or -53..-1; negative counts from the end). Empty list
+    /// means no week-of-year filter.
+    ///
+    /// Per RFC: BYWEEKNO MUST NOT be specified with FREQ other than YEARLY.
+    /// We silently ignore it for non-YEARLY. ISO 8601: week 1 contains Jan 4.
+    /// A year has 53 weeks if Jan 1 is Thursday (or Wednesday in a leap year).
+    /// Currently only WKST=MO is supported for BYWEEKNO computations.
+    ///
+    /// When BYWEEKNO is given without BYDAY, DTSTART's day-of-week is used to
+    /// pick the day within each selected week.
+    ///
+    /// Invalid entries (0 or |x| > 53) and weeks that don't exist in a given
+    /// year (e.g. week 53 in a 52-week year) are dropped.
+    byweekno: List(Int),
   )
 }
 
@@ -357,6 +372,27 @@ fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
     })
     |> result.unwrap([])
 
+  // Extract BYWEEKNO (optional; RFC 5545 §3.3.10). Comma-separated list of
+  // ISO 8601 week numbers. Valid range: 1..53 or -53..-1.
+  // Invalid entries (0 or |x| > 53) are silently dropped.
+  let byweekno =
+    list.find(parts, fn(part) { string.starts_with(part, "BYWEEKNO=") })
+    |> result.map(fn(part) {
+      string.replace(part, "BYWEEKNO=", "")
+      |> string.split(",")
+      |> list.filter_map(fn(s) {
+        case int.parse(string.trim(s)) {
+          Ok(n) ->
+            case n != 0 && n >= -53 && n <= 53 {
+              True -> Ok(n)
+              False -> Error(Nil)
+            }
+          Error(Nil) -> Error(Nil)
+        }
+      })
+    })
+    |> result.unwrap([])
+
   use freq <- result.try(freq_result)
   Ok(RecurrenceRule(
     freq:,
@@ -369,6 +405,7 @@ fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
     bymonth:,
     bysetpos:,
     byyearday:,
+    byweekno:,
   ))
 }
 
@@ -1037,6 +1074,7 @@ fn generate_recurring_allday(
     bymonth,
     bysetpos,
     byyearday,
+    byweekno,
   ) = rrule
 
   // When BYDAY is used, an iteration's emitted days may fall outside the
@@ -1045,13 +1083,14 @@ fn generate_recurring_allday(
   // on the 1st with BYDAY=-1FR landing near the 30th, or vice versa).
   // Extend the termination guard accordingly to avoid skipping in-window
   // emissions on the final iteration before window_end.
-  let buffer_days = case freq, byday, bymonthday, bymonth, byyearday {
-    Weekly, [_, ..], _, _, _ -> 7
-    Monthly, [_, ..], _, _, _ -> 31
-    Monthly, [], [_, ..], _, _ -> 31
-    Yearly, _, _, [_, ..], _ -> 366
-    Yearly, _, _, _, [_, ..] -> 366
-    _, _, _, _, _ -> 0
+  let buffer_days = case freq, byday, bymonthday, bymonth, byyearday, byweekno {
+    Weekly, [_, ..], _, _, _, _ -> 7
+    Monthly, [_, ..], _, _, _, _ -> 31
+    Monthly, [], [_, ..], _, _, _ -> 31
+    Yearly, _, _, [_, ..], _, _ -> 366
+    Yearly, _, _, _, [_, ..], _ -> 366
+    Yearly, _, _, _, _, [_, ..] -> 366
+    _, _, _, _, _, _ -> 0
   }
   let buffered_window_end_date =
     advance_date_by_n(window_end_date, buffer_days)
@@ -1088,23 +1127,29 @@ fn generate_recurring_allday(
       // drop any that fall before DTSTART (phantom first-week/month BYDAY days
       // that are not part of the recurrence set) or after UNTIL (RFC 5545
       // §3.3.10 bound; UNTIL is inclusive).
-      let raw_candidates = case freq, byday, bymonthday, bymonth, byyearday {
+      let raw_candidates = case
+        freq, byday, bymonthday, bymonth, byyearday, byweekno
+      {
         // Yearly + BYYEARDAY: expand per yearday position (highest priority
         // for Yearly).
-        Yearly, _, _, _, [_, ..] ->
+        Yearly, _, _, _, [_, ..], _ ->
           yearly_byyearday_dates(current_date, byyearday)
-        // Yearly + BYMONTH (without BYYEARDAY): expand per month within year.
-        Yearly, _, _, [_, ..], [] ->
+        // Yearly + BYWEEKNO: expand per ISO week (after BYYEARDAY).
+        Yearly, _, _, _, [], [_, ..] ->
+          yearly_byweekno_dates(current_date, byweekno, master_start_date)
+        // Yearly + BYMONTH (without BYYEARDAY/BYWEEKNO): expand per month.
+        Yearly, _, _, [_, ..], [], [] ->
           yearly_bymonth_dates(current_date, byday, bymonthday, bymonth)
-        Weekly, [_, ..], _, _, _ ->
+        Weekly, [_, ..], _, _, _, _ ->
           weekly_byday_dates(current_date, byday, wkst)
-        Monthly, [_, ..], _, _, _ -> monthly_byday_dates(current_date, byday)
-        Monthly, [], [_, ..], _, _ -> {
+        Monthly, [_, ..], _, _, _, _ ->
+          monthly_byday_dates(current_date, byday)
+        Monthly, [], [_, ..], _, _, _ -> {
           let year = current_date.year
           let month = current_date.month
           monthly_bymonthday_dates(year, month, bymonthday)
         }
-        _, _, _, _, _ -> [current_date]
+        _, _, _, _, _, _ -> [current_date]
       }
       // For non-Yearly frequencies with BYMONTH, filter candidates by month.
       // (Yearly+BYMONTH/BYYEARDAY were already expanded above.)
@@ -1737,6 +1782,161 @@ fn yearly_byyearday_timestamps(
   }
 }
 
+/// Compute the date of the Monday starting ISO 8601 week 1 of the given year.
+/// Per RFC 5545 §3.3.10 / ISO 8601: week 1 contains January 4. The Monday
+/// of week 1 is "the Monday on or before Jan 4".
+///
+/// Currently hardcoded to WKST=Monday (ISO 8601 standard).
+fn iso_week_one_monday(year: Int) -> calendar.Date {
+  let jan_4 = Date(year: year, month: calendar.January, day: 4)
+  let mon_idx = date_weekday_wkst_index(jan_4, Monday)
+  shift_date_days(jan_4, 0 - mon_idx)
+}
+
+/// Number of ISO 8601 weeks in a given year (52 or 53). A year has 53 weeks
+/// if Jan 1 is Thursday OR if Jan 1 is Wednesday in a leap year.
+fn iso_weeks_in_year(year: Int) -> Int {
+  let jan_1 = Date(year: year, month: calendar.January, day: 1)
+  let mon_idx = date_weekday_wkst_index(jan_1, Monday)
+  let leap = days_in_year(year) == 366
+  case mon_idx == 3 || { mon_idx == 2 && leap } {
+    True -> 53
+    False -> 52
+  }
+}
+
+/// Resolve a BYWEEKNO position (1..53 or -53..-1) and a Monday-relative
+/// day-of-week index (0=Mon..6=Sun) to a calendar Date in the given year.
+/// Returns Error(Nil) if the requested week doesn't exist (e.g. week 53 in
+/// a 52-week year).
+fn iso_resolve_byweekno(
+  year: Int,
+  week_pos: Int,
+  dow_idx_mon0: Int,
+) -> Result(calendar.Date, Nil) {
+  let total_weeks = iso_weeks_in_year(year)
+  let week_num = case week_pos {
+    w if w > 0 && w <= total_weeks -> Ok(w)
+    w if w < 0 && w >= 0 - total_weeks -> Ok(total_weeks + w + 1)
+    _ -> Error(Nil)
+  }
+  use w <- result.try(week_num)
+  let week_one_mon = iso_week_one_monday(year)
+  let week_n_mon = shift_date_days(week_one_mon, { w - 1 } * 7)
+  Ok(shift_date_days(week_n_mon, dow_idx_mon0))
+}
+
+/// Generate candidate dates for FREQ=YEARLY+BYWEEKNO. Each entry resolves to
+/// the day-of-week of `master_start_date` within the corresponding ISO week
+/// of the current year. Out-of-range or non-existent weeks are dropped.
+fn yearly_byweekno_dates(
+  current_date: calendar.Date,
+  byweeknos: List(Int),
+  master_start_date: calendar.Date,
+) -> List(calendar.Date) {
+  let year = current_date.year
+  let dow_idx = date_weekday_wkst_index(master_start_date, Monday)
+  list.filter_map(byweeknos, fn(p) {
+    iso_resolve_byweekno(year, p, dow_idx)
+  })
+  |> list.sort(calendar.naive_date_compare)
+}
+
+/// Like `yearly_byyearday_timestamps`, but for BYWEEKNO. Each candidate
+/// preserves the anchor's local wall-clock time-of-day. The day-of-week is
+/// taken from `master_start_ts` (i.e. the original DTSTART).
+fn yearly_byweekno_timestamps(
+  current_ts: timestamp.Timestamp,
+  byweeknos: List(Int),
+  master_start_ts: timestamp.Timestamp,
+  event_tz: Result(String, Nil),
+) -> List(timestamp.Timestamp) {
+  let master_start_date = local_date_of_timestamp(master_start_ts, event_tz)
+  case event_tz {
+    Ok(tz) -> {
+      let unix_secs =
+        duration.to_seconds(
+          timestamp.difference(timestamp.unix_epoch, current_ts),
+        )
+      let utc_greg = float.truncate(unix_secs) + gregorian_epoch_offset
+      let #(#(y, m_int, d), #(h, mi, s)) =
+        gregorian_seconds_to_datetime(utc_greg)
+      let local_greg = tz_utc_to_local(y, m_int, d, h, mi, s, tz)
+      let #(#(ly, lm_int, ld), #(lh, lmi, ls)) =
+        gregorian_seconds_to_datetime(local_greg)
+      let lm = case int_to_month(lm_int) {
+        Ok(mo) -> mo
+        Error(Nil) -> calendar.January
+      }
+      let local_date = Date(year: ly, month: lm, day: ld)
+      let candidate_dates =
+        yearly_byweekno_dates(local_date, byweeknos, master_start_date)
+      list.map(candidate_dates, fn(target_date) {
+        let Date(ty, tm, td) = target_date
+        let tm_int = calendar.month_to_int(tm)
+        let target_utc_greg =
+          tz_local_to_utc(ty, tm_int, td, lh, lmi, ls, tz)
+        timestamp.from_unix_seconds(target_utc_greg - gregorian_epoch_offset)
+      })
+    }
+    Error(Nil) -> {
+      let unix_secs =
+        duration.to_seconds(
+          timestamp.difference(timestamp.unix_epoch, current_ts),
+        )
+      let utc_greg = float.truncate(unix_secs) + gregorian_epoch_offset
+      let #(#(y, m_int, d), #(h, mi, s)) =
+        gregorian_seconds_to_datetime(utc_greg)
+      let m = case int_to_month(m_int) {
+        Ok(mo) -> mo
+        Error(Nil) -> calendar.January
+      }
+      let anchor_date = Date(year: y, month: m, day: d)
+      let candidate_dates =
+        yearly_byweekno_dates(anchor_date, byweeknos, master_start_date)
+      list.map(candidate_dates, fn(target_date) {
+        let Date(ty, tm, td) = target_date
+        let tm_int = calendar.month_to_int(tm)
+        let target_greg =
+          datetime_to_gregorian_seconds(ty, tm_int, td, h, mi, s)
+        timestamp.from_unix_seconds(target_greg - gregorian_epoch_offset)
+      })
+    }
+  }
+}
+
+/// Convert a timestamp to its local-tz date. For floating events (no tz),
+/// the timestamp is treated as naive UTC.
+fn local_date_of_timestamp(
+  ts: timestamp.Timestamp,
+  event_tz: Result(String, Nil),
+) -> calendar.Date {
+  let unix_secs =
+    duration.to_seconds(timestamp.difference(timestamp.unix_epoch, ts))
+  let utc_greg = float.truncate(unix_secs) + gregorian_epoch_offset
+  let #(#(y, m_int, d), #(h, mi, s)) =
+    gregorian_seconds_to_datetime(utc_greg)
+  case event_tz {
+    Ok(tz) -> {
+      let local_greg = tz_utc_to_local(y, m_int, d, h, mi, s, tz)
+      let #(#(ly, lm_int, ld), _) =
+        gregorian_seconds_to_datetime(local_greg)
+      let lm = case int_to_month(lm_int) {
+        Ok(mo) -> mo
+        Error(Nil) -> calendar.January
+      }
+      Date(year: ly, month: lm, day: ld)
+    }
+    Error(Nil) -> {
+      let m = case int_to_month(m_int) {
+        Ok(mo) -> mo
+        Error(Nil) -> calendar.January
+      }
+      Date(year: y, month: m, day: d)
+    }
+  }
+}
+
 /// Return the local-time month (1..12) for a given timestamp. Used to filter
 /// candidate timestamps by BYMONTH for FREQ=MONTHLY/WEEKLY/DAILY.
 fn timestamp_local_month_int(
@@ -1956,18 +2156,20 @@ fn generate_recurring_timed(
     bymonth,
     bysetpos,
     byyearday,
+    byweekno,
   ) = rrule
 
   // When BYDAY or BYMONTHDAY is used, an iteration's emitted days may fall
   // outside the anchor's date itself. Extend the termination guard to avoid
   // skipping in-window emissions on the final iteration before window_end.
-  let lookahead_buffer = case freq, byday, bymonthday, bymonth, byyearday {
-    Weekly, [_, ..], _, _, _ -> 7 * 86_400
-    Monthly, [_, ..], _, _, _ -> 31 * 86_400
-    Monthly, [], [_, ..], _, _ -> 31 * 86_400
-    Yearly, _, _, [_, ..], _ -> 366 * 86_400
-    Yearly, _, _, _, [_, ..] -> 366 * 86_400
-    _, _, _, _, _ -> 0
+  let lookahead_buffer = case freq, byday, bymonthday, bymonth, byyearday, byweekno {
+    Weekly, [_, ..], _, _, _, _ -> 7 * 86_400
+    Monthly, [_, ..], _, _, _, _ -> 31 * 86_400
+    Monthly, [], [_, ..], _, _, _ -> 31 * 86_400
+    Yearly, _, _, [_, ..], _, _ -> 366 * 86_400
+    Yearly, _, _, _, [_, ..], _ -> 366 * 86_400
+    Yearly, _, _, _, _, [_, ..] -> 366 * 86_400
+    _, _, _, _, _, _ -> 0
   }
   let buffered_window_end =
     timestamp.add(window_end, duration.seconds(lookahead_buffer))
@@ -2007,12 +2209,22 @@ fn generate_recurring_timed(
       // one event at current_ts. Phantom pre-DTSTART candidates are dropped so they
       // do not consume COUNT slots. Candidates after UNTIL are likewise dropped
       // (RFC 5545 §3.3.10; UNTIL is inclusive).
-      let raw_candidate_tses = case freq, byday, bymonthday, bymonth, byyearday {
+      let raw_candidate_tses = case
+        freq, byday, bymonthday, bymonth, byyearday, byweekno
+      {
         // Yearly + BYYEARDAY: expand per yearday position (highest priority).
-        Yearly, _, _, _, [_, ..] ->
+        Yearly, _, _, _, [_, ..], _ ->
           yearly_byyearday_timestamps(current_ts, byyearday, event_tz)
-        // Yearly + BYMONTH (without BYYEARDAY): expand per month within year.
-        Yearly, _, _, [_, ..], [] ->
+        // Yearly + BYWEEKNO: expand per ISO week.
+        Yearly, _, _, _, [], [_, ..] ->
+          yearly_byweekno_timestamps(
+            current_ts,
+            byweekno,
+            master_start_ts,
+            event_tz,
+          )
+        // Yearly + BYMONTH (without BYYEARDAY/BYWEEKNO): expand per month.
+        Yearly, _, _, [_, ..], [], [] ->
           yearly_bymonth_timestamps(
             current_ts,
             byday,
@@ -2020,13 +2232,13 @@ fn generate_recurring_timed(
             bymonth,
             event_tz,
           )
-        Weekly, [_, ..], _, _, _ ->
+        Weekly, [_, ..], _, _, _, _ ->
           weekly_byday_timestamps(current_ts, byday, event_tz, wkst)
-        Monthly, [_, ..], _, _, _ ->
+        Monthly, [_, ..], _, _, _, _ ->
           monthly_byday_timestamps(current_ts, byday, event_tz)
-        Monthly, [], [_, ..], _, _ ->
+        Monthly, [], [_, ..], _, _, _ ->
           monthly_bymonthday_timestamps(current_ts, bymonthday, event_tz)
-        _, _, _, _, _ -> [current_ts]
+        _, _, _, _, _, _ -> [current_ts]
       }
       // For non-Yearly frequencies with BYMONTH, filter candidates by month.
       // (Yearly+BYMONTH was already expanded above.)
