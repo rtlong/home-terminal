@@ -153,6 +153,11 @@ type RecurrenceRule {
     /// Inclusive: the last occurrence whose DTSTART equals UNTIL is part of the set.
     /// Same value-type as DTSTART: AllDay for DATE form, AtTime for UTC DATE-TIME form.
     until: Option(EventTime),
+    /// WKST (RFC 5545 §3.3.10). The day on which the workweek starts. Default
+    /// is Monday. Significant only for FREQ=WEEKLY with INTERVAL>1+BYDAY (and
+    /// FREQ=YEARLY with BYWEEKNO, not yet supported). Unrecognized values fall
+    /// back to Monday.
+    wkst: Weekday,
   )
 }
 
@@ -247,8 +252,26 @@ fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
       }
     })
 
+  // Extract WKST (optional; RFC 5545 §3.3.10). Default Monday. Unrecognized
+  // values fall back to Monday.
+  let wkst =
+    list.find(parts, fn(part) { string.starts_with(part, "WKST=") })
+    |> result.try(fn(part) {
+      string.replace(part, "WKST=", "")
+      |> parse_weekday
+    })
+    |> result.unwrap(Monday)
+
   use freq <- result.try(freq_result)
-  Ok(RecurrenceRule(freq:, interval:, byday:, bymonthday:, count:, until:))
+  Ok(RecurrenceRule(
+    freq:,
+    interval:,
+    byday:,
+    bymonthday:,
+    count:,
+    until:,
+    wkst:,
+  ))
 }
 
 /// Parse a BYDAY value list (comma-separated). Returns BydayElems preserving
@@ -305,6 +328,30 @@ fn weekday_to_mon0(w: Weekday) -> Int {
     Friday -> 4
     Saturday -> 5
     Sunday -> 6
+  }
+}
+
+/// Index 0..6 where 0 is the WKST day, increasing through the week.
+/// Examples (WKST=SU): SU=0, MO=1, TU=2, ..., SA=6.
+fn weekday_to_wkst_index(w: Weekday, wkst: Weekday) -> Int {
+  let w_mon0 = weekday_to_mon0(w)
+  let wkst_mon0 = weekday_to_mon0(wkst)
+  let diff = w_mon0 - wkst_mon0
+  case diff < 0 {
+    True -> diff + 7
+    False -> diff
+  }
+}
+
+/// WKST-relative index (0..6) for the week containing `date`. Returns the
+/// number of days from the WKST-week start to `date`.
+fn date_weekday_wkst_index(date: calendar.Date, wkst: Weekday) -> Int {
+  let mon0 = date_weekday_mon0(date)
+  let wkst_mon0 = weekday_to_mon0(wkst)
+  let diff = mon0 - wkst_mon0
+  case diff < 0 {
+    True -> diff + 7
+    False -> diff
   }
 }
 
@@ -881,7 +928,8 @@ fn generate_recurring_allday(
   window_end_date: calendar.Date,
   acc: List(Event),
 ) -> List(Event) {
-  let RecurrenceRule(freq, interval, byday, bymonthday, _count, until) = rrule
+  let RecurrenceRule(freq, interval, byday, bymonthday, _count, until, wkst) =
+    rrule
 
   // When BYDAY is used, an iteration's emitted days may fall outside the
   // anchor's date itself: by up to 6 days for weekly+BYDAY (the BYDAY week
@@ -931,7 +979,7 @@ fn generate_recurring_allday(
       // that are not part of the recurrence set) or after UNTIL (RFC 5545
       // §3.3.10 bound; UNTIL is inclusive).
       let raw_candidates = case freq, byday, bymonthday {
-        Weekly, [_, ..], _ -> weekly_byday_dates(current_date, byday)
+        Weekly, [_, ..], _ -> weekly_byday_dates(current_date, byday, wkst)
         Monthly, [_, ..], _ -> monthly_byday_dates(current_date, byday)
         Monthly, [], [_, ..] -> {
           let year = current_date.year
@@ -1128,15 +1176,26 @@ fn find_allday_override_for_date(
 /// For a weekly+BYDAY all-day recurrence, compute each BYDAY day's date in
 /// the iteration anchor's (Monday-start) week. Positional prefixes are
 /// ignored per RFC 5545 (FREQ=WEEKLY has no Nth-in-week semantics).
+/// For a weekly+BYDAY recurrence, compute the set of candidate dates within
+/// the WKST-week containing `current_date`. Per RFC 5545 §3.3.10, the WKST
+/// rule part defines the week boundary; with WKST=MO the week runs Monday→
+/// Sunday, with WKST=SU it runs Sunday→Saturday, etc.
+///
+/// Candidates are returned in chronological (date) order so that emission is
+/// deterministic regardless of BYDAY list ordering and consistent across
+/// WKST values.
 fn weekly_byday_dates(
   current_date: calendar.Date,
   byday: List(BydayElem),
+  wkst: Weekday,
 ) -> List(calendar.Date) {
-  let current_dow = date_weekday_mon0(current_date)
+  let current_idx = date_weekday_wkst_index(current_date, wkst)
   list.map(byday, fn(b) {
-    let offset = weekday_to_mon0(b.day) - current_dow
+    let target_idx = weekday_to_wkst_index(b.day, wkst)
+    let offset = target_idx - current_idx
     shift_date_days(current_date, offset)
   })
+  |> list.sort(calendar.naive_date_compare)
 }
 
 /// For a monthly+BYDAY recurrence, compute candidate dates in the same month
@@ -1445,7 +1504,8 @@ fn generate_recurring_timed(
   window_end: timestamp.Timestamp,
   acc: List(Event),
 ) -> List(Event) {
-  let RecurrenceRule(freq, interval, byday, bymonthday, _count, until) = rrule
+  let RecurrenceRule(freq, interval, byday, bymonthday, _count, until, wkst) =
+    rrule
 
   // When BYDAY or BYMONTHDAY is used, an iteration's emitted days may fall
   // outside the anchor's date itself. Extend the termination guard to avoid
@@ -1496,7 +1556,7 @@ fn generate_recurring_timed(
       // (RFC 5545 §3.3.10; UNTIL is inclusive).
       let raw_candidate_tses = case freq, byday, bymonthday {
         Weekly, [_, ..], _ ->
-          weekly_byday_timestamps(current_ts, byday, event_tz)
+          weekly_byday_timestamps(current_ts, byday, event_tz, wkst)
         Monthly, [_, ..], _ ->
           monthly_byday_timestamps(current_ts, byday, event_tz)
         Monthly, [], [_, ..] ->
@@ -1686,6 +1746,7 @@ fn weekly_byday_timestamps(
   current_ts: timestamp.Timestamp,
   byday: List(BydayElem),
   event_tz: Result(String, Nil),
+  wkst: Weekday,
 ) -> List(timestamp.Timestamp) {
   case event_tz {
     Ok(tz) -> {
@@ -1705,10 +1766,11 @@ fn weekly_byday_timestamps(
         Error(Nil) -> calendar.January
       }
       let local_date = Date(year: ly, month: lm, day: ld)
-      let current_dow = date_weekday_mon0(local_date)
+      let current_idx = date_weekday_wkst_index(local_date, wkst)
 
       list.map(byday, fn(b) {
-        let offset = weekday_to_mon0(b.day) - current_dow
+        let target_idx = weekday_to_wkst_index(b.day, wkst)
+        let offset = target_idx - current_idx
         let target_date = shift_date_days(local_date, offset)
         let Date(ty, tm, td) = target_date
         let tm_int = calendar.month_to_int(tm)
@@ -1716,6 +1778,7 @@ fn weekly_byday_timestamps(
           tz_local_to_utc(ty, tm_int, td, lh, lmi, ls, tz)
         timestamp.from_unix_seconds(target_utc_greg - gregorian_epoch_offset)
       })
+      |> list.sort(timestamp.compare)
     }
     Error(Nil) -> {
       // Floating event (no tz): treat current_ts as naive UTC for dow arithmetic.
@@ -1729,14 +1792,23 @@ fn weekly_byday_timestamps(
         { days_since_epoch + 3 }
         |> int.remainder(7)
         |> result.unwrap(0)
-      let current_dow = case current_dow_raw < 0 {
+      let current_dow_mon0 = case current_dow_raw < 0 {
         True -> current_dow_raw + 7
         False -> current_dow_raw
       }
+      // Convert mon0 → wkst-relative
+      let wkst_mon0 = weekday_to_mon0(wkst)
+      let diff = current_dow_mon0 - wkst_mon0
+      let current_idx = case diff < 0 {
+        True -> diff + 7
+        False -> diff
+      }
       list.map(byday, fn(b) {
-        let offset = weekday_to_mon0(b.day) - current_dow
+        let target_idx = weekday_to_wkst_index(b.day, wkst)
+        let offset = target_idx - current_idx
         timestamp.add(current_ts, duration.seconds(offset * 86_400))
       })
+      |> list.sort(timestamp.compare)
     }
   }
 }
