@@ -1,5 +1,5 @@
 -module(tz_ffi).
--export([local_to_utc/7, utc_to_local/7, system_timezone/0]).
+-export([local_to_utc/7, utc_to_local/7, system_timezone/0, datetime_to_gregorian_seconds/6]).
 
 %% local_to_utc(Year, Month, Day, Hour, Minute, Second, Timezone)
 %%   -> GregorianSeconds (integer, UTC)
@@ -76,3 +76,12 @@ system_timezone() ->
         {error, _} ->
             undefined
     end.
+
+%% datetime_to_gregorian_seconds(Year, Month, Day, Hour, Minute, Second)
+%%   -> GregorianSeconds (integer)
+%%
+%% Thin wrapper around calendar:datetime_to_gregorian_seconds/1 that accepts
+%% the six components as separate arguments (matches the Gleam FFI binding
+%% style used by local_to_utc/utc_to_local).
+datetime_to_gregorian_seconds(Year, Month, Day, Hour, Minute, Second) ->
+    calendar:datetime_to_gregorian_seconds({{Year, Month, Day}, {Hour, Minute, Second}}).

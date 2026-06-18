@@ -95,6 +95,18 @@ fn gregorian_seconds_to_datetime(
   gregorian_secs: Int,
 ) -> #(#(Int, Int, Int), #(Int, Int, Int))
 
+/// Convert a datetime tuple to Gregorian seconds.
+/// Erlang signature: calendar:datetime_to_gregorian_seconds({{Y,M,D},{H,Mi,S}}) -> Int.
+@external(erlang, "tz_ffi", "datetime_to_gregorian_seconds")
+fn datetime_to_gregorian_seconds(
+  year: Int,
+  month: Int,
+  day: Int,
+  hour: Int,
+  minute: Int,
+  second: Int,
+) -> Int
+
 // RECURRENCE TYPES ------------------------------------------------------------
 
 /// Recurrence frequency types from RRULE
@@ -121,9 +133,15 @@ type RecurrenceRule {
   RecurrenceRule(
     freq: RecurrenceFreq,
     interval: Int,
-    /// BYDAY days, only honoured for FREQ=WEEKLY (the only freq Apple Calendar uses BYDAY with).
-    /// Empty list means "use DTSTART's day-of-week".
-    byday: List(Weekday),
+    /// BYDAY entries with optional positional prefix (RFC 5545 §3.3.10).
+    /// Empty list means "use DTSTART's day-of-week" for weekly, or "use
+    /// DTSTART's day-of-month" for monthly.
+    ///
+    /// Positional prefix semantics:
+    ///   * FREQ=MONTHLY: positive N = Nth occurrence of weekday in month;
+    ///     negative N = Nth-from-last; absent = every occurrence in month.
+    ///   * FREQ=WEEKLY: prefix MUST be ignored (no concept of Nth-in-week).
+    byday: List(BydayElem),
     /// COUNT bound on the recurrence set (RFC 5545 §3.3.10). None = unbounded.
     /// DTSTART always counts as the first occurrence.
     count: Option(Int),
@@ -132,6 +150,13 @@ type RecurrenceRule {
     /// Same value-type as DTSTART: AllDay for DATE form, AtTime for UTC DATE-TIME form.
     until: Option(EventTime),
   )
+}
+
+/// A single BYDAY entry with optional positional prefix (RFC 5545 §3.3.10).
+/// Examples: "MO" -> BydayElem(None, Monday); "1MO" -> BydayElem(Some(1), Monday);
+/// "-1FR" -> BydayElem(Some(-1), Friday).
+type BydayElem {
+  BydayElem(pos: Option(Int), day: Weekday)
 }
 
 /// Parse an RRULE string to extract FREQ, INTERVAL, BYDAY, COUNT, and UNTIL.
@@ -210,22 +235,39 @@ fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
   Ok(RecurrenceRule(freq:, interval:, byday:, count:, until:))
 }
 
-/// Parse a BYDAY value list (comma-separated). Strips any numeric prefix
-/// (e.g. "-1FR" → Friday) since we only support weekly BYDAY semantics.
-fn parse_byday(s: String) -> List(Weekday) {
+/// Parse a BYDAY value list (comma-separated). Returns BydayElems preserving
+/// any positional prefix (e.g. "-1FR" -> BydayElem(Some(-1), Friday)).
+/// Plain entries (e.g. "MO") have pos=None.
+fn parse_byday(s: String) -> List(BydayElem) {
   string.split(s, ",")
-  |> list.filter_map(fn(part) { parse_weekday(string.trim(part)) })
+  |> list.filter_map(fn(part) { parse_byday_elem(string.trim(part)) })
 }
 
-/// Parse an RFC 5545 weekday token. Strips any leading +/-N prefix
-/// (e.g. "-1FR" → Friday) by keeping only the trailing 2 chars.
-fn parse_weekday(s: String) -> Result(Weekday, Nil) {
+/// Parse one BYDAY entry: optional signed integer prefix followed by a
+/// 2-letter weekday code. "1MO" -> Some(1) + Monday; "MO" -> None + Monday;
+/// "-1FR" -> Some(-1) + Friday. Invalid entries return Error(Nil).
+fn parse_byday_elem(s: String) -> Result(BydayElem, Nil) {
   let len = string.length(s)
-  let day_str = case len > 2 {
-    True -> string.slice(s, len - 2, 2)
-    False -> s
+  case len < 2 {
+    True -> Error(Nil)
+    False -> {
+      let day_str = string.slice(s, len - 2, 2)
+      let prefix_str = string.slice(s, 0, len - 2)
+      use day <- result.try(parse_weekday(day_str))
+      let pos = case string.is_empty(prefix_str) {
+        True -> None
+        False ->
+          int.parse(prefix_str)
+          |> option.from_result
+      }
+      Ok(BydayElem(pos:, day:))
+    }
   }
-  case string.uppercase(day_str) {
+}
+
+/// Parse an RFC 5545 weekday code: MO/TU/WE/TH/FR/SA/SU (case-insensitive).
+fn parse_weekday(s: String) -> Result(Weekday, Nil) {
+  case string.uppercase(s) {
     "MO" -> Ok(Monday)
     "TU" -> Ok(Tuesday)
     "WE" -> Ok(Wednesday)
@@ -775,10 +817,15 @@ fn generate_recurring_allday(
 ) -> List(Event) {
   let RecurrenceRule(freq, interval, byday, _count, until) = rrule
 
-  // When BYDAY is used, an iteration's emitted days may fall up to 6 days
-  // before the anchor — extend the termination guard by one week.
+  // When BYDAY is used, an iteration's emitted days may fall outside the
+  // anchor's date itself: by up to 6 days for weekly+BYDAY (the BYDAY week
+  // straddles the anchor) and up to ~30 days for monthly+BYDAY (e.g. anchor
+  // on the 1st with BYDAY=-1FR landing near the 30th, or vice versa).
+  // Extend the termination guard accordingly to avoid skipping in-window
+  // emissions on the final iteration before window_end.
   let buffer_days = case freq, byday {
     Weekly, [_, ..] -> 7
+    Monthly, [_, ..] -> 31
     _, _ -> 0
   }
   let buffered_window_end_date =
@@ -813,11 +860,12 @@ fn generate_recurring_allday(
       }
 
       // Determine all candidate dates for this iteration's expansion, then
-      // drop any that fall before DTSTART (phantom first-week BYDAY days that
-      // are not part of the recurrence set) or after UNTIL (RFC 5545 §3.3.10
-      // bound; UNTIL is inclusive).
+      // drop any that fall before DTSTART (phantom first-week/month BYDAY days
+      // that are not part of the recurrence set) or after UNTIL (RFC 5545
+      // §3.3.10 bound; UNTIL is inclusive).
       let raw_candidates = case freq, byday {
         Weekly, [_, ..] -> weekly_byday_dates(current_date, byday)
+        Monthly, [_, ..] -> monthly_byday_dates(current_date, byday)
         _, _ -> [current_date]
       }
       let candidate_dates =
@@ -1006,16 +1054,200 @@ fn find_allday_override_for_date(
 }
 
 /// For a weekly+BYDAY all-day recurrence, compute each BYDAY day's date in
-/// the iteration anchor's (Monday-start) week.
+/// the iteration anchor's (Monday-start) week. Positional prefixes are
+/// ignored per RFC 5545 (FREQ=WEEKLY has no Nth-in-week semantics).
 fn weekly_byday_dates(
   current_date: calendar.Date,
-  byday: List(Weekday),
+  byday: List(BydayElem),
 ) -> List(calendar.Date) {
   let current_dow = date_weekday_mon0(current_date)
-  list.map(byday, fn(d) {
-    let offset = weekday_to_mon0(d) - current_dow
+  list.map(byday, fn(b) {
+    let offset = weekday_to_mon0(b.day) - current_dow
     shift_date_days(current_date, offset)
   })
+}
+
+/// For a monthly+BYDAY recurrence, compute candidate dates in the same month
+/// as `current_date` per RFC 5545 §3.3.10:
+///   * Some(n), n > 0 → the Nth occurrence of the weekday in the month.
+///   * Some(n), n < 0 → the Nth-from-last occurrence.
+///   * None → every occurrence of the weekday in the month.
+///   * Some(0) → invalid; entry dropped.
+/// Entries that don't exist in the given month (e.g. a 5th Monday in a
+/// 4-Monday month) are silently dropped.
+fn monthly_byday_dates(
+  current_date: calendar.Date,
+  byday: List(BydayElem),
+) -> List(calendar.Date) {
+  let year = current_date.year
+  let month = current_date.month
+  list.flat_map(byday, fn(b) {
+    case b.pos {
+      Some(n) ->
+        case int.compare(n, 0) {
+          order.Gt ->
+            case nth_weekday_of_month(year, month, b.day, n) {
+              Ok(d) -> [d]
+              Error(Nil) -> []
+            }
+          order.Lt ->
+            case nth_from_last_weekday_of_month(year, month, b.day, -n) {
+              Ok(d) -> [d]
+              Error(Nil) -> []
+            }
+          order.Eq -> []
+        }
+      None -> all_weekdays_in_month(year, month, b.day)
+    }
+  })
+}
+
+/// Return the date of the Nth occurrence of `target` weekday in the given
+/// month (N ≥ 1). Error if N is < 1 or exceeds the count of that weekday.
+fn nth_weekday_of_month(
+  year: Int,
+  month: calendar.Month,
+  target: Weekday,
+  n: Int,
+) -> Result(calendar.Date, Nil) {
+  case n < 1 {
+    True -> Error(Nil)
+    False -> {
+      let first = Date(year: year, month: month, day: 1)
+      let first_dow = date_weekday_mon0(first)
+      let target_dow = weekday_to_mon0(target)
+      let raw_offset = target_dow - first_dow
+      let offset = case raw_offset < 0 {
+        True -> raw_offset + 7
+        False -> raw_offset
+      }
+      let day_num = 1 + offset + 7 * { n - 1 }
+      case day_num <= days_in_month(month, year) {
+        True -> Ok(Date(year: year, month: month, day: day_num))
+        False -> Error(Nil)
+      }
+    }
+  }
+}
+
+/// Return the date of the Nth-from-last occurrence of `target` weekday in
+/// the given month (N ≥ 1, where 1 = last, 2 = second-to-last). Error if N
+/// is < 1 or exceeds the count of that weekday in the month.
+fn nth_from_last_weekday_of_month(
+  year: Int,
+  month: calendar.Month,
+  target: Weekday,
+  n: Int,
+) -> Result(calendar.Date, Nil) {
+  case n < 1 {
+    True -> Error(Nil)
+    False -> {
+      let last_day_num = days_in_month(month, year)
+      let last = Date(year: year, month: month, day: last_day_num)
+      let last_dow = date_weekday_mon0(last)
+      let target_dow = weekday_to_mon0(target)
+      let raw_offset = last_dow - target_dow
+      let offset = case raw_offset < 0 {
+        True -> raw_offset + 7
+        False -> raw_offset
+      }
+      let day_num = last_day_num - offset - 7 * { n - 1 }
+      case day_num >= 1 {
+        True -> Ok(Date(year: year, month: month, day: day_num))
+        False -> Error(Nil)
+      }
+    }
+  }
+}
+
+/// All dates in the given month that fall on the specified weekday (4 or 5).
+fn all_weekdays_in_month(
+  year: Int,
+  month: calendar.Month,
+  target: Weekday,
+) -> List(calendar.Date) {
+  case nth_weekday_of_month(year, month, target, 1) {
+    Error(Nil) -> []
+    Ok(first) -> collect_weekdays_in_month(first, days_in_month(month, year), [])
+  }
+}
+
+/// Tail-recursive helper for `all_weekdays_in_month` — appends each successive
+/// same-weekday date by adding 7 days until past month-end. Returns ascending.
+fn collect_weekdays_in_month(
+  date: calendar.Date,
+  month_last_day: Int,
+  acc: List(calendar.Date),
+) -> List(calendar.Date) {
+  case date.day > month_last_day {
+    True -> list.reverse(acc)
+    False ->
+      collect_weekdays_in_month(
+        Date(..date, day: date.day + 7),
+        month_last_day,
+        [date, ..acc],
+      )
+  }
+}
+
+/// Like `monthly_byday_dates`, but produces UTC timestamps for each candidate
+/// preserving the anchor's local wall-clock time-of-day. Mirrors the
+/// decode/re-encode dance in `weekly_byday_timestamps`.
+fn monthly_byday_timestamps(
+  current_ts: timestamp.Timestamp,
+  byday: List(BydayElem),
+  event_tz: Result(String, Nil),
+) -> List(timestamp.Timestamp) {
+  case event_tz {
+    Ok(tz) -> {
+      let unix_secs =
+        duration.to_seconds(
+          timestamp.difference(timestamp.unix_epoch, current_ts),
+        )
+      let utc_greg = float.truncate(unix_secs) + gregorian_epoch_offset
+      let #(#(y, m_int, d), #(h, mi, s)) =
+        gregorian_seconds_to_datetime(utc_greg)
+      let local_greg = tz_utc_to_local(y, m_int, d, h, mi, s, tz)
+      let #(#(ly, lm_int, ld), #(lh, lmi, ls)) =
+        gregorian_seconds_to_datetime(local_greg)
+      let lm = case int_to_month(lm_int) {
+        Ok(mo) -> mo
+        Error(Nil) -> calendar.January
+      }
+      let local_date = Date(year: ly, month: lm, day: ld)
+      let candidate_dates = monthly_byday_dates(local_date, byday)
+      list.map(candidate_dates, fn(target_date) {
+        let Date(ty, tm, td) = target_date
+        let tm_int = calendar.month_to_int(tm)
+        let target_utc_greg =
+          tz_local_to_utc(ty, tm_int, td, lh, lmi, ls, tz)
+        timestamp.from_unix_seconds(target_utc_greg - gregorian_epoch_offset)
+      })
+    }
+    Error(Nil) -> {
+      // Floating event (no tz): treat current_ts as naive UTC.
+      let unix_secs =
+        duration.to_seconds(
+          timestamp.difference(timestamp.unix_epoch, current_ts),
+        )
+      let utc_greg = float.truncate(unix_secs) + gregorian_epoch_offset
+      let #(#(y, m_int, d), #(h, mi, s)) =
+        gregorian_seconds_to_datetime(utc_greg)
+      let m = case int_to_month(m_int) {
+        Ok(mo) -> mo
+        Error(Nil) -> calendar.January
+      }
+      let anchor_date = Date(year: y, month: m, day: d)
+      let candidate_dates = monthly_byday_dates(anchor_date, byday)
+      list.map(candidate_dates, fn(target_date) {
+        let Date(ty, tm, td) = target_date
+        let tm_int = calendar.month_to_int(tm)
+        let target_greg =
+          datetime_to_gregorian_seconds(ty, tm_int, td, h, mi, s)
+        timestamp.from_unix_seconds(target_greg - gregorian_epoch_offset)
+      })
+    }
+  }
 }
 
 fn generate_recurring_timed(
@@ -1042,11 +1274,13 @@ fn generate_recurring_timed(
 ) -> List(Event) {
   let RecurrenceRule(freq, interval, byday, _count, until) = rrule
 
-  // When BYDAY is used, an iteration's emitted days may fall up to 6 days
-  // before the anchor (e.g. anchor on Friday with BYDAY=MO). Extend the
-  // termination guard by one week to avoid skipping in-window emissions.
+  // When BYDAY is used, an iteration's emitted days may fall outside the
+  // anchor's date itself: by up to 6 days for weekly+BYDAY and up to ~30 days
+  // for monthly+BYDAY. Extend the termination guard accordingly to avoid
+  // skipping in-window emissions on the final iteration before window_end.
   let lookahead_buffer = case freq, byday {
     Weekly, [_, ..] -> 7 * 86_400
+    Monthly, [_, ..] -> 31 * 86_400
     _, _ -> 0
   }
   let buffered_window_end =
@@ -1081,12 +1315,15 @@ fn generate_recurring_timed(
 
       // Determine all candidate timestamps for this iteration's expansion.
       // For weekly+BYDAY, emit one event per BYDAY day in the iteration's week.
-      // Otherwise, emit one event at current_ts. Phantom pre-DTSTART candidates
-      // (BYDAY days earlier in the first week than DTSTART) are dropped so they
-      // do not consume COUNT slots. Candidates after UNTIL are likewise dropped
-      // (RFC 5545 §3.3.10; UNTIL is inclusive).
+      // For monthly+BYDAY, emit one event per BYDAY entry resolved within the
+      // iteration's local month (e.g. Nth-or-last-of-weekday). Otherwise, emit
+      // one event at current_ts. Phantom pre-DTSTART candidates are dropped so
+      // they do not consume COUNT slots. Candidates after UNTIL are likewise
+      // dropped (RFC 5545 §3.3.10; UNTIL is inclusive).
       let raw_candidate_tses = case freq, byday {
         Weekly, [_, ..] -> weekly_byday_timestamps(current_ts, byday, event_tz)
+        Monthly, [_, ..] ->
+          monthly_byday_timestamps(current_ts, byday, event_tz)
         _, _ -> [current_ts]
       }
       let candidate_tses =
@@ -1263,12 +1500,14 @@ fn find_override_for_ts(
   })
 }
 
-/// Given an iteration's anchor timestamp and a list of BYDAY weekdays, compute
+/// Given an iteration's anchor timestamp and a list of BYDAY entries, compute
 /// the corresponding UTC timestamps for each BYDAY day within the anchor's
 /// (Monday-start) week, preserving the anchor's wall-clock time-of-day.
+/// Positional prefixes are ignored per RFC 5545 (FREQ=WEEKLY has no
+/// Nth-in-week semantics).
 fn weekly_byday_timestamps(
   current_ts: timestamp.Timestamp,
-  byday: List(Weekday),
+  byday: List(BydayElem),
   event_tz: Result(String, Nil),
 ) -> List(timestamp.Timestamp) {
   case event_tz {
@@ -1291,8 +1530,8 @@ fn weekly_byday_timestamps(
       let local_date = Date(year: ly, month: lm, day: ld)
       let current_dow = date_weekday_mon0(local_date)
 
-      list.map(byday, fn(d) {
-        let offset = weekday_to_mon0(d) - current_dow
+      list.map(byday, fn(b) {
+        let offset = weekday_to_mon0(b.day) - current_dow
         let target_date = shift_date_days(local_date, offset)
         let Date(ty, tm, td) = target_date
         let tm_int = calendar.month_to_int(tm)
@@ -1317,8 +1556,8 @@ fn weekly_byday_timestamps(
         True -> current_dow_raw + 7
         False -> current_dow_raw
       }
-      list.map(byday, fn(d) {
-        let offset = weekday_to_mon0(d) - current_dow
+      list.map(byday, fn(b) {
+        let offset = weekday_to_mon0(b.day) - current_dow
         timestamp.add(current_ts, duration.seconds(offset * 86_400))
       })
     }
