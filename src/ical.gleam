@@ -526,39 +526,63 @@ fn expand_vevent(
                 Error(Nil) -> Error(Nil)
               }
 
+              // Collect EXDATEs and RDATEs (used by both branches)
+              let exdates = collect_exdates(lines, system_tz)
+              let rdates = collect_rdates(lines, system_tz)
+              let duration_secs = event_duration_secs(start, end)
+
               case recurrence {
                 Error(Nil) -> {
-                  // Non-recurring: include if it overlaps the window
-                  case event_in_window(start, end, window_start, window_end) {
-                    True -> [
-                      Event(
-                        uid:,
-                        summary:,
-                        start:,
-                        end:,
-                        calendar_name:,
-                        location:,
-                        free:,
-                        description:,
-                        url:,
-                      ),
-                    ]
+                  // Non-recurring: emit the master event (if in window),
+                  // plus any RDATE-derived events. Apply EXDATE filter.
+                  let master_event = Event(
+                    uid:,
+                    summary:,
+                    start:,
+                    end:,
+                    calendar_name:,
+                    location:,
+                    free:,
+                    description:,
+                    url:,
+                  )
+                  let master_in_window =
+                    event_in_window(start, end, window_start, window_end)
+                  let base_events = case master_in_window {
+                    True -> [master_event]
                     False -> []
                   }
+                  // Generate RDATE events, then merge + dedupe
+                  let merged =
+                    merge_rdate_events(
+                      rdates,
+                      base_events,
+                      duration_secs,
+                      uid,
+                      summary,
+                      calendar_name,
+                      location,
+                      free,
+                      description,
+                      url,
+                      local_offset,
+                      window_start,
+                      window_end,
+                    )
+                  // Apply EXDATE filter
+                  list.filter(merged, fn(e) {
+                    !list.any(exdates, fn(ex) {
+                      event_times_equal(e.start, ex)
+                    })
+                  })
                 }
                 Ok(rrule) -> {
-                  // Collect EXDATEs as a list of raw date strings to exclude
-                  let exdates = collect_exdates(lines, system_tz)
-
                   // Find overrides for this UID
                   let uid_overrides =
                     list.filter(overrides, fn(ol) {
                       let oprops = list.filter_map(ol, parse_property)
                       get_prop(oprops, "UID") == Ok(uid)
                     })
-
-                  // Compute event duration to apply to each instance
-                  let duration_secs = event_duration_secs(start, end)
 
                   // Generate recurring instances within window
                   // Determine the event timezone: TZID if present, otherwise system_tz for floating
@@ -576,6 +600,7 @@ fn expand_vevent(
                     end,
                     duration_secs,
                     exdates,
+                    rdates,
                     uid_overrides,
                     local_offset,
                     system_tz,
@@ -602,6 +627,7 @@ fn expand_vevent(
 /// Generate recurring occurrences of an event within [window_start, window_end).
 /// - Skip dates in exdates
 /// - Replace instances that have a matching RECURRENCE-ID override
+/// - Add explicit RDATE occurrences (deduped vs RRULE results)
 /// Dispatches to timed or all-day expansion based on master_start type.
 fn expand_recurring(
   rrule: RecurrenceRule,
@@ -616,6 +642,7 @@ fn expand_recurring(
   master_end: EventTime,
   duration_secs: Int,
   exdates: List(EventTime),
+  rdates: List(EventTime),
   uid_overrides: List(List(String)),
   local_offset: duration.Duration,
   system_tz: Result(String, Nil),
@@ -687,18 +714,41 @@ fn expand_recurring(
     }
   }
 
+  // Merge RDATE-derived events with RRULE instances (deduplicated by start).
+  // RDATE events that match an EXDATE are excluded.
+  let rdates_filtered =
+    list.filter(rdates, fn(rd) {
+      !list.any(exdates, fn(ex) { event_times_equal(rd, ex) })
+    })
+  let instances_with_rdates =
+    merge_rdate_events(
+      rdates_filtered,
+      instances,
+      duration_secs,
+      uid,
+      summary,
+      calendar_name,
+      location,
+      free,
+      description,
+      url,
+      local_offset,
+      window_start,
+      window_end,
+    )
+
   // Also include override events that fall in the window but weren't covered
   // by the generated instances (e.g. the original occurrence was outside the
   // window but the override's actual DTSTART is inside).
   let override_in_window =
     list.filter(override_events, fn(e) {
       event_in_window(e.start, e.end, window_start, window_end)
-      && !list.any(instances, fn(i) {
+      && !list.any(instances_with_rdates, fn(i) {
         i.uid == e.uid && times_equal(i.start, e.start)
       })
     })
 
-  list.append(instances, override_in_window)
+  list.append(instances_with_rdates, override_in_window)
 }
 
 /// Advance a Date by exactly `n` days using calendar arithmetic.
@@ -1771,6 +1821,152 @@ fn collect_exdates(
       _, _ -> []
     }
   })
+}
+
+/// Collect all RDATE values, preserving both timed (AtTime) and all-day
+/// (AllDay) forms. Per RFC 5545 §3.8.5.2, RDATE adds explicit recurrence
+/// dates beyond the RRULE set. Multiple RDATE lines are merged.
+fn collect_rdates(
+  lines: List(String),
+  system_tz: Result(String, Nil),
+) -> List(EventTime) {
+  list.flat_map(lines, fn(line) {
+    let upper = string.uppercase(line)
+    case string.starts_with(upper, "RDATE"), string.split_once(line, ":") {
+      True, Ok(#(_param_part, value)) -> {
+        let tzid = get_tzid_param([line], "RDATE")
+        string.split(value, ",")
+        |> list.filter_map(fn(v) {
+          parse_event_time(string.trim(v), tzid, system_tz)
+        })
+      }
+      _, _ -> []
+    }
+  })
+}
+
+/// Build an Event from an RDATE EventTime, using the master event's
+/// properties (summary, location, etc.) and computing the end time
+/// based on the master's duration.
+fn event_from_rdate(
+  rdate: EventTime,
+  duration_secs: Int,
+  uid: String,
+  summary: String,
+  calendar_name: String,
+  location: String,
+  free: Bool,
+  description: String,
+  url: String,
+) -> Event {
+  let end_time = case rdate {
+    AtTime(ts) -> AtTime(timestamp.add(ts, duration.seconds(duration_secs)))
+    AllDay(d) -> {
+      // For all-day, duration is in days; convert seconds to days
+      let days = int.max(duration_secs / 86_400, 1)
+      AllDay(advance_date_by_n(d, days))
+    }
+  }
+  Event(
+    uid: uid,
+    summary: summary,
+    start: rdate,
+    end: end_time,
+    calendar_name: calendar_name,
+    location: location,
+    free: free,
+    description: description,
+    url: url,
+  )
+}
+
+/// Filter RDATE events to those within the window, then deduplicate
+/// against RRULE-generated events (by start time equality).
+fn merge_rdate_events(
+  rdates: List(EventTime),
+  rrule_events: List(Event),
+  duration_secs: Int,
+  uid: String,
+  summary: String,
+  calendar_name: String,
+  location: String,
+  free: Bool,
+  description: String,
+  url: String,
+  local_offset: duration.Duration,
+  window_start: timestamp.Timestamp,
+  window_end: timestamp.Timestamp,
+) -> List(Event) {
+  // Generate events from RDATE values
+  let rdate_events =
+    list.filter_map(rdates, fn(rdate) {
+      let evt =
+        event_from_rdate(
+          rdate,
+          duration_secs,
+          uid,
+          summary,
+          calendar_name,
+          location,
+          free,
+          description,
+          url,
+        )
+      // Keep only events that overlap the window (date-aware for AllDay)
+      case
+        rdate_event_overlaps_window(
+          evt.start,
+          evt.end,
+          window_start,
+          window_end,
+          local_offset,
+        )
+      {
+        True -> Ok(evt)
+        False -> Error(Nil)
+      }
+    })
+
+  // Deduplicate: remove RDATE events that match an RRULE event by start time
+  list.filter(rdate_events, fn(r_evt) {
+    !list.any(rrule_events, fn(rule_evt) {
+      event_times_equal(r_evt.start, rule_evt.start)
+    })
+  })
+  |> list.append(rrule_events)
+}
+
+/// Window overlap test that handles AllDay events using calendar dates.
+/// Equivalent to event_in_window but doesn't unconditionally include AllDay.
+fn rdate_event_overlaps_window(
+  start: EventTime,
+  end: EventTime,
+  window_start: timestamp.Timestamp,
+  window_end: timestamp.Timestamp,
+  local_offset: duration.Duration,
+) -> Bool {
+  case start, end {
+    AtTime(s), AtTime(e) ->
+      timestamp.compare(e, window_start) != Lt
+      && timestamp.compare(s, window_end) == Lt
+    AllDay(s), AllDay(en) -> {
+      let ws_date = timestamp.to_calendar(window_start, local_offset).0
+      let we_date = timestamp.to_calendar(window_end, local_offset).0
+      // Overlap of [s, en) with [ws_date, we_date) requires en >= ws AND s < we
+      calendar.naive_date_compare(en, ws_date) != order.Lt
+      && calendar.naive_date_compare(s, we_date) == order.Lt
+    }
+    _, _ -> True
+  }
+}
+
+/// True if two EventTime values represent the same instant or date.
+fn event_times_equal(a: EventTime, b: EventTime) -> Bool {
+  case a, b {
+    AtTime(ts_a), AtTime(ts_b) -> timestamp.compare(ts_a, ts_b) == order.Eq
+    AllDay(d_a), AllDay(d_b) -> d_a == d_b
+    _, _ -> False
+  }
 }
 
 /// Compute the duration in seconds between two EventTimes.
