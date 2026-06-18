@@ -142,6 +142,10 @@ type RecurrenceRule {
     ///     negative N = Nth-from-last; absent = every occurrence in month.
     ///   * FREQ=WEEKLY: prefix MUST be ignored (no concept of Nth-in-week).
     byday: List(BydayElem),
+    /// BYMONTHDAY values (RFC 5545 §3.3.10). Positive = day of month (1-31);
+    /// negative = counting from end (-1 = last day, -2 = second-to-last).
+    /// Empty list means "use DTSTART's day-of-month".
+    bymonthday: List(Int),
     /// COUNT bound on the recurrence set (RFC 5545 §3.3.10). None = unbounded.
     /// DTSTART always counts as the first occurrence.
     count: Option(Int),
@@ -201,6 +205,18 @@ fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
     })
     |> result.unwrap([])
 
+  // Extract BYMONTHDAY (optional; RFC 5545 §3.3.10). Comma-separated list of
+  // day numbers: positive = day of month (1-31); negative = from end (-1 = last).
+  // Invalid entries are silently dropped.
+  let bymonthday =
+    list.find(parts, fn(part) { string.starts_with(part, "BYMONTHDAY=") })
+    |> result.map(fn(part) {
+      string.replace(part, "BYMONTHDAY=", "")
+      |> string.split(",")
+      |> list.filter_map(fn(s) { int.parse(string.trim(s)) })
+    })
+    |> result.unwrap([])
+
   // Extract COUNT (optional; RFC 5545 §3.3.10). Invalid integer → ignored.
   let count =
     list.find(parts, fn(part) { string.starts_with(part, "COUNT=") })
@@ -232,7 +248,7 @@ fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
     })
 
   use freq <- result.try(freq_result)
-  Ok(RecurrenceRule(freq:, interval:, byday:, count:, until:))
+  Ok(RecurrenceRule(freq:, interval:, byday:, bymonthday:, count:, until:))
 }
 
 /// Parse a BYDAY value list (comma-separated). Returns BydayElems preserving
@@ -815,7 +831,7 @@ fn generate_recurring_allday(
   window_end_date: calendar.Date,
   acc: List(Event),
 ) -> List(Event) {
-  let RecurrenceRule(freq, interval, byday, _count, until) = rrule
+  let RecurrenceRule(freq, interval, byday, bymonthday, _count, until) = rrule
 
   // When BYDAY is used, an iteration's emitted days may fall outside the
   // anchor's date itself: by up to 6 days for weekly+BYDAY (the BYDAY week
@@ -823,10 +839,11 @@ fn generate_recurring_allday(
   // on the 1st with BYDAY=-1FR landing near the 30th, or vice versa).
   // Extend the termination guard accordingly to avoid skipping in-window
   // emissions on the final iteration before window_end.
-  let buffer_days = case freq, byday {
-    Weekly, [_, ..] -> 7
-    Monthly, [_, ..] -> 31
-    _, _ -> 0
+  let buffer_days = case freq, byday, bymonthday {
+    Weekly, [_, ..], _ -> 7
+    Monthly, [_, ..], _ -> 31
+    Monthly, [], [_, ..] -> 31
+    _, _, _ -> 0
   }
   let buffered_window_end_date =
     advance_date_by_n(window_end_date, buffer_days)
@@ -863,10 +880,15 @@ fn generate_recurring_allday(
       // drop any that fall before DTSTART (phantom first-week/month BYDAY days
       // that are not part of the recurrence set) or after UNTIL (RFC 5545
       // §3.3.10 bound; UNTIL is inclusive).
-      let raw_candidates = case freq, byday {
-        Weekly, [_, ..] -> weekly_byday_dates(current_date, byday)
-        Monthly, [_, ..] -> monthly_byday_dates(current_date, byday)
-        _, _ -> [current_date]
+      let raw_candidates = case freq, byday, bymonthday {
+        Weekly, [_, ..], _ -> weekly_byday_dates(current_date, byday)
+        Monthly, [_, ..], _ -> monthly_byday_dates(current_date, byday)
+        Monthly, [], [_, ..] -> {
+          let year = current_date.year
+          let month = current_date.month
+          monthly_bymonthday_dates(year, month, bymonthday)
+        }
+        _, _, _ -> [current_date]
       }
       let candidate_dates =
         list.filter(raw_candidates, fn(d) {
@@ -1190,6 +1212,50 @@ fn collect_weekdays_in_month(
   }
 }
 
+/// Resolve a BYMONTHDAY value to an actual day of month.
+/// Positive: 1-31 (clamped to month length).
+/// Negative: -1 = last day, -2 = second-to-last, etc.
+/// Returns Error if the resolved day is outside 1..days_in_month.
+fn resolve_bymonthday(
+  year: Int,
+  month: calendar.Month,
+  bymonthday: Int,
+) -> Result(Int, Nil) {
+  let days_in = days_in_month(month, year)
+  case int.compare(bymonthday, 0) {
+    order.Gt -> {
+      // Positive: day of month (1-31)
+      case bymonthday <= days_in {
+        True -> Ok(bymonthday)
+        False -> Error(Nil)
+      }
+    }
+    order.Lt -> {
+      // Negative: counting from end (-1 = last, -2 = second-to-last)
+      let day_num = days_in + bymonthday + 1
+      case day_num >= 1 {
+        True -> Ok(day_num)
+        False -> Error(Nil)
+      }
+    }
+    order.Eq -> Error(Nil)
+  }
+}
+
+/// Generate candidate dates for monthly recurrence using BYMONTHDAY values.
+/// Each valid BYMONTHDAY is resolved to a date in the current month.
+/// Invalid days (e.g., Feb 30) are silently dropped.
+fn monthly_bymonthday_dates(
+  year: Int,
+  month: calendar.Month,
+  bymonthday: List(Int),
+) -> List(calendar.Date) {
+  list.filter_map(bymonthday, fn(day_val) {
+    use day <- result.try(resolve_bymonthday(year, month, day_val))
+    Ok(Date(year: year, month: month, day: day))
+  })
+}
+
 /// Like `monthly_byday_dates`, but produces UTC timestamps for each candidate
 /// preserving the anchor's local wall-clock time-of-day. Mirrors the
 /// decode/re-encode dance in `weekly_byday_timestamps`.
@@ -1250,6 +1316,63 @@ fn monthly_byday_timestamps(
   }
 }
 
+/// Like `monthly_bymonthday_dates`, but produces UTC timestamps preserving
+/// the anchor's local wall-clock time-of-day.
+fn monthly_bymonthday_timestamps(
+  current_ts: timestamp.Timestamp,
+  bymonthday: List(Int),
+  event_tz: Result(String, Nil),
+) -> List(timestamp.Timestamp) {
+  case event_tz {
+    Ok(tz) -> {
+      let unix_secs =
+        duration.to_seconds(
+          timestamp.difference(timestamp.unix_epoch, current_ts),
+        )
+      let utc_greg = float.truncate(unix_secs) + gregorian_epoch_offset
+      let #(#(y, m_int, d), #(h, mi, s)) =
+        gregorian_seconds_to_datetime(utc_greg)
+      let local_greg = tz_utc_to_local(y, m_int, d, h, mi, s, tz)
+      let #(#(ly, lm_int, _ld), #(lh, lmi, ls)) =
+        gregorian_seconds_to_datetime(local_greg)
+      let lm = case int_to_month(lm_int) {
+        Ok(mo) -> mo
+        Error(Nil) -> calendar.January
+      }
+      let candidate_dates = monthly_bymonthday_dates(ly, lm, bymonthday)
+      list.map(candidate_dates, fn(target_date) {
+        let Date(ty, tm, td) = target_date
+        let tm_int = calendar.month_to_int(tm)
+        let target_utc_greg =
+          tz_local_to_utc(ty, tm_int, td, lh, lmi, ls, tz)
+        timestamp.from_unix_seconds(target_utc_greg - gregorian_epoch_offset)
+      })
+    }
+    Error(Nil) -> {
+      // Floating event (no tz): treat current_ts as naive UTC.
+      let unix_secs =
+        duration.to_seconds(
+          timestamp.difference(timestamp.unix_epoch, current_ts),
+        )
+      let utc_greg = float.truncate(unix_secs) + gregorian_epoch_offset
+      let #(#(y, m_int, _d), #(h, mi, s)) =
+        gregorian_seconds_to_datetime(utc_greg)
+      let m = case int_to_month(m_int) {
+        Ok(mo) -> mo
+        Error(Nil) -> calendar.January
+      }
+      let candidate_dates = monthly_bymonthday_dates(y, m, bymonthday)
+      list.map(candidate_dates, fn(target_date) {
+        let Date(ty, tm, td) = target_date
+        let tm_int = calendar.month_to_int(tm)
+        let target_greg =
+          datetime_to_gregorian_seconds(ty, tm_int, td, h, mi, s)
+        timestamp.from_unix_seconds(target_greg - gregorian_epoch_offset)
+      })
+    }
+  }
+}
+
 fn generate_recurring_timed(
   rrule: RecurrenceRule,
   current_ts: timestamp.Timestamp,
@@ -1272,16 +1395,16 @@ fn generate_recurring_timed(
   window_end: timestamp.Timestamp,
   acc: List(Event),
 ) -> List(Event) {
-  let RecurrenceRule(freq, interval, byday, _count, until) = rrule
+  let RecurrenceRule(freq, interval, byday, bymonthday, _count, until) = rrule
 
-  // When BYDAY is used, an iteration's emitted days may fall outside the
-  // anchor's date itself: by up to 6 days for weekly+BYDAY and up to ~30 days
-  // for monthly+BYDAY. Extend the termination guard accordingly to avoid
+  // When BYDAY or BYMONTHDAY is used, an iteration's emitted days may fall
+  // outside the anchor's date itself. Extend the termination guard to avoid
   // skipping in-window emissions on the final iteration before window_end.
-  let lookahead_buffer = case freq, byday {
-    Weekly, [_, ..] -> 7 * 86_400
-    Monthly, [_, ..] -> 31 * 86_400
-    _, _ -> 0
+  let lookahead_buffer = case freq, byday, bymonthday {
+    Weekly, [_, ..], _ -> 7 * 86_400
+    Monthly, [_, ..], _ -> 31 * 86_400
+    Monthly, [], [_, ..] -> 31 * 86_400
+    _, _, _ -> 0
   }
   let buffered_window_end =
     timestamp.add(window_end, duration.seconds(lookahead_buffer))
@@ -1316,15 +1439,19 @@ fn generate_recurring_timed(
       // Determine all candidate timestamps for this iteration's expansion.
       // For weekly+BYDAY, emit one event per BYDAY day in the iteration's week.
       // For monthly+BYDAY, emit one event per BYDAY entry resolved within the
-      // iteration's local month (e.g. Nth-or-last-of-weekday). Otherwise, emit
-      // one event at current_ts. Phantom pre-DTSTART candidates are dropped so
-      // they do not consume COUNT slots. Candidates after UNTIL are likewise
-      // dropped (RFC 5545 §3.3.10; UNTIL is inclusive).
-      let raw_candidate_tses = case freq, byday {
-        Weekly, [_, ..] -> weekly_byday_timestamps(current_ts, byday, event_tz)
-        Monthly, [_, ..] ->
+      // iteration's local month (e.g. Nth-or-last-of-weekday). For monthly+BYMONTHDAY
+      // (without BYDAY), emit one event per specified day-of-month. Otherwise, emit
+      // one event at current_ts. Phantom pre-DTSTART candidates are dropped so they
+      // do not consume COUNT slots. Candidates after UNTIL are likewise dropped
+      // (RFC 5545 §3.3.10; UNTIL is inclusive).
+      let raw_candidate_tses = case freq, byday, bymonthday {
+        Weekly, [_, ..], _ ->
+          weekly_byday_timestamps(current_ts, byday, event_tz)
+        Monthly, [_, ..], _ ->
           monthly_byday_timestamps(current_ts, byday, event_tz)
-        _, _ -> [current_ts]
+        Monthly, [], [_, ..] ->
+          monthly_bymonthday_timestamps(current_ts, bymonthday, event_tz)
+        _, _, _ -> [current_ts]
       }
       let candidate_tses =
         list.filter(raw_candidate_tses, fn(ts) {
