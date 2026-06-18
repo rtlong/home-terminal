@@ -206,6 +206,27 @@ type RecurrenceRule {
     /// Invalid entries (0 or |x| > 53) and weeks that don't exist in a given
     /// year (e.g. week 53 in a 52-week year) are dropped.
     byweekno: List(Int),
+    /// BYHOUR values (RFC 5545 §3.3.10). Each entry is an hour-of-day in
+    /// 0..23. Empty list means "use DTSTART's local hour".
+    ///
+    /// For FREQ=DAILY/WEEKLY/MONTHLY/YEARLY this is an EXPANSION rule: each
+    /// candidate timestamp is replaced by one occurrence per BYHOUR entry,
+    /// keeping the candidate's local date. (We do not support FREQ=HOURLY/
+    /// MINUTELY/SECONDLY where it would act as a limit.)
+    ///
+    /// Has no effect on AllDay events.
+    ///
+    /// Invalid entries (<0 or >23) are silently dropped at parse time.
+    byhour: List(Int),
+    /// BYMINUTE values (RFC 5545 §3.3.10). Each entry is a minute-of-hour in
+    /// 0..59. Empty list means "use the candidate's minute". Expansion rule;
+    /// see BYHOUR above. Invalid entries are dropped at parse time.
+    byminute: List(Int),
+    /// BYSECOND values (RFC 5545 §3.3.10). Each entry is a second-of-minute
+    /// in 0..60 (60 permitted for leap seconds). Empty list means "use the
+    /// candidate's second". Expansion rule; see BYHOUR above. Invalid entries
+    /// are dropped at parse time.
+    bysecond: List(Int),
   )
 }
 
@@ -393,6 +414,66 @@ fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
     })
     |> result.unwrap([])
 
+  // Extract BYHOUR (optional; RFC 5545 §3.3.10). Comma-separated list of
+  // hours 0..23. Invalid entries are silently dropped.
+  let byhour =
+    list.find(parts, fn(part) { string.starts_with(part, "BYHOUR=") })
+    |> result.map(fn(part) {
+      string.replace(part, "BYHOUR=", "")
+      |> string.split(",")
+      |> list.filter_map(fn(s) {
+        case int.parse(string.trim(s)) {
+          Ok(n) ->
+            case n >= 0 && n <= 23 {
+              True -> Ok(n)
+              False -> Error(Nil)
+            }
+          Error(Nil) -> Error(Nil)
+        }
+      })
+    })
+    |> result.unwrap([])
+
+  // Extract BYMINUTE (optional; RFC 5545 §3.3.10). Comma-separated list of
+  // minutes 0..59. Invalid entries are silently dropped.
+  let byminute =
+    list.find(parts, fn(part) { string.starts_with(part, "BYMINUTE=") })
+    |> result.map(fn(part) {
+      string.replace(part, "BYMINUTE=", "")
+      |> string.split(",")
+      |> list.filter_map(fn(s) {
+        case int.parse(string.trim(s)) {
+          Ok(n) ->
+            case n >= 0 && n <= 59 {
+              True -> Ok(n)
+              False -> Error(Nil)
+            }
+          Error(Nil) -> Error(Nil)
+        }
+      })
+    })
+    |> result.unwrap([])
+
+  // Extract BYSECOND (optional; RFC 5545 §3.3.10). Comma-separated list of
+  // seconds 0..60 (60 permitted for leap seconds). Invalid entries dropped.
+  let bysecond =
+    list.find(parts, fn(part) { string.starts_with(part, "BYSECOND=") })
+    |> result.map(fn(part) {
+      string.replace(part, "BYSECOND=", "")
+      |> string.split(",")
+      |> list.filter_map(fn(s) {
+        case int.parse(string.trim(s)) {
+          Ok(n) ->
+            case n >= 0 && n <= 60 {
+              True -> Ok(n)
+              False -> Error(Nil)
+            }
+          Error(Nil) -> Error(Nil)
+        }
+      })
+    })
+    |> result.unwrap([])
+
   use freq <- result.try(freq_result)
   Ok(RecurrenceRule(
     freq:,
@@ -406,6 +487,9 @@ fn parse_rrule(rrule: String) -> Result(RecurrenceRule, Nil) {
     bysetpos:,
     byyearday:,
     byweekno:,
+    byhour:,
+    byminute:,
+    bysecond:,
   ))
 }
 
@@ -1075,6 +1159,9 @@ fn generate_recurring_allday(
     bysetpos,
     byyearday,
     byweekno,
+    _byhour,
+    _byminute,
+    _bysecond,
   ) = rrule
 
   // When BYDAY is used, an iteration's emitted days may fall outside the
@@ -2006,6 +2093,110 @@ fn apply_bysetpos_timestamps(
   |> list.sort(timestamp.compare)
 }
 
+/// Expand each candidate timestamp by replacing its local time-of-day with
+/// every combination in the cartesian product byhour × byminute × bysecond
+/// (RFC 5545 §3.3.10). For FREQ=DAILY/WEEKLY/MONTHLY/YEARLY these rule parts
+/// EXPAND the candidate set; we don't support FREQ=HOURLY/MINUTELY/SECONDLY
+/// where they would act as filters.
+///
+/// An empty list for any of the three preserves the candidate's existing
+/// component for that field. When all three are empty, candidates pass
+/// through unchanged.
+///
+/// Result is deduplicated and sorted chronologically.
+fn expand_by_hour_minute_second(
+  candidates: List(timestamp.Timestamp),
+  byhour: List(Int),
+  byminute: List(Int),
+  bysecond: List(Int),
+  event_tz: Result(String, Nil),
+) -> List(timestamp.Timestamp) {
+  case byhour, byminute, bysecond {
+    [], [], [] -> candidates
+    _, _, _ ->
+      list.flat_map(candidates, fn(ts) {
+        let #(y, m_int, d, h, mi, s) =
+          timestamp_local_components(ts, event_tz)
+        let hours = case byhour {
+          [] -> [h]
+          xs -> xs
+        }
+        let minutes = case byminute {
+          [] -> [mi]
+          xs -> xs
+        }
+        let seconds = case bysecond {
+          [] -> [s]
+          xs -> xs
+        }
+        list.flat_map(hours, fn(nh) {
+          list.flat_map(minutes, fn(nmi) {
+            list.map(seconds, fn(ns) {
+              timestamp_from_local_components(
+                y,
+                m_int,
+                d,
+                nh,
+                nmi,
+                ns,
+                event_tz,
+              )
+            })
+          })
+        })
+      })
+      |> list.unique
+      |> list.sort(timestamp.compare)
+  }
+}
+
+/// Decompose a UTC timestamp into local-time #(year, month_int, day, hour,
+/// minute, second) using the given timezone (or naive UTC if event_tz is
+/// Error(Nil)).
+fn timestamp_local_components(
+  ts: timestamp.Timestamp,
+  event_tz: Result(String, Nil),
+) -> #(Int, Int, Int, Int, Int, Int) {
+  let unix_secs =
+    duration.to_seconds(timestamp.difference(timestamp.unix_epoch, ts))
+  let utc_greg = float.truncate(unix_secs) + gregorian_epoch_offset
+  let #(#(y, m_int, d), #(h, mi, s)) =
+    gregorian_seconds_to_datetime(utc_greg)
+  case event_tz {
+    Ok(tz) -> {
+      let local_greg = tz_utc_to_local(y, m_int, d, h, mi, s, tz)
+      let #(#(ly, lm_int, ld), #(lh, lmi, ls)) =
+        gregorian_seconds_to_datetime(local_greg)
+      #(ly, lm_int, ld, lh, lmi, ls)
+    }
+    Error(Nil) -> #(y, m_int, d, h, mi, s)
+  }
+}
+
+/// Recompose a UTC timestamp from local-time #(year, month_int, day, hour,
+/// minute, second). When event_tz is Ok(tz), interprets the components in
+/// that timezone and converts to UTC. Otherwise treats them as naive UTC.
+fn timestamp_from_local_components(
+  y: Int,
+  m_int: Int,
+  d: Int,
+  h: Int,
+  mi: Int,
+  s: Int,
+  event_tz: Result(String, Nil),
+) -> timestamp.Timestamp {
+  case event_tz {
+    Ok(tz) -> {
+      let utc_greg = tz_local_to_utc(y, m_int, d, h, mi, s, tz)
+      timestamp.from_unix_seconds(utc_greg - gregorian_epoch_offset)
+    }
+    Error(Nil) -> {
+      let greg = datetime_to_gregorian_seconds(y, m_int, d, h, mi, s)
+      timestamp.from_unix_seconds(greg - gregorian_epoch_offset)
+    }
+  }
+}
+
 /// Like `monthly_byday_dates`, but produces UTC timestamps for each candidate
 /// preserving the anchor's local wall-clock time-of-day. Mirrors the
 /// decode/re-encode dance in `weekly_byday_timestamps`.
@@ -2157,6 +2348,9 @@ fn generate_recurring_timed(
     bysetpos,
     byyearday,
     byweekno,
+    byhour,
+    byminute,
+    bysecond,
   ) = rrule
 
   // When BYDAY or BYMONTHDAY is used, an iteration's emitted days may fall
@@ -2253,12 +2447,32 @@ fn generate_recurring_timed(
             )
           })
       }
+      // BYHOUR/BYMINUTE/BYSECOND expansion (RFC 5545 §3.3.10). Replaces each
+      // candidate's local time-of-day with the cartesian product. No-op when
+      // all three lists are empty.
+      let raw_candidate_tses =
+        expand_by_hour_minute_second(
+          raw_candidate_tses,
+          byhour,
+          byminute,
+          bysecond,
+          event_tz,
+        )
       // BYSETPOS post-filter (RFC 5545 §3.3.10). Must be used in conjunction
       // with another BYxxx rule; otherwise ignored.
-      let raw_candidate_tses = case bysetpos, byday, bymonthday, bymonth {
-        [], _, _, _ -> raw_candidate_tses
-        _, [], [], [] -> raw_candidate_tses
-        _, _, _, _ -> apply_bysetpos_timestamps(raw_candidate_tses, bysetpos)
+      let raw_candidate_tses = case
+        bysetpos,
+        byday,
+        bymonthday,
+        bymonth,
+        byhour,
+        byminute,
+        bysecond
+      {
+        [], _, _, _, _, _, _ -> raw_candidate_tses
+        _, [], [], [], [], [], [] -> raw_candidate_tses
+        _, _, _, _, _, _, _ ->
+          apply_bysetpos_timestamps(raw_candidate_tses, bysetpos)
       }
       let candidate_tses =
         list.filter(raw_candidate_tses, fn(ts) {
