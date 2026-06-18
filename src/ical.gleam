@@ -117,6 +117,19 @@ type RecurrenceFreq {
   Yearly
 }
 
+/// Result of a RECURRENCE-ID override lookup for a generated instance.
+///
+/// * `NoOverride` — no override matched; emit the master-derived instance.
+/// * `CancellingOverride` — an override matched and carries STATUS:CANCELLED;
+///   skip the instance entirely (RFC 5545 §3.8.1.11).
+/// * `ReplacingOverride(Event)` — an override matched; emit it in place of
+///   the master-derived instance.
+type OverrideResult {
+  NoOverride
+  CancellingOverride
+  ReplacingOverride(Event)
+}
+
 /// Days of the week (used for RRULE BYDAY).
 type Weekday {
   Monday
@@ -667,7 +680,15 @@ pub fn parse_events(
 
   // Separate masters from overrides
   let masters =
-    list.filter(raw_vevents, fn(lines) { !has_prop(lines, "RECURRENCE-ID") })
+    raw_vevents
+    |> list.filter(fn(lines) { !has_prop(lines, "RECURRENCE-ID") })
+    // Drop masters with STATUS:CANCELLED — the entire series is suppressed
+    // (RFC 5545 §3.8.1.11). For non-recurring events this also drops the
+    // single instance.
+    |> list.filter(fn(lines) {
+      let props = list.filter_map(lines, parse_property)
+      !props_status_cancelled(props)
+    })
   let overrides =
     list.filter(raw_vevents, fn(lines) { has_prop(lines, "RECURRENCE-ID") })
 
@@ -1374,8 +1395,9 @@ fn allday_instance_for_date(
               system_tz,
             )
           {
-            Ok(override_evt) -> Ok(override_evt)
-            Error(Nil) ->
+            CancellingOverride -> Error(Nil)
+            ReplacingOverride(override_evt) -> Ok(override_evt)
+            NoOverride ->
               Ok(Event(
                 uid:,
                 summary:,
@@ -1393,6 +1415,9 @@ fn allday_instance_for_date(
   }
 }
 
+/// All-day variant of `find_override_for_ts`. Matches an override whose
+/// RECURRENCE-ID's local date equals `current_date`. Returns NoOverride,
+/// CancellingOverride, or ReplacingOverride per the same semantics.
 fn find_allday_override_for_date(
   current_date: calendar.Date,
   uid_overrides: List(List(String)),
@@ -1400,44 +1425,51 @@ fn find_allday_override_for_date(
   calendar_name: String,
   local_offset: duration.Duration,
   system_tz: Result(String, Nil),
-) -> Result(Event, Nil) {
-  list.find_map(uid_overrides, fn(ol) {
-    let oprops = list.filter_map(ol, parse_property)
-    case get_prop_prefix(oprops, "RECURRENCE-ID") {
-      Ok(rec_raw) ->
-        case parse_event_time(rec_raw, Error(Nil), system_tz) {
-          Ok(AllDay(rec_date)) ->
-            case rec_date == current_date {
-              True ->
-                parse_override_event(
-                  ol,
-                  uid,
-                  calendar_name,
-                  local_offset,
-                  system_tz,
-                )
-              False -> Error(Nil)
+) -> OverrideResult {
+  let matched =
+    list.find_map(uid_overrides, fn(ol) {
+      let oprops = list.filter_map(ol, parse_property)
+      case get_prop_prefix(oprops, "RECURRENCE-ID") {
+        Ok(rec_raw) ->
+          case parse_event_time(rec_raw, Error(Nil), system_tz) {
+            Ok(AllDay(rec_date)) ->
+              case rec_date == current_date {
+                True -> Ok(#(ol, oprops))
+                False -> Error(Nil)
+              }
+            Ok(AtTime(rec_ts)) -> {
+              let #(rec_date, _) =
+                timestamp.to_calendar(rec_ts, local_offset)
+              case rec_date == current_date {
+                True -> Ok(#(ol, oprops))
+                False -> Error(Nil)
+              }
             }
-          Ok(AtTime(rec_ts)) -> {
-            let #(rec_date, _) =
-              timestamp.to_calendar(rec_ts, local_offset)
-            case rec_date == current_date {
-              True ->
-                parse_override_event(
-                  ol,
-                  uid,
-                  calendar_name,
-                  local_offset,
-                  system_tz,
-                )
-              False -> Error(Nil)
-            }
+            Error(Nil) -> Error(Nil)
           }
-          Error(Nil) -> Error(Nil)
-        }
-      Error(Nil) -> Error(Nil)
-    }
-  })
+        Error(Nil) -> Error(Nil)
+      }
+    })
+  case matched {
+    Error(Nil) -> NoOverride
+    Ok(#(ol, oprops)) ->
+      case props_status_cancelled(oprops) {
+        True -> CancellingOverride
+        False ->
+          case
+            parse_override_event(
+              ol,
+              uid,
+              calendar_name,
+              local_offset,
+              system_tz,
+            )
+          {
+            Ok(evt) -> ReplacingOverride(evt)
+            Error(Nil) -> NoOverride
+          }
+      }
+  }
 }
 
 /// For a weekly+BYDAY all-day recurrence, compute each BYDAY day's date in
@@ -2594,8 +2626,9 @@ fn instance_for_ts(
               system_tz,
             )
           {
-            Ok(override_evt) -> Ok(override_evt)
-            Error(Nil) ->
+            CancellingOverride -> Error(Nil)
+            ReplacingOverride(override_evt) -> Ok(override_evt)
+            NoOverride ->
               Ok(Event(
                 uid:,
                 summary:,
@@ -2614,7 +2647,9 @@ fn instance_for_ts(
 }
 
 /// Look for a RECURRENCE-ID override whose RECURRENCE-ID falls on the same
-/// local day as `ts`. Returns the parsed override Event if found.
+/// local day as `ts`. Returns NoOverride if none matched, CancellingOverride
+/// if the matched override has STATUS:CANCELLED, or ReplacingOverride(Event)
+/// otherwise.
 fn find_override_for_ts(
   ts: timestamp.Timestamp,
   uid_overrides: List(List(String)),
@@ -2622,30 +2657,47 @@ fn find_override_for_ts(
   calendar_name: String,
   local_offset: duration.Duration,
   system_tz: Result(String, Nil),
-) -> Result(Event, Nil) {
-  list.find_map(uid_overrides, fn(ol) {
-    let oprops = list.filter_map(ol, parse_property)
-    let rec_id_tzid = get_tzid_param(ol, "RECURRENCE-ID")
-    case get_prop_prefix(oprops, "RECURRENCE-ID") {
-      Ok(rec_raw) ->
-        case parse_event_time(rec_raw, rec_id_tzid, system_tz) {
-          Ok(rec_time) ->
-            case same_day_event_time(ts, rec_time, local_offset) {
-              True ->
-                parse_override_event(
-                  ol,
-                  uid,
-                  calendar_name,
-                  local_offset,
-                  system_tz,
-                )
-              False -> Error(Nil)
-            }
-          Error(Nil) -> Error(Nil)
-        }
-      Error(Nil) -> Error(Nil)
+) -> OverrideResult {
+  let matched =
+    list.find_map(uid_overrides, fn(ol) {
+      let oprops = list.filter_map(ol, parse_property)
+      let rec_id_tzid = get_tzid_param(ol, "RECURRENCE-ID")
+      case get_prop_prefix(oprops, "RECURRENCE-ID") {
+        Ok(rec_raw) ->
+          case parse_event_time(rec_raw, rec_id_tzid, system_tz) {
+            Ok(rec_time) ->
+              case same_day_event_time(ts, rec_time, local_offset) {
+                True -> Ok(#(ol, oprops))
+                False -> Error(Nil)
+              }
+            Error(Nil) -> Error(Nil)
+          }
+        Error(Nil) -> Error(Nil)
+      }
+    })
+  case matched {
+    Error(Nil) -> NoOverride
+    Ok(#(ol, oprops)) -> {
+      case props_status_cancelled(oprops) {
+        True -> CancellingOverride
+        False ->
+          case
+            parse_override_event(
+              ol,
+              uid,
+              calendar_name,
+              local_offset,
+              system_tz,
+            )
+          {
+            Ok(evt) -> ReplacingOverride(evt)
+            // Malformed override (e.g. missing SUMMARY): fall back to the
+            // master-derived instance rather than silently dropping.
+            Error(Nil) -> NoOverride
+          }
+      }
     }
-  })
+  }
 }
 
 /// Given an iteration's anchor timestamp and a list of BYDAY entries, compute
@@ -2732,6 +2784,23 @@ fn parse_override_event(
   system_tz: Result(String, Nil),
 ) -> Result(Event, Nil) {
   let props = list.filter_map(lines, parse_property)
+  // RFC 5545 §3.8.1.11: STATUS:CANCELLED on an override means the master
+  // instance at that RECURRENCE-ID is removed; the override itself produces
+  // no event. Drop it here so callers can rely on `override_events` carrying
+  // only events meant to surface.
+  case props_status_cancelled(props) {
+    True -> Error(Nil)
+    False -> parse_override_event_active(lines, props, uid, calendar_name, system_tz)
+  }
+}
+
+fn parse_override_event_active(
+  lines: List(String),
+  props: List(#(String, String)),
+  uid: String,
+  calendar_name: String,
+  system_tz: Result(String, Nil),
+) -> Result(Event, Nil) {
   use summary_raw <- result.try(get_prop(props, "SUMMARY"))
   let summary = unescape_text(summary_raw)
   use dtstart_raw <- result.try(get_prop_prefix(props, "DTSTART"))
@@ -3222,6 +3291,17 @@ fn get_prop(props: List(#(String, String)), name: String) -> Result(String, Nil)
       False -> Error(Nil)
     }
   })
+}
+
+/// Return True iff the property list contains STATUS:CANCELLED (RFC 5545
+/// §3.8.1.11). Comparison is case-insensitive on the value; the property
+/// name is already uppercased by parse_property. Trailing whitespace is
+/// trimmed for resilience against minor formatting quirks.
+fn props_status_cancelled(props: List(#(String, String))) -> Bool {
+  case get_prop(props, "STATUS") {
+    Ok(v) -> string.uppercase(string.trim(v)) == "CANCELLED"
+    Error(Nil) -> False
+  }
 }
 
 /// Find the raw iCal string for a property whose name starts with `prefix`.
