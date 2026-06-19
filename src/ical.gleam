@@ -1041,7 +1041,7 @@ fn expand_recurring(
   let override_in_window =
     list.filter(override_events, fn(e) {
       event_in_window(e.start, e.end, window_start, window_end)
-      && !list.any(instances_with_rdates, fn(i) {
+      &&       !list.any(instances_with_rdates, fn(i) {
         i.uid == e.uid && times_equal(i.start, e.start)
       })
     })
@@ -1429,6 +1429,13 @@ fn allday_instance_for_date(
 /// All-day variant of `find_override_for_ts`. Matches an override whose
 /// RECURRENCE-ID's local date equals `current_date`. Returns NoOverride,
 /// CancellingOverride, or ReplacingOverride per the same semantics.
+///
+/// THISANDFUTURE handling for all-day series: the override's properties
+/// (summary, location, description, etc.) propagate to the matched date
+/// and all subsequent ones, but dates are NOT shifted even if the
+/// override's DTSTART differs from its RECURRENCE-ID. Date-shifting an
+/// all-day recurrence via THISANDFUTURE is not a well-defined transform
+/// and is silently ignored; only the metadata change is honored.
 fn find_allday_override_for_date(
   current_date: calendar.Date,
   uid_overrides: List(List(String)),
@@ -1437,48 +1444,99 @@ fn find_allday_override_for_date(
   local_offset: duration.Duration,
   system_tz: Result(String, Nil),
 ) -> OverrideResult {
-  let matched =
-    list.find_map(uid_overrides, fn(ol) {
+  // Parse each override into (lines, props, rec_id_date, is_thisandfuture).
+  let parsed =
+    list.filter_map(uid_overrides, fn(ol) {
       let oprops = list.filter_map(ol, parse_property)
       case get_prop_prefix(oprops, "RECURRENCE-ID") {
         Ok(rec_raw) ->
           case parse_event_time(rec_raw, Error(Nil), system_tz) {
             Ok(AllDay(rec_date)) ->
-              case rec_date == current_date {
-                True -> Ok(#(ol, oprops))
-                False -> Error(Nil)
-              }
+              Ok(#(ol, oprops, rec_date, has_thisandfuture_range(ol)))
             Ok(AtTime(rec_ts)) -> {
               let #(rec_date, _) =
                 timestamp.to_calendar(rec_ts, local_offset)
-              case rec_date == current_date {
-                True -> Ok(#(ol, oprops))
-                False -> Error(Nil)
-              }
+              Ok(#(ol, oprops, rec_date, has_thisandfuture_range(ol)))
             }
             Error(Nil) -> Error(Nil)
           }
         Error(Nil) -> Error(Nil)
       }
     })
-  case matched {
-    Error(Nil) -> NoOverride
-    Ok(#(ol, oprops)) ->
-      case props_status_cancelled(oprops) {
-        True -> CancellingOverride
-        False ->
+
+  // (1) Single-instance match (RANGE absent).
+  let single =
+    list.find(parsed, fn(p) {
+      let #(_, _, rec_date, is_taf) = p
+      !is_taf && rec_date == current_date
+    })
+
+  case single {
+    Ok(#(ol, oprops, _, _)) ->
+      apply_allday_override(
+        ol,
+        oprops,
+        uid,
+        calendar_name,
+        local_offset,
+        system_tz,
+      )
+    Error(Nil) -> {
+      // (2) Most recent THISANDFUTURE with rec_date <= current_date.
+      let candidate =
+        list.fold(parsed, Error(Nil), fn(acc, p) {
+          let #(_, _, rec_date, is_taf) = p
           case
-            parse_override_event(
-              ol,
-              uid,
-              calendar_name,
-              local_offset,
-              system_tz,
-            )
+            is_taf
+            && calendar.naive_date_compare(rec_date, current_date) != order.Gt
           {
-            Ok(evt) -> ReplacingOverride(evt)
-            Error(Nil) -> NoOverride
+            False -> acc
+            True ->
+              case acc {
+                Error(Nil) -> Ok(p)
+                Ok(#(_, _, best_date, _)) ->
+                  case calendar.naive_date_compare(rec_date, best_date) {
+                    order.Gt -> Ok(p)
+                    _ -> acc
+                  }
+              }
           }
+        })
+      case candidate {
+        Ok(#(ol, oprops, _, _)) ->
+          apply_allday_override(
+            ol,
+            oprops,
+            uid,
+            calendar_name,
+            local_offset,
+            system_tz,
+          )
+        Error(Nil) -> NoOverride
+      }
+    }
+  }
+}
+
+/// All-day variant of apply_timed_override. No date-shifting is performed
+/// because all-day THISANDFUTURE overrides reasonably only change metadata,
+/// not the schedule.
+fn apply_allday_override(
+  ol: List(String),
+  oprops: List(#(String, String)),
+  uid: String,
+  calendar_name: String,
+  local_offset: duration.Duration,
+  system_tz: Result(String, Nil),
+) -> OverrideResult {
+  case props_status_cancelled(oprops) {
+    True -> CancellingOverride
+    False ->
+      case
+        parse_override_event(ol, uid, calendar_name, local_offset, system_tz)
+      {
+        Ok(evt) -> ReplacingOverride(evt)
+        Error(Nil) -> NoOverride
       }
   }
 }
@@ -2657,10 +2715,21 @@ fn instance_for_ts(
   }
 }
 
-/// Look for a RECURRENCE-ID override whose RECURRENCE-ID falls on the same
-/// local day as `ts`. Returns NoOverride if none matched, CancellingOverride
-/// if the matched override has STATUS:CANCELLED, or ReplacingOverride(Event)
-/// otherwise.
+/// Look for a RECURRENCE-ID override that applies to the generated instance
+/// at `ts`. Override resolution order per RFC 5545 §3.2.13:
+///
+/// 1. Exact single-instance override (RANGE parameter absent). This is the
+///    most specific match; if any same-day override has no RANGE, it wins.
+/// 2. THISANDFUTURE override whose RECURRENCE-ID is on or before `ts`. If
+///    multiple THISANDFUTURE overrides qualify, the one with the latest
+///    RECURRENCE-ID wins (it represents the most recent "edit this and
+///    following" action).
+///
+/// For THISANDFUTURE matches whose RECURRENCE-ID is strictly before `ts`,
+/// the override's properties are applied and DTSTART/DTEND are shifted by
+/// `ts - rec_id` so that the new schedule preserves the original
+/// occurrence cadence while adopting any time-of-day change embedded in
+/// the override.
 fn find_override_for_ts(
   ts: timestamp.Timestamp,
   uid_overrides: List(List(String)),
@@ -2669,46 +2738,130 @@ fn find_override_for_ts(
   local_offset: duration.Duration,
   system_tz: Result(String, Nil),
 ) -> OverrideResult {
-  let matched =
-    list.find_map(uid_overrides, fn(ol) {
+  // Parse each override once into (lines, props, rec_id_ts,
+  // is_thisandfuture). Skip overrides whose RECURRENCE-ID is all-day —
+  // those belong to all-day masters and never apply to a timed instance.
+  let parsed =
+    list.filter_map(uid_overrides, fn(ol) {
       let oprops = list.filter_map(ol, parse_property)
       let rec_id_tzid = get_tzid_param(ol, "RECURRENCE-ID")
       case get_prop_prefix(oprops, "RECURRENCE-ID") {
         Ok(rec_raw) ->
           case parse_event_time(rec_raw, rec_id_tzid, system_tz) {
-            Ok(rec_time) ->
-              case same_day_event_time(ts, rec_time, local_offset) {
-                True -> Ok(#(ol, oprops))
-                False -> Error(Nil)
-              }
-            Error(Nil) -> Error(Nil)
+            Ok(AtTime(rec_ts)) ->
+              Ok(#(ol, oprops, rec_ts, has_thisandfuture_range(ol)))
+            _ -> Error(Nil)
           }
         Error(Nil) -> Error(Nil)
       }
     })
-  case matched {
-    Error(Nil) -> NoOverride
-    Ok(#(ol, oprops)) -> {
-      case props_status_cancelled(oprops) {
-        True -> CancellingOverride
-        False ->
-          case
-            parse_override_event(
-              ol,
-              uid,
-              calendar_name,
-              local_offset,
-              system_tz,
-            )
-          {
-            Ok(evt) -> ReplacingOverride(evt)
-            // Malformed override (e.g. missing SUMMARY): fall back to the
-            // master-derived instance rather than silently dropping.
-            Error(Nil) -> NoOverride
+
+  // (1) Single-instance match (RANGE absent) on the same local day.
+  let single =
+    list.find(parsed, fn(p) {
+      let #(_, _, rec_ts, is_taf) = p
+      !is_taf && same_day_ts(ts, rec_ts, local_offset)
+    })
+
+  case single {
+    Ok(#(ol, oprops, rec_ts, _)) ->
+      apply_timed_override(
+        ol,
+        oprops,
+        ts,
+        rec_ts,
+        uid,
+        calendar_name,
+        local_offset,
+        system_tz,
+      )
+    Error(Nil) -> {
+      // (2) Most recent THISANDFUTURE with rec_ts <= ts.
+      let candidate =
+        list.fold(parsed, Error(Nil), fn(acc, p) {
+          let #(_, _, rec_ts, is_taf) = p
+          case is_taf && timestamp.compare(rec_ts, ts) != order.Gt {
+            False -> acc
+            True ->
+              case acc {
+                Error(Nil) -> Ok(p)
+                Ok(#(_, _, best_ts, _)) ->
+                  case timestamp.compare(rec_ts, best_ts) {
+                    order.Gt -> Ok(p)
+                    _ -> acc
+                  }
+              }
           }
+        })
+      case candidate {
+        Ok(#(ol, oprops, rec_ts, _)) ->
+          apply_timed_override(
+            ol,
+            oprops,
+            ts,
+            rec_ts,
+            uid,
+            calendar_name,
+            local_offset,
+            system_tz,
+          )
+        Error(Nil) -> NoOverride
       }
     }
   }
+}
+
+/// Apply a matched override (whether single-instance or THISANDFUTURE) to
+/// an instance at `current_ts`. STATUS:CANCELLED produces CancellingOverride.
+/// Otherwise we parse the override into an Event; if `current_ts` differs
+/// from the override's `rec_ts` (the THISANDFUTURE non-matching case), the
+/// resulting Event's DTSTART/DTEND are shifted by `current_ts - rec_ts`.
+fn apply_timed_override(
+  ol: List(String),
+  oprops: List(#(String, String)),
+  current_ts: timestamp.Timestamp,
+  rec_ts: timestamp.Timestamp,
+  uid: String,
+  calendar_name: String,
+  local_offset: duration.Duration,
+  system_tz: Result(String, Nil),
+) -> OverrideResult {
+  case props_status_cancelled(oprops) {
+    True -> CancellingOverride
+    False ->
+      case
+        parse_override_event(ol, uid, calendar_name, local_offset, system_tz)
+      {
+        Ok(evt) ->
+          case timestamp.compare(current_ts, rec_ts) {
+            order.Eq -> ReplacingOverride(evt)
+            _ -> {
+              let delta = timestamp.difference(rec_ts, current_ts)
+              ReplacingOverride(shift_event_times(evt, delta))
+            }
+          }
+        // Malformed override (e.g. missing SUMMARY): fall back to the
+        // master-derived instance rather than silently dropping.
+        Error(Nil) -> NoOverride
+      }
+  }
+}
+
+/// Shift the start and end of an Event by `delta`. Used to translate a
+/// THISANDFUTURE override's properties onto an instance whose original
+/// recurrence-set timestamp differs from the override's RECURRENCE-ID.
+/// All-day EventTimes are returned unchanged because date-shifting an
+/// all-day series via THISANDFUTURE is not a well-defined transformation.
+fn shift_event_times(evt: Event, delta: duration.Duration) -> Event {
+  let new_start = case evt.start {
+    AtTime(ts) -> AtTime(timestamp.add(ts, delta))
+    AllDay(d) -> AllDay(d)
+  }
+  let new_end = case evt.end {
+    AtTime(ts) -> AtTime(timestamp.add(ts, delta))
+    AllDay(d) -> AllDay(d)
+  }
+  Event(..evt, start: new_start, end: new_end)
 }
 
 /// Given an iteration's anchor timestamp and a list of BYDAY entries, compute
@@ -3315,6 +3468,32 @@ fn props_status_cancelled(props: List(#(String, String))) -> Bool {
   }
 }
 
+/// Detect `RANGE=THISANDFUTURE` on a RECURRENCE-ID line. Per RFC 5545
+/// §3.2.13 the RANGE parameter, when present, can only take the value
+/// `THISANDFUTURE`; any other value is invalid and treated as absent
+/// (i.e. the override is a single-instance override).
+///
+/// The comparison is case-insensitive on the parameter value because
+/// some producers emit lowercase parameter values despite the spec
+/// recommending uppercase keywords.
+fn has_thisandfuture_range(lines: List(String)) -> Bool {
+  list.any(lines, fn(line) {
+    let upper = string.uppercase(line)
+    case string.starts_with(upper, "RECURRENCE-ID;") {
+      False -> False
+      True ->
+        // Match the parameter only up to the next ':' so a literal
+        // "RANGE=THISANDFUTURE" inside the VALUE (after the colon) is
+        // not misread as the parameter.
+        case string.split_once(upper, ":") {
+          Ok(#(param_part, _)) ->
+            string.contains(param_part, "RANGE=THISANDFUTURE")
+          Error(Nil) -> False
+        }
+    }
+  })
+}
+
 /// Find the raw iCal string for a property whose name starts with `prefix`.
 /// This is needed for DTSTART/DTEND which may carry ;TZID= parameters.
 /// We return the *value* portion (after the colon) as parsed by parse_property.
@@ -3387,12 +3566,24 @@ fn extract_param_value(s: String) -> Result(String, Nil) {
       }
     }
     False -> {
-      // Unquoted: take up to the next ":" (parameter ends at value separator).
-      case string.split_once(s, ":") {
-        Ok(#(value, _)) -> Ok(value)
-        Error(Nil) -> Error(Nil)
-      }
+      // Unquoted: take up to the next ";" (next param) or ":" (value separator),
+      // whichever comes first.
+      Ok(scan_unquoted_param_value(s, ""))
     }
+  }
+}
+
+/// Consume characters from `s` until a `;` or `:` is hit, accumulating
+/// into `acc`. Returns the accumulated value (possibly empty).
+fn scan_unquoted_param_value(s: String, acc: String) -> String {
+  case string.pop_grapheme(s) {
+    Error(Nil) -> acc
+    Ok(#(c, rest)) ->
+      case c {
+        ";" -> acc
+        ":" -> acc
+        _ -> scan_unquoted_param_value(rest, acc <> c)
+      }
   }
 }
 
