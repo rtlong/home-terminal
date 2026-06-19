@@ -708,15 +708,23 @@ pub fn parse_events(
 // LINE UNFOLDING --------------------------------------------------------------
 
 /// RFC 5545 §3.1: long lines may be folded by inserting CRLF + whitespace.
-/// Unfold by removing CRLF (or bare LF) followed by a space or tab.
-/// Also strip bare \r so that splitting on \n yields clean lines.
+/// Also normalizes line endings: CRLF and bare CR (legacy Lotus Notes) are
+/// both converted to bare LF so that downstream `string.split(_, "\n")`
+/// produces clean lines. Folding continuations (LF + space/tab) are then
+/// collapsed.
 fn unfold_lines(text: String) -> String {
   text
-  |> string.replace("\r\n ", "")
-  |> string.replace("\r\n\t", "")
+  // Normalize line endings to LF first so the folding step only has to
+  // handle one form. Order matters: CRLF must be collapsed before bare CR
+  // is rewritten, otherwise the LF half of a CRLF pair becomes a duplicate
+  // line break.
+  |> string.replace("\r\n", "\n")
+  |> string.replace("\r", "\n")
+  // Now unfold: LF followed by a single space or tab continues the
+  // previous logical line. Per RFC 5545 the leading whitespace itself
+  // is consumed along with the line break.
   |> string.replace("\n ", "")
   |> string.replace("\n\t", "")
-  |> string.replace("\r", "")
 }
 
 // VEVENT SPLITTING ------------------------------------------------------------
@@ -738,7 +746,10 @@ fn do_split_vevents(
     [] -> acc
     [line, ..rest] -> {
       let trimmed = string.trim(line)
-      case trimmed {
+      // RFC 5545 §3.1: property and component names are case-insensitive.
+      // Match BEGIN/END markers on the uppercased line so producers that
+      // emit "begin:vevent" or "Begin:VEvent" parse correctly.
+      case string.uppercase(trimmed) {
         "BEGIN:VEVENT" -> do_split_vevents(rest, True, [], acc)
         "END:VEVENT" ->
           do_split_vevents(rest, False, [], [list.reverse(current), ..acc])
