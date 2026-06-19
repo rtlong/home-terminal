@@ -263,7 +263,6 @@ pub fn view_gantt(
               calendar.naive_date_compare(start_date, day) == order.Eq
             let is_end_day =
               calendar.naive_date_compare(end_date, day) == order.Eq
-            let is_cross_midnight = !is_end_day || !is_start_day
 
             case is_start_day, is_end_day {
               // Middle day: event spans entirely through this day — show as all-day chip.
@@ -343,7 +342,6 @@ pub fn view_gantt(
 
               // Normal same-day event.
               True, True -> {
-                let _ = is_cross_midnight
                 let left_min =
                   int.max(st.hours * 60 + st.minutes, window.start_min)
                   - window.start_min
